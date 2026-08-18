@@ -71,6 +71,54 @@ trust model as a Jupyter server's printed token. Set it yourself for a
 stable value across restarts. Point any MCP client at
 `http://127.0.0.1:8787/mcp` with `Authorization: Bearer <token>`.
 
+## Auth — handing this server to other people
+
+Two ways in, both accepted by the same `Authorization: Bearer <token>`
+header on `/mcp` and every `/api/*` route:
+
+1. **Owner token** — the `MCP_AUTH_TOKEN` above. Yours, printed on
+   startup. Fine for solo local use.
+2. **Google sign-in, per person** — for anyone else you want to connect
+   their own LLM/agent to your server, without handing them your one
+   token (and without being able to revoke just their access later).
+   Set `GOOGLE_OAUTH_CLIENT_ID` (see setup below) and point them at
+   `http://<your-host>:8787/auth/login` — they sign in with their own
+   Google account, get a personal token minted for them
+   (`mcp_server/auth_store.py`), and use that as their bearer token.
+   Signing in again returns the *same* token, so pasting it into an MCP
+   client config once doesn't get invalidated by a second sign-in.
+
+**Why not a full OAuth 2.1 authorization server** (the "real" way an MCP
+client is meant to discover and authenticate, per the MCP spec's OAuth
+Resource Server support)? That needs a genuine authorization server —
+PKCE, dynamic client registration, a consent screen, its own client/token
+tables — real infrastructure disproportionate to a personal-scale
+server. This gets the property that actually matters (each friend
+authenticates as themselves, with their own Google account, and you can
+revoke just one person) via Google Identity Services' one-tap credential
+flow instead: no redirect URIs, no client secret, just a signed ID token
+verified server-side (`mcp_server/google_auth.py`).
+
+**Google Cloud setup (one-time, ~2 minutes):**
+1. [console.cloud.google.com](https://console.cloud.google.com) → create
+   or pick a project → **APIs & Services → Credentials**.
+2. **Create Credentials → OAuth client ID** → Application type **Web
+   application**.
+3. Under **Authorized JavaScript origins**, add the origin(s) you'll
+   serve `/auth/login` from — e.g. `http://127.0.0.1:8787` for local
+   use, plus your real domain once deployed. No redirect URI needed for
+   this flow.
+4. Copy the **Client ID** (safe to expose client-side — it's not a
+   secret) and set it as `GOOGLE_OAUTH_CLIENT_ID` in your environment
+   before starting the server.
+
+**Known limitation:** every valid token — owner or per-user — currently
+sees *all* session history, not just its own; there's no per-user data
+ownership in `metrics/store.py` yet. This auth model answers "can you
+connect at all," not "whose data can you see." Revoke a friend's access
+with `mcp_server.auth_store.revoke(google_sub)` (find their `sub` via
+`list_users()`) if you need to cut someone off.
+
 ## Storage backends
 
 `STORAGE_BACKEND=sqlite` (default, local dev — `data/metrics.db`) or
