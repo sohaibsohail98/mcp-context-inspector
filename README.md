@@ -5,8 +5,11 @@ agent. Point your agent's loop at `record_session(prompt, model_id,
 loop_result)` after each run, and this gives you, for free:
 
 - A real MCP server (Streamable HTTP) any MCP client can connect to —
-  Claude Desktop, Cursor, your own chat UI — exposing 7 read-only tools
-  over session history, cost, token/tool metrics, and...
+  Claude Desktop, ChatGPT, Cursor, your own chat UI, any custom
+  agent — exposing 7 read-only tools over session history, cost,
+  token/tool metrics, plus a write tool so your own agent (or a
+  friend's, each isolated to their own data) can record sessions in the
+  first place, and...
 - **The Context Window Explorer** — full transparency into exactly what
   entered the model's context window, block by block, with honest
   (explicitly-labeled-estimated) token counts, a proportional segmented
@@ -40,6 +43,16 @@ from metrics import store
 
 session_id = store.record_session(prompt, model_id, loop_result)
 ```
+
+`owner` is an optional 4th argument — the Google `sub` of whoever this
+session belongs to (`None`, the default, means "the server owner's own,"
+which is what this direct-import path is for: your own local agent
+recording its own sessions). A friend's *remote* agent doesn't have
+Python-level access to this function at all — it goes through the
+authenticated `record_session` MCP tool / `/api/record-session` REST
+route instead, which resolves `owner` from their bearer token
+automatically (see "Letting a friend's own agent record its own data"
+below).
 
 `loop_result` is whatever your agent loop returns — this package only
 needs it to look like:
@@ -112,12 +125,41 @@ verified server-side (`mcp_server/google_auth.py`).
    secret) and set it as `GOOGLE_OAUTH_CLIENT_ID` in your environment
    before starting the server.
 
-**Known limitation:** every valid token — owner or per-user — currently
-sees *all* session history, not just its own; there's no per-user data
-ownership in `metrics/store.py` yet. This auth model answers "can you
-connect at all," not "whose data can you see." Revoke a friend's access
-with `mcp_server.auth_store.revoke(google_sub)` (find their `sub` via
-`list_users()`) if you need to cut someone off.
+**Data isolation:** every session is attributed to whoever recorded it —
+the owner token sees everyone's (it's your server), a per-user token
+only ever sees, queries, and records its own. There's no way to read or
+list another person's session_ids, even by guessing one (a session that
+exists but isn't yours reads back exactly like one that doesn't exist at
+all — see `metrics/store_sqlite.py`'s `get_session_metrics` docstring).
+Revoke a friend's access with `mcp_server.auth_store.revoke(google_sub)`
+(find their `sub` via `list_users()`) if you need to cut someone off —
+their existing token stops working immediately, and any data they
+already recorded stays where it is (still owned by them, invisible to
+other per-user tokens, visible to yours).
+
+## Letting a friend's own agent record its own data
+
+`record_session` isn't just a local Python import — it's also an
+authenticated MCP tool (and `/api/record-session` REST route), so a
+friend's agent running *anywhere*, not sharing your Python environment
+or filesystem, can push its own sessions into your server, attributed to
+them:
+
+```python
+# from the friend's own agent code, after it gets its own token from
+# GET http://<your-host>:8787/auth/login
+import httpx
+
+httpx.post(
+    "http://<your-host>:8787/api/record-session",
+    headers={"Authorization": f"Bearer {their_token}"},
+    json={"prompt": prompt, "model_id": model_id, "loop_result": loop_result},
+)
+```
+
+Or the equivalent as a real MCP tool call (`record_session`) over their
+own MCP client connection — same shape, same auth, same attribution.
+Either way, only they (and you, the owner) can read it back afterward.
 
 ## Storage backends
 
@@ -125,12 +167,13 @@ with `mcp_server.auth_store.revoke(google_sub)` (find their `sub` via
 `STORAGE_BACKEND=dynamodb` (set `METRICS_TABLE`/`AWS_REGION`) — same
 function signatures either way, callers never know which is active.
 
-## The 7 MCP tools
+## The 8 MCP tools
 
-`get_session_metrics`, `get_token_breakdown`, `get_tool_metrics`,
-`get_agent_trace`, `get_cost_estimate`, `get_recent_sessions`,
-`get_context_timeline`. Plain REST equivalents are also exposed under
-`/api/*` — a curl-friendly debugging alternative, calling the same
+7 read-only — `get_session_metrics`, `get_token_breakdown`,
+`get_tool_metrics`, `get_agent_trace`, `get_cost_estimate`,
+`get_recent_sessions`, `get_context_timeline` — plus one write tool,
+`record_session` (see above). Plain REST equivalents are also exposed
+under `/api/*` — a curl-friendly debugging alternative, calling the same
 underlying `metrics/store.py` functions.
 
 ## Related repos

@@ -73,6 +73,18 @@ def is_valid_token(token):
     return row is not None
 
 
+def get_sub_for_token(token):
+    """The google_sub that owns this per-user token — used to attribute
+    data (record/filter by owner) to whoever's actually connected, not
+    just to check "is this token valid at all." Returns None if the
+    token doesn't belong to any signed-in user (e.g. it's the owner
+    token, or invalid)."""
+    conn = _connect()
+    row = conn.execute("SELECT google_sub FROM mcp_users WHERE token=?", (token,)).fetchone()
+    conn.close()
+    return row["google_sub"] if row else None
+
+
 def list_users():
     """Admin visibility — who has ever signed in. Never returns tokens
     themselves, only enough to identify an account for revocation."""
