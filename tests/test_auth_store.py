@@ -2,6 +2,8 @@
 token store backing the Google sign-in flow.
 """
 
+import threading
+
 
 def test_get_or_create_token_mints_a_new_token(isolated_auth_store):
     store = isolated_auth_store
@@ -68,3 +70,38 @@ def test_list_users_never_includes_tokens(isolated_auth_store):
     assert "token" not in users[0]
     assert users[0]["google_sub"] == "sub123"
     assert users[0]["email"] == "a@example.com"
+
+
+def test_concurrent_first_sign_in_for_the_same_account_never_crashes(isolated_auth_store):
+    """The real risk a naive SELECT-then-INSERT would have: N threads
+    racing to be the FIRST sign-in for a brand-new google_sub — e.g. a
+    friend double-clicking "Sign in with Google," or two server worker
+    processes handling near-simultaneous requests. Every thread must
+    both succeed AND agree on exactly one winning token — no crash, no
+    silently-orphaned second token."""
+    store = isolated_auth_store
+    barrier = threading.Barrier(20)
+    results = []
+    errors = []
+    lock = threading.Lock()
+
+    def worker():
+        barrier.wait()  # force maximum contention on the same instant
+        try:
+            token = store.get_or_create_token("contested-sub", "a@example.com")
+            with lock:
+                results.append(token)
+        except Exception as e:  # noqa: BLE001 — the test itself is the assertion
+            with lock:
+                errors.append(e)
+
+    threads = [threading.Thread(target=worker) for _ in range(20)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert errors == []
+    assert len(results) == 20
+    assert len(set(results)) == 1  # every thread agrees on the one real token
+    assert len(store.list_users()) == 1  # no duplicate/orphaned rows

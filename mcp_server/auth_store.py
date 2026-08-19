@@ -43,27 +43,28 @@ def _connect():
 def get_or_create_token(google_sub, email):
     """Returns this Google account's MCP token, minting one on first
     sign-in. Idempotent per google_sub — re-running the sign-in flow
-    returns the same token, not a new one."""
-    conn = _connect()
-    row = conn.execute(
-        "SELECT token FROM mcp_users WHERE google_sub=?", (google_sub,)
-    ).fetchone()
-    if row:
-        # Email can legitimately change (a Google account's email is
-        # mutable); keep it current without touching the token.
-        conn.execute("UPDATE mcp_users SET email=? WHERE google_sub=?", (email, google_sub))
-        conn.commit()
-        conn.close()
-        return row["token"]
+    returns the same token, not a new one.
 
-    token = secrets.token_urlsafe(32)
+    A single atomic upsert, not a SELECT-then-INSERT — two concurrent
+    first-time sign-ins for the same brand-new google_sub (e.g. a friend
+    double-clicking "Sign in with Google," or two server worker
+    processes handling near-simultaneous requests) would otherwise both
+    pass the "no existing row" check before either commits, and the
+    second INSERT would crash on the google_sub PRIMARY KEY constraint.
+    ON CONFLICT DO UPDATE makes the loser of the race a no-op update
+    instead of a crash, and the final SELECT always returns whichever
+    token actually won, so this function can't fail EVER just because it
+    was called concurrently for the same account."""
+    conn = _connect()
     conn.execute(
-        "INSERT INTO mcp_users VALUES (?,?,?,?)",
-        (google_sub, email, token, time.time()),
+        "INSERT INTO mcp_users (google_sub, email, token, created_at) VALUES (?,?,?,?) "
+        "ON CONFLICT(google_sub) DO UPDATE SET email=excluded.email",
+        (google_sub, email, secrets.token_urlsafe(32), time.time()),
     )
     conn.commit()
+    row = conn.execute("SELECT token FROM mcp_users WHERE google_sub=?", (google_sub,)).fetchone()
     conn.close()
-    return token
+    return row["token"]
 
 
 def is_valid_token(token):
