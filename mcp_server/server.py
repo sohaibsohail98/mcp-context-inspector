@@ -19,6 +19,7 @@ import os
 import shutil
 
 from mcp.server.mcpserver import MCPServer
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
@@ -804,7 +805,38 @@ if __name__ == "__main__":
     # service. Local dev origins above stay allowed regardless.
     deployed_chat_origins = os.environ.get("CHAT_UI_ORIGIN", "")
     allowed_origins.extend(origin.strip() for origin in deployed_chat_origins.split(",") if origin.strip())
-    http_app = server.streamable_http_app()
+    # streamable_http_app()'s own `host` parameter defaults to "127.0.0.1"
+    # (unused here — we never pass it), and the SDK's lowlevel Server
+    # silently *auto-enables* DNS-rebinding Host-header protection
+    # scoped to that default whenever no explicit transport_security is
+    # given (see mcp/server/lowlevel/server.py). That's fine for local
+    # dev (uvicorn also binds 127.0.0.1 by default) but on Cloud Run the
+    # real Host header the container sees is the service's own
+    # `*.run.app` hostname — the Cloudflare Worker in front
+    # (cloudflare-proxy/worker.js) deletes the inbound Host header and
+    # lets fetch() re-derive it from env.ORIGIN, so it's never the
+    # workers.dev proxy hostname either. Without an explicit allowlist
+    # covering that real Cloud Run host, every production request gets
+    # hard-rejected with 421 "Invalid Host header" — this bit us live
+    # (Google sign-in on the chat UI failing with HTTP 421). Building
+    # transport_security explicitly here — rather than skipping it — so
+    # DNS-rebinding protection stays *on* everywhere, just correctly
+    # scoped to hosts that are actually legitimate for this deployment.
+    allowed_hosts = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
+    # Comma-separated list of additional Host header values this
+    # deployment's requests actually arrive with — e.g. the Cloud Run
+    # service's own `<service>-<hash>-<region>.a.run.app` hostname (the
+    # literal Host header value after the Cloudflare Worker proxy
+    # rewrites it), same CHAT_UI_ORIGIN-style convention as above.
+    deployed_hosts = os.environ.get("MCP_ALLOWED_HOSTS", "")
+    allowed_hosts.extend(host.strip() for host in deployed_hosts.split(",") if host.strip())
+    http_app = server.streamable_http_app(
+        transport_security=TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=allowed_hosts,
+            allowed_origins=allowed_origins,
+        )
+    )
     # Auth middleware added before CORS so CORS ends up outermost (Starlette
     # runs the most-recently-added middleware first) — CORS preflight
     # (OPTIONS, no Authorization header) gets handled and answered before
