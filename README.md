@@ -1,8 +1,8 @@
 # mcp-context-inspector
 
-A drop-in MCP server + execution-metrics recorder for any tool-calling
-agent — real per-session cost/token/tool metrics, and a full Context
-Window Explorer, over a real MCP handshake.
+A drop-in MCP server + execution-metrics recorder for Bedrock-based
+agents and Claude Code — real per-session cost/token/tool metrics, and
+a full Context Window Explorer, over a real MCP handshake.
 
 <!-- Context Window Explorer GIF — capturing it is separate, later work. -->
 <img src="docs/screenshots/context-window-explorer.gif" width="640" alt="Context Window Explorer">
@@ -46,7 +46,7 @@ trust model as a Jupyter server's printed token.
 
 ## Connect your client
 
-Claude Desktop / any MCP-config-based client:
+Claude Code:
 ```json
 {
   "mcpServers": {
@@ -57,22 +57,6 @@ Claude Desktop / any MCP-config-based client:
   }
 }
 ```
-
-VS Code (`.vscode/mcp.json`):
-```json
-{
-  "servers": {
-    "context-inspector": {
-      "type": "http",
-      "url": "https://mcp-inspector.sohaibsohail.workers.dev/mcp",
-      "headers": { "Authorization": "Bearer <your-token>" }
-    }
-  }
-}
-```
-
-Claude.ai / ChatGPT (developer mode): in-app "add custom connector"
-flow — paste the `/mcp` URL above, no config file.
 
 Anthropic Messages API (MCP connector, beta):
 ```json
