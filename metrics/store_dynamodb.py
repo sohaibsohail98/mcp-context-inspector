@@ -19,9 +19,10 @@ from decimal import Decimal
 
 import boto3
 
-from mci_common.config import CONTEXT_WINDOW_TOKENS, DEFAULT_REGION
+from mci_common.config import DEFAULT_REGION
 from mci_common.dynamo import clean_decimal as _clean
 from mci_common.pricing import estimate_cost
+from mci_common.timeline import build_timeline
 
 TABLE_NAME = os.environ.get("METRICS_TABLE", "sre-agent-metrics")
 REGION = os.environ.get("AWS_REGION", DEFAULT_REGION)
@@ -192,23 +193,18 @@ def get_context_timeline(session_id, owner=None):
         ExpressionAttributeValues={":sid": session_id, ":prefix": "CTXBLOCK#"},
     )
     items = sorted(_clean(resp.get("Items", [])), key=lambda i: i["sk"])
-    blocks = []
-    cumulative_tokens = 0
-    for i in items:
-        cumulative_tokens += i["token_estimate"]
-        blocks.append(
-            {
-                "category": i["category"],
-                "label": i["label"],
-                "char_count": i["char_count"],
-                "token_estimate": i["token_estimate"],
-                "turn_n": i["turn_n"],
-                "status": i.get("status"),
-                "cumulative_tokens": cumulative_tokens,
-                "cumulative_pct": round(cumulative_tokens / CONTEXT_WINDOW_TOKENS * 100, 4),
-            }
-        )
-    return blocks
+    rows = (
+        {
+            "category": i["category"],
+            "label": i["label"],
+            "char_count": i["char_count"],
+            "token_estimate": i["token_estimate"],
+            "turn_n": i["turn_n"],
+            "status": i.get("status"),
+        }
+        for i in items
+    )
+    return build_timeline(rows)
 
 
 def _owned_session_ids(owner):
@@ -280,22 +276,11 @@ def get_recent_sessions(limit=10, owner=None):
                 ExpressionAttributeValues={":sk": "SESSION", ":owner": owner},
             )
         )
-        items.sort(key=lambda i: i["timestamp"], reverse=True)
-        return [
-            {
-                "session_id": i["session_id"],
-                "prompt": i["prompt"],
-                "model": i["model"],
-                "total_tokens": i["total_tokens"],
-                "estimated_cost": i["estimated_cost"],
-                "timestamp": i["timestamp"],
-            }
-            for i in items[:limit]
-        ]
+    else:
+        items = _clean(
+            _scan_all(FilterExpression="sk = :sk", ExpressionAttributeValues={":sk": "SESSION"})
+        )
 
-    items = _clean(
-        _scan_all(FilterExpression="sk = :sk", ExpressionAttributeValues={":sk": "SESSION"})
-    )
     items.sort(key=lambda i: i["timestamp"], reverse=True)
     return [
         {
