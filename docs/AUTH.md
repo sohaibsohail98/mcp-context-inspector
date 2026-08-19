@@ -6,7 +6,7 @@ password, one click:
 <img src="screenshots/signin-page.png" width="360" alt="Sign-in page">
 
 You land on a ready-to-use config: your token, the MCP server URL, and
-a paste-ready Claude Desktop / MCP-client config block.
+a paste-ready Claude Code / MCP-client config block.
 
 <img src="screenshots/connected-page.png" width="360" alt="Connected — your token and config">
 
@@ -16,7 +16,7 @@ header on `/mcp` and every `/api/*` route:
 1. **Owner token** — the `MCP_AUTH_TOKEN` env var. Yours, printed on
    startup. Fine for solo local use.
 2. **Google sign-in, per person** — for anyone else you want to connect
-   their own LLM/agent to your server, without handing them your one
+   their own Bedrock-based agent to your server, without handing them your one
    token (and without being able to revoke just their access later).
    Set `GOOGLE_OAUTH_CLIENT_ID` (see setup below) and point them at
    `http://<your-host>:8787/auth/login` — they sign in with their own
