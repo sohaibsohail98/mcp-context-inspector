@@ -71,7 +71,7 @@ jobs:
 
       - name: Smoke-test the deployment
         run: |
-          curl -sf "${{ steps.deploy.outputs.service_url }}/health" | grep -q '"status":"ok"'
+          curl -sf "${{ steps.deploy.outputs.url }}/health" | grep -q '"status":"ok"'
 
   deploy-cloudflare-worker:
     needs: deploy-cloud-run
