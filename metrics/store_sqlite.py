@@ -7,6 +7,7 @@ active.
 """
 
 import json
+import os
 import sqlite3
 import time
 import uuid
@@ -15,7 +16,10 @@ from pathlib import Path
 from mci_common.config import CONTEXT_WINDOW_TOKENS
 from mci_common.pricing import estimate_cost
 
-DB_PATH = Path(__file__).parent.parent / "data" / "metrics.db"
+# Overridable so a deployed container can point writes at an ephemeral
+# path (e.g. /tmp, on a read-only or baked-in image layer) instead of
+# the local dev default under the repo's data/ dir.
+DB_PATH = Path(os.environ.get("METRICS_DB_PATH", Path(__file__).parent.parent / "data" / "metrics.db"))
 
 
 _SCHEMA = """

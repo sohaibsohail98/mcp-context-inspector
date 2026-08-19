@@ -1,0 +1,91 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "mcp_server/**"
+      - "metrics/**"
+      - "mci_common/**"
+      - "scripts/**"
+      - "demo/**"
+      - "Dockerfile"
+      - "pyproject.toml"
+      - "cloudflare-proxy/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+
+# Least-privilege: only what google-github-actions/auth needs to mint a
+# short-lived token via Workload Identity Federation. No stored GCP keys
+# in repo secrets.
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  REGION: us-central1
+  SERVICE: mcp-context-inspector
+  IMAGE: us-central1-docker.pkg.dev/${{ vars.GCP_PROJECT }}/sre-platform/mcp-context-inspector
+
+jobs:
+  deploy-cloud-run:
+    runs-on: ubuntu-latest
+    outputs:
+      service_url: ${{ steps.deploy.outputs.url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+      - run: uv venv && uv pip install -e ".[dev]"
+      # Same reasoning as tests.yml — never deploy on top of a failing
+      # unit suite, even though tests.yml already ran on this push.
+      - run: uv run python -m pytest -v
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+
+      - name: Build and push image
+        run: |
+          docker buildx build --platform linux/amd64 \
+            -t "${IMAGE}:${{ github.sha }}" \
+            -t "${IMAGE}:latest" \
+            --push .
+
+      - id: deploy
+        name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --image="${IMAGE}:${{ github.sha }}" \
+            --project="${{ vars.GCP_PROJECT }}" \
+            --region="$REGION" \
+            --quiet
+          echo "url=$(gcloud run services describe $SERVICE --project=${{ vars.GCP_PROJECT }} --region=$REGION --format='value(status.url)')" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke-test the deployment
+        run: |
+          curl -sf "${{ steps.deploy.outputs.service_url }}/health" | grep -q '"status":"ok"'
+
+  deploy-cloudflare-worker:
+    needs: deploy-cloud-run
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cloudflare-proxy
+    steps:
+      - uses: actions/checkout@v4
+      - run: npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Smoke-test the Worker proxy
+        run: |
+          sleep 5
+          curl -sf "https://mcp-inspector.sohaibsohail.workers.dev/health" | grep -q '"status":"ok"'

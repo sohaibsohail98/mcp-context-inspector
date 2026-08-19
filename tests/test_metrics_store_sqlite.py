@@ -221,3 +221,23 @@ def test_owner_defaults_to_none_backward_compatible(isolated_sqlite_db):
     session_id = store.record_session("q", "m", _fake_loop_result())
     assert store.get_session_metrics(session_id) is not None
     assert len(store.get_recent_sessions()) == 1
+
+
+def test_metrics_db_path_env_override(tmp_path, monkeypatch):
+    """A deployed container sets METRICS_DB_PATH to point writes at an
+    ephemeral path instead of the local dev default — DB_PATH must pick
+    that up at import time."""
+    import importlib
+
+    from metrics import store_sqlite
+
+    override = tmp_path / "override.db"
+    monkeypatch.setenv("METRICS_DB_PATH", str(override))
+    try:
+        importlib.reload(store_sqlite)
+        assert store_sqlite.DB_PATH == override
+        store_sqlite.record_session("q", "m", _fake_loop_result())
+        assert override.exists()
+    finally:
+        monkeypatch.delenv("METRICS_DB_PATH", raising=False)
+        importlib.reload(store_sqlite)

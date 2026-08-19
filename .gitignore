@@ -22,3 +22,6 @@ data/mcp_auth.db
 
 # Local-only cleanup notes, never shipped
 docs/internal/
+
+# Wrangler local cache/state — regenerated per machine, not shipped
+cloudflare-proxy/.wrangler/
