@@ -13,13 +13,10 @@ loop_result)` after each run, and this gives you, for free:
 - **The Context Window Explorer** — full transparency into exactly what
   entered the model's context window, block by block, with honest
   (explicitly-labeled-estimated) token counts, a proportional segmented
-  bar, and a click-to-expand detail panel per block:
-
-  ![Context Window Explorer](docs/context-window-explorer.png)
-
-  *(screenshot from the reference chat UI this was built alongside —
-  `sre-investigation-agent`; the panel above is what any MCP client
-  gets once it queries `get_context_timeline`.)*
+  bar, and a click-to-expand detail panel per block. Any MCP client gets
+  this once it queries `get_context_timeline` — see it live in
+  [`sre-investigation-agent`](https://github.com/sohaibsohail98/sre-investigation-agent#readme),
+  the reference chat UI this package was extracted from.
 
 Most agent observability tools re-show you data your own UI already
 displayed. This one shows you something you can't normally see at all:
@@ -27,6 +24,18 @@ system prompt vs. tool specs vs. reasoning vs. tool call/result vs.
 final answer, in the order they actually entered context, with a
 running token total against the model's real context window — and which
 of those blocks are ever visible to the end user vs. invisible overhead.
+
+## What connecting looks like
+
+Sign in, and you're scoped to your own data on this server — no
+password, one click:
+
+![Sign-in page](docs/screenshots/signin-page.png)
+
+You land on a ready-to-use config: your token, the MCP server URL, and
+a paste-ready Claude Desktop / MCP-client config block.
+
+![Connected — your token and config](docs/screenshots/connected-page.png)
 
 ## Install
 
