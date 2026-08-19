@@ -180,10 +180,10 @@ def test_api_record_session_requires_auth(client):
 
 
 def test_api_record_session_malformed_json_body_is_a_400_not_a_500(client):
-    """The actual bug: request.json() on a non-JSON body raised an
-    unhandled JSONDecodeError, surfacing as an internal server error
-    to any client (or any friend's agent) that sent a malformed
-    request — not a clean, documented 400."""
+    """request.json() on a non-JSON body must not raise an unhandled
+    JSONDecodeError — a malformed request from any client (or any
+    friend's agent) should get a clean, documented 400, not an
+    internal server error."""
     resp = client.post(
         "/api/record-session",
         content=b"not json at all",

@@ -3,15 +3,15 @@ in-memory fake table — not moto, not real AWS. The fake only implements
 the exact scan/query/get_item/batch_writer calls store_dynamodb.py
 actually issues; it is not a general DynamoDB emulator.
 
-Covers two real bugs a fresh-eyes review found before this was deployed:
-1. get_session_metrics leaked the internal "sk" partition-key field,
-   giving a different shape than store_sqlite.py's version of the same
+Covers two correctness contracts:
+1. get_session_metrics must not leak the internal "sk" partition-key
+   field — its shape must match store_sqlite.py's version of the same
    function (the two are meant to be interchangeable behind
    metrics/store.py's dispatcher).
 2. Aggregate reads (get_recent_sessions, get_tool_metrics, get_cost_estimate)
-   used a single unpaginated Scan call, which DynamoDB truncates once it
-   hits its per-call scan limit — silently undercounting/omitting recent
-   items as the table grows, with no error raised.
+   must paginate — a single unpaginated Scan call truncates once it
+   hits DynamoDB's per-call scan limit, silently undercounting/omitting
+   recent items as the table grows, with no error raised.
 """
 
 from decimal import Decimal
@@ -135,8 +135,8 @@ def test_get_session_metrics_missing_returns_none(fake_table):
 
 
 def test_scan_all_paginates_past_a_single_page(fake_table):
-    """The actual bug: force a table where results span 3 pages and
-    confirm every item still comes back, not just the first page."""
+    """Force a table where results span 3 pages and confirm every item
+    still comes back, not just the first page."""
     fake_table.page_size = 2
     for i in range(5):
         fake_table.items.append(
@@ -319,11 +319,11 @@ def test_owner_defaults_to_none_backward_compatible(fake_table):
 
 
 def test_owner_filtering_survives_scan_pagination(fake_table):
-    """The actual risk: get_recent_sessions/get_cost_estimate/get_tool_metrics
-    with an owner filter all go through _scan_all, which pages. If owner
-    filtering were applied only to the first page (e.g. a bug that
-    filtered client-side after truncating), alice's later-paginated
-    sessions would silently vanish from her own view."""
+    """get_recent_sessions/get_cost_estimate/get_tool_metrics with an
+    owner filter all go through _scan_all, which pages. Owner filtering
+    must apply across every page, not just the first — otherwise
+    alice's later-paginated sessions would silently vanish from her own
+    view."""
     for i in range(5):
         store_dynamodb.record_session(f"alice's q{i}", "m", _basic_loop_result(), owner="alice-sub")
     for i in range(5):

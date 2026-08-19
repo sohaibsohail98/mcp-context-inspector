@@ -73,12 +73,11 @@ def test_list_users_never_includes_tokens(isolated_auth_store):
 
 
 def test_concurrent_first_sign_in_for_the_same_account_never_crashes(isolated_auth_store):
-    """The real risk a naive SELECT-then-INSERT would have: N threads
-    racing to be the FIRST sign-in for a brand-new google_sub — e.g. a
-    friend double-clicking "Sign in with Google," or two server worker
-    processes handling near-simultaneous requests. Every thread must
-    both succeed AND agree on exactly one winning token — no crash, no
-    silently-orphaned second token."""
+    """N threads racing to be the FIRST sign-in for a brand-new
+    google_sub — e.g. a friend double-clicking "Sign in with Google," or
+    two server worker processes handling near-simultaneous requests.
+    Every thread must both succeed AND agree on exactly one winning
+    token — no crash, no silently-orphaned second token."""
     store = isolated_auth_store
     barrier = threading.Barrier(20)
     results = []

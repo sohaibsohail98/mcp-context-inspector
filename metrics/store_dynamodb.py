@@ -1,15 +1,14 @@
-"""DynamoDB backend for the execution recorder — swapped in at Phase 5
-deployment per docs/PROJECT.md's Storage section (AgentCore Runtime's
-container filesystem doesn't persist across sessions, so SQLite silently
-loses data once deployed). Same function signatures as store_sqlite.py;
-callers (app.py, mcp_server/server.py) go through store.py's dispatcher
-and never know which backend is active.
+"""DynamoDB backend for the execution recorder — used once deployed,
+since a container's local filesystem doesn't persist across
+invocations and SQLite would silently lose data. Same function
+signatures as store_sqlite.py; callers (app.py, mcp_server/server.py)
+go through store.py's dispatcher and never know which backend is
+active.
 
 Single-table design: partition key session_id, sort key sk distinguishes
 item type ("SESSION", "TURN#0000", "TOOLCALL#0000", ...). Aggregate reads
-(recent sessions, aggregate tool metrics) use Scan — fine at the personal
-project scale this is built for; revisit with a GSI if that ever stops
-being true.
+(recent sessions, aggregate tool metrics) use Scan — fine at personal
+project scale; revisit with a GSI if that ever stops being true.
 """
 
 import json

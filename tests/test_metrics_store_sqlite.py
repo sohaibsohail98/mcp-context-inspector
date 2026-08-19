@@ -5,12 +5,11 @@ import sqlite3
 
 
 def test_pre_caching_db_migrates_instead_of_crashing(isolated_sqlite_db):
-    """The actual bug: CREATE TABLE IF NOT EXISTS never alters a table
-    that already exists. A turns table created before prompt caching was
-    added (no cache_read/write columns) must not crash reads/writes with
-    "no such column" — this is exactly the shape data/metrics.db was in
-    for anyone who ran the agent before this change, and _connect() must
-    migrate it on first touch, not require manually deleting the file."""
+    """CREATE TABLE IF NOT EXISTS never alters a table that already
+    exists. A turns table created before prompt caching was added (no
+    cache_read/write columns) must not crash reads/writes with "no such
+    column" — _connect() must migrate it on first touch, not require
+    manually deleting the file."""
     store = isolated_sqlite_db
 
     # Build the table in its pre-caching shape, bypassing _connect() so
@@ -39,7 +38,7 @@ def test_pre_caching_db_migrates_instead_of_crashing(isolated_sqlite_db):
 
 
 def test_reads_on_empty_db_do_not_crash(isolated_sqlite_db):
-    """The actual bug: a fresh/missing DB file must not 500 on read."""
+    """A fresh/missing DB file must not 500 on read."""
     store = isolated_sqlite_db
     assert store.get_recent_sessions() == []
     assert store.get_session_metrics("nonexistent") is None
@@ -94,8 +93,7 @@ def test_record_then_read_round_trip(isolated_sqlite_db):
 def test_get_session_metrics_shape_has_no_backend_internals(isolated_sqlite_db):
     """SQLite has no partition-key concept to leak, but pin the expected
     session/prompt_metrics split anyway — this is the contract
-    store_dynamodb.py must match (it previously leaked an internal "sk"
-    field flat in the response; see test_metrics_store_dynamodb.py)."""
+    store_dynamodb.py must also match (see test_metrics_store_dynamodb.py)."""
     store = isolated_sqlite_db
     session_id = store.record_session("q", "us.anthropic.claude-sonnet-4-6", _fake_loop_result())
     metrics = store.get_session_metrics(session_id)
@@ -108,9 +106,9 @@ def test_get_session_metrics_shape_has_no_backend_internals(isolated_sqlite_db):
 
 
 def test_turns_carry_cache_token_fields(isolated_sqlite_db):
-    """Prompt-caching fields (§6a) — must round-trip even when the loop
-    result predates caching support (turn dicts without the keys), via
-    the .get(..., 0) default in record_session."""
+    """Prompt-caching fields must round-trip even when the loop result
+    predates caching support (turn dicts without the keys), via the
+    .get(..., 0) default in record_session."""
     store = isolated_sqlite_db
     session_id = store.record_session(
         "q",

@@ -39,12 +39,11 @@ def test_verify_credential_raises_invalid_google_token_on_bad_jwt(monkeypatch):
 
 
 def test_verify_credential_passes_our_client_id_as_the_expected_audience(monkeypatch):
-    """The actual risk this guards against: if this server's own
-    GOOGLE_OAUTH_CLIENT_ID weren't correctly threaded through as the
-    audience check, a credential minted for a DIFFERENT app entirely
-    could be accepted here — verify_oauth2_token is what enforces the
-    audience match, but only if we actually pass it our real client_id,
-    not a stale/wrong one."""
+    """If this server's own GOOGLE_OAUTH_CLIENT_ID weren't correctly
+    threaded through as the audience check, a credential minted for a
+    DIFFERENT app entirely could be accepted here — verify_oauth2_token
+    only enforces the audience match if it's actually passed the real
+    client_id, not a stale/wrong one."""
     seen = {}
 
     def _fake_verify(credential, request, client_id):
