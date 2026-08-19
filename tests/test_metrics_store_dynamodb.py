@@ -251,9 +251,6 @@ def test_context_timeline_round_trip_and_cumulative_math(fake_table):
     assert timeline[2]["cumulative_pct"] == 0.08
 
 
-# --- Per-owner data isolation -----------------------------------------
-
-
 def _basic_loop_result(**overrides):
     result = {
         "text": "answer",

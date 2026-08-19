@@ -161,9 +161,6 @@ def test_context_timeline_round_trip_and_cumulative_math(isolated_sqlite_db):
     assert timeline[2]["cumulative_pct"] == 0.08
 
 
-# --- Per-owner data isolation -----------------------------------------
-
-
 def test_owner_none_sees_everything(isolated_sqlite_db):
     """owner=None is the admin/owner-token view — must see sessions
     regardless of who recorded them."""
