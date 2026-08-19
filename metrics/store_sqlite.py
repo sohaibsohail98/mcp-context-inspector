@@ -13,8 +13,8 @@ import time
 import uuid
 from pathlib import Path
 
-from mci_common.config import CONTEXT_WINDOW_TOKENS
 from mci_common.pricing import estimate_cost
+from mci_common.timeline import build_timeline
 
 # Overridable so a deployed container can point writes at an ephemeral
 # path (e.g. /tmp, on a read-only or baked-in image layer) instead of
@@ -118,10 +118,6 @@ def _visible(session_owner, caller_owner):
     """caller_owner=None means "the admin/owner token" — sees
     everything. Otherwise a caller only sees sessions it owns."""
     return caller_owner is None or session_owner == caller_owner
-
-
-def init_db():
-    _connect().close()
 
 
 def record_session(prompt, model_id, loop_result, owner=None):
@@ -320,23 +316,7 @@ def get_context_timeline(session_id, owner=None):
         (session_id,),
     ).fetchall()
     conn.close()
-    blocks = []
-    cumulative_tokens = 0
-    for r in rows:
-        cumulative_tokens += r["token_estimate"]
-        blocks.append(
-            {
-                "category": r["category"],
-                "label": r["label"],
-                "char_count": r["char_count"],
-                "token_estimate": r["token_estimate"],
-                "turn_n": r["turn_n"],
-                "status": r["status"],
-                "cumulative_tokens": cumulative_tokens,
-                "cumulative_pct": round(cumulative_tokens / CONTEXT_WINDOW_TOKENS * 100, 4),
-            }
-        )
-    return blocks
+    return build_timeline(dict(r) for r in rows)
 
 
 def get_recent_sessions(limit=10, owner=None):

@@ -6,6 +6,11 @@
  * short *.workers.dev URL without moving it off Cloud Run.
  *
  * See mcp-context-inspector's docs/DEPLOYMENT.md for the deploy command.
+ *
+ * Identical (proxy logic, not config) to sre-investigation-agent's own
+ * cloudflare-proxy/worker.js, which fronts the chat UI's Cloud Run
+ * service the same way — not shared across repos on purpose (each is
+ * independently deployable), but fix bugs in both copies.
  */
 export default {
   async fetch(request, env) {

@@ -622,6 +622,11 @@ async def auth_login(request: Request):
   // consent screen) — this is NOT verification. The signature is checked
   // server-side in /auth/verify, which is the only place this credential
   // is trusted for anything security-relevant.
+  //
+  // Duplicated verbatim in sre-investigation-agent's web/chat.js (same
+  // function, same purpose, its own consent flow) — deliberately not
+  // shared, since these are two different repos/origins with no build
+  // step between them. Fix bugs in both copies.
   function decodeJwtPayloadForDisplay(token) {{
     try {{
       const base64 = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
@@ -766,8 +771,9 @@ if __name__ == "__main__":
             "\n─── No MCP_AUTH_TOKEN set — generated one for this run "
             + "─" * 10
             + f"\n\n    {mcp_auth_token}\n\n"
-            "This is YOUR (owner) token — paste it into the chat UI's MCP "
-            "connect panel to authenticate.\n"
+            "This is YOUR (owner) token — paste it into any MCP-config-based "
+            "client (Claude Desktop, VS Code, curl) to authenticate. The chat "
+            "UI's own MCP panel uses Google sign-in instead, not this token.\n"
         )
 
     server_port = int(os.environ.get("MCP_SERVER_PORT", "8787"))
