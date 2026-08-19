@@ -195,7 +195,12 @@ async def api_context_timeline(request: Request):
 
 @server.custom_route("/api/record-session", methods=["POST"])
 async def api_record_session(request: Request):
-    body = await request.json()
+    try:
+        body = await request.json()
+    except ValueError:
+        return JSONResponse({"error": "malformed JSON body"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
     try:
         prompt, model_id, loop_result = body["prompt"], body["model_id"], body["loop_result"]
     except KeyError as e:
@@ -410,7 +415,12 @@ async def auth_verify(request: Request):
     if not client_id:
         return JSONResponse({"error": "GOOGLE_OAUTH_CLIENT_ID not configured"}, status_code=503)
 
-    body = await request.json()
+    try:
+        body = await request.json()
+    except ValueError:
+        return JSONResponse({"error": "malformed JSON body"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
     credential = body.get("credential")
     if not credential:
         return JSONResponse({"error": "missing credential"}, status_code=400)

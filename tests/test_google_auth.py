@@ -36,3 +36,27 @@ def test_verify_credential_raises_invalid_google_token_on_bad_jwt(monkeypatch):
     monkeypatch.setattr(google_auth.id_token, "verify_oauth2_token", _raise)
     with pytest.raises(google_auth.InvalidGoogleToken):
         google_auth.verify_credential("expired-jwt", "my-client-id")
+
+
+def test_verify_credential_passes_our_client_id_as_the_expected_audience(monkeypatch):
+    """The actual risk this guards against: if this server's own
+    GOOGLE_OAUTH_CLIENT_ID weren't correctly threaded through as the
+    audience check, a credential minted for a DIFFERENT app entirely
+    could be accepted here — verify_oauth2_token is what enforces the
+    audience match, but only if we actually pass it our real client_id,
+    not a stale/wrong one."""
+    seen = {}
+
+    def _fake_verify(credential, request, client_id):
+        seen["client_id"] = client_id
+        if client_id != "the-real-client-id":
+            raise ValueError("Wrong audience")
+        return {"sub": "12345", "email": "a@example.com"}
+
+    monkeypatch.setattr(google_auth.id_token, "verify_oauth2_token", _fake_verify)
+
+    google_auth.verify_credential("jwt-for-a-different-app", "the-real-client-id")
+    assert seen["client_id"] == "the-real-client-id"
+
+    with pytest.raises(google_auth.InvalidGoogleToken):
+        google_auth.verify_credential("jwt-for-a-different-app", "some-other-client-id")

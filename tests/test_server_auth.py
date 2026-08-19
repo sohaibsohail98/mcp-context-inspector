@@ -177,3 +177,78 @@ def test_api_record_session_requires_auth(client):
         json={"prompt": "q", "model_id": "m", "loop_result": _basic_loop_result()},
     )
     assert resp.status_code == 401
+
+
+def test_api_record_session_malformed_json_body_is_a_400_not_a_500(client):
+    """The actual bug: request.json() on a non-JSON body raised an
+    unhandled JSONDecodeError, surfacing as an internal server error
+    to any client (or any friend's agent) that sent a malformed
+    request — not a clean, documented 400."""
+    resp = client.post(
+        "/api/record-session",
+        content=b"not json at all",
+        headers={"Authorization": "Bearer owner-secret", "Content-Type": "application/json"},
+    )
+    assert resp.status_code == 400
+
+
+def test_api_record_session_non_object_json_body_is_a_400(client):
+    resp = client.post(
+        "/api/record-session",
+        content=b"[1, 2, 3]",
+        headers={"Authorization": "Bearer owner-secret", "Content-Type": "application/json"},
+    )
+    assert resp.status_code == 400
+
+
+def test_auth_verify_malformed_json_body_is_a_400_not_a_500(client, monkeypatch):
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
+    resp = client.post(
+        "/auth/verify",
+        content=b"not json at all",
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 400
+
+
+def test_auth_verify_non_object_json_body_is_a_400(client, monkeypatch):
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
+    resp = client.post(
+        "/auth/verify",
+        content=b'"just a string"',
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 400
+
+
+# --- Full route sweep: every protected route must reject a garbage token
+
+
+_PROTECTED_ROUTES = [
+    ("GET", "/api/sessions"),
+    ("GET", "/api/sessions/some-id"),
+    ("GET", "/api/tool-metrics"),
+    ("GET", "/api/cost"),
+    ("GET", "/api/context-timeline/some-id"),
+    ("POST", "/api/record-session"),
+]
+
+
+@pytest.mark.parametrize("method,path", _PROTECTED_ROUTES)
+def test_every_protected_route_rejects_garbage_token(client, method, path):
+    """A sweep, not a sample — every /api/* route must reject an
+    unrecognized bearer token, not just the ones covered by earlier
+    spot-checks. Adding a new route without wiring it into
+    MultiTokenAuthMiddleware's prefix match would otherwise ship
+    silently open."""
+    resp = client.request(
+        method, path, json={} if method == "POST" else None,
+        headers={"Authorization": "Bearer complete-nonsense-token"},
+    )
+    assert resp.status_code == 401
+
+
+@pytest.mark.parametrize("method,path", _PROTECTED_ROUTES)
+def test_every_protected_route_rejects_missing_token(client, method, path):
+    resp = client.request(method, path, json={} if method == "POST" else None)
+    assert resp.status_code == 401

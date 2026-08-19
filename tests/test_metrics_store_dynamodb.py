@@ -316,3 +316,33 @@ def test_owner_defaults_to_none_backward_compatible(fake_table):
     session_id = store_dynamodb.record_session("q", "m", _basic_loop_result())
     assert store_dynamodb.get_session_metrics(session_id) is not None
     assert len(store_dynamodb.get_recent_sessions()) == 1
+
+
+def test_owner_filtering_survives_scan_pagination(fake_table):
+    """The actual risk: get_recent_sessions/get_cost_estimate/get_tool_metrics
+    with an owner filter all go through _scan_all, which pages. If owner
+    filtering were applied only to the first page (e.g. a bug that
+    filtered client-side after truncating), alice's later-paginated
+    sessions would silently vanish from her own view."""
+    for i in range(5):
+        store_dynamodb.record_session(f"alice's q{i}", "m", _basic_loop_result(), owner="alice-sub")
+    for i in range(5):
+        store_dynamodb.record_session(f"bob's q{i}", "m", _basic_loop_result(), owner="bob-sub")
+    # Force every scan (get_recent_sessions, get_cost_estimate,
+    # get_tool_metrics's _owned_session_ids lookup) to page one item at
+    # a time — the real bug this guards against only shows up past a
+    # single page.
+    fake_table.page_size = 1
+
+    alice_sessions = store_dynamodb.get_recent_sessions(limit=10, owner="alice-sub")
+    assert len(alice_sessions) == 5
+    assert all(s["prompt"].startswith("alice's") for s in alice_sessions)
+
+    alice_cost = store_dynamodb.get_cost_estimate(owner="alice-sub")
+    total_cost = store_dynamodb.get_cost_estimate()
+    assert alice_cost * 2 == pytest.approx(total_cost)
+
+    alice_tools = store_dynamodb.get_tool_metrics(owner="alice-sub")
+    assert alice_tools[0]["calls"] == 5
+    all_tools = store_dynamodb.get_tool_metrics()
+    assert all_tools[0]["calls"] == 10

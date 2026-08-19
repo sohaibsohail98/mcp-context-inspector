@@ -1,0 +1,21 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv venv && uv pip install -e ".[dev]"
+      # Pure unit/in-process integration tests — no AWS credentials, no
+      # real DynamoDB, no real Google network calls (verify_credential
+      # is monkeypatched everywhere it's tested). Runs on every push and
+      # PR so a regression in the MCP server itself is caught before it
+      # ships — this package is meant to be handed to other people, so
+      # it needs to hold up on its own, not just "worked when I ran it
+      # locally once."
+      - run: uv run python -m pytest -v
