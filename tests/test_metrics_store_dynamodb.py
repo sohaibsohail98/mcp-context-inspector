@@ -44,9 +44,15 @@ class FakeTable:
         self.items = items or []
         self.page_size = page_size
 
-    def _apply_filter(self, expr, values):
+    def _apply_filter(self, expr, values, names=None):
         if expr is None:
             return list(self.items)
+        if expr.strip() == "sk = :sk AND #o = :owner":
+            owner_attr = (names or {})["#o"]
+            return [
+                i for i in self.items
+                if i["sk"] == values[":sk"] and i.get(owner_attr) == values[":owner"]
+            ]
         if expr.startswith("begins_with"):
             prefix = values[":prefix"]
             return [i for i in self.items if i["sk"].startswith(prefix)]
@@ -55,8 +61,8 @@ class FakeTable:
             return [i for i in self.items if i["sk"] == val]
         raise NotImplementedError(expr)
 
-    def scan(self, FilterExpression=None, ExpressionAttributeValues=None, ExclusiveStartKey=None, **_):
-        filtered = self._apply_filter(FilterExpression, ExpressionAttributeValues)
+    def scan(self, FilterExpression=None, ExpressionAttributeValues=None, ExpressionAttributeNames=None, ExclusiveStartKey=None, **_):
+        filtered = self._apply_filter(FilterExpression, ExpressionAttributeValues, ExpressionAttributeNames)
         start = ExclusiveStartKey or 0
         page = filtered[start : start + self.page_size]
         resp = {"Items": page}
@@ -243,3 +249,70 @@ def test_context_timeline_round_trip_and_cumulative_math(fake_table):
     assert timeline[2]["status"] == "error"
     assert timeline[0]["status"] is None
     assert timeline[2]["cumulative_pct"] == 0.08
+
+
+# --- Per-owner data isolation -----------------------------------------
+
+
+def _basic_loop_result(**overrides):
+    result = {
+        "text": "answer",
+        "trace": [{"tool": "list_services", "args": {}, "status": "ok"}],
+        "turns": [{"input_tokens": 10, "output_tokens": 5, "latency_ms": 100}],
+        "input_tokens": 10,
+        "output_tokens": 5,
+        "total_tokens": 15,
+        "latency_ms": 100,
+    }
+    result.update(overrides)
+    return result
+
+
+def test_owner_none_sees_everything(fake_table):
+    store_dynamodb.record_session("q1", "m", _basic_loop_result(), owner="alice-sub")
+    store_dynamodb.record_session("q2", "m", _basic_loop_result(), owner="bob-sub")
+    store_dynamodb.record_session("q3", "m", _basic_loop_result())
+    assert len(store_dynamodb.get_recent_sessions(limit=10)) == 3
+
+
+def test_owner_only_sees_own_sessions(fake_table):
+    store_dynamodb.record_session("alice's q", "m", _basic_loop_result(), owner="alice-sub")
+    store_dynamodb.record_session("bob's q", "m", _basic_loop_result(), owner="bob-sub")
+
+    alice_sessions = store_dynamodb.get_recent_sessions(limit=10, owner="alice-sub")
+    assert len(alice_sessions) == 1
+    assert alice_sessions[0]["prompt"] == "alice's q"
+
+
+def test_owner_cannot_read_another_owners_session_by_id(fake_table):
+    session_id = store_dynamodb.record_session("alice's q", "m", _basic_loop_result(), owner="alice-sub")
+
+    assert store_dynamodb.get_session_metrics(session_id, owner="bob-sub") is None
+    assert store_dynamodb.get_token_breakdown(session_id, owner="bob-sub") == []
+    assert store_dynamodb.get_agent_trace(session_id, owner="bob-sub") == []
+    assert store_dynamodb.get_context_timeline(session_id, owner="bob-sub") == []
+    assert store_dynamodb.get_tool_metrics(session_id, owner="bob-sub") == []
+    assert store_dynamodb.get_cost_estimate(session_id, owner="bob-sub") is None
+
+    assert store_dynamodb.get_session_metrics(session_id, owner="alice-sub") is not None
+    assert store_dynamodb.get_session_metrics(session_id, owner=None) is not None
+
+
+def test_owner_aggregate_cost_and_tool_metrics_filtered(fake_table):
+    store_dynamodb.record_session("alice's q", "m", _basic_loop_result(), owner="alice-sub")
+    store_dynamodb.record_session("bob's q", "m", _basic_loop_result(), owner="bob-sub")
+
+    alice_cost = store_dynamodb.get_cost_estimate(owner="alice-sub")
+    total_cost = store_dynamodb.get_cost_estimate()
+    assert 0 < alice_cost < total_cost
+
+    alice_tools = store_dynamodb.get_tool_metrics(owner="alice-sub")
+    assert len(alice_tools) == 1
+    all_tools = store_dynamodb.get_tool_metrics()
+    assert all_tools[0]["calls"] == 2
+
+
+def test_owner_defaults_to_none_backward_compatible(fake_table):
+    session_id = store_dynamodb.record_session("q", "m", _basic_loop_result())
+    assert store_dynamodb.get_session_metrics(session_id) is not None
+    assert len(store_dynamodb.get_recent_sessions()) == 1

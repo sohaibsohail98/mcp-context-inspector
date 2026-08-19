@@ -161,3 +161,68 @@ def test_context_timeline_round_trip_and_cumulative_math(isolated_sqlite_db):
     assert timeline[0]["status"] is None
     # 160 / 200_000 * 100
     assert timeline[2]["cumulative_pct"] == 0.08
+
+
+# --- Per-owner data isolation -----------------------------------------
+
+
+def test_owner_none_sees_everything(isolated_sqlite_db):
+    """owner=None is the admin/owner-token view — must see sessions
+    regardless of who recorded them."""
+    store = isolated_sqlite_db
+    store.record_session("q1", "m", _fake_loop_result(), owner="alice-sub")
+    store.record_session("q2", "m", _fake_loop_result(), owner="bob-sub")
+    store.record_session("q3", "m", _fake_loop_result())  # owner=None too
+    assert len(store.get_recent_sessions(limit=10)) == 3
+
+
+def test_owner_only_sees_own_sessions(isolated_sqlite_db):
+    store = isolated_sqlite_db
+    store.record_session("alice's q", "m", _fake_loop_result(), owner="alice-sub")
+    store.record_session("bob's q", "m", _fake_loop_result(), owner="bob-sub")
+
+    alice_sessions = store.get_recent_sessions(limit=10, owner="alice-sub")
+    assert len(alice_sessions) == 1
+    assert alice_sessions[0]["prompt"] == "alice's q"
+
+
+def test_owner_cannot_read_another_owners_session_by_id(isolated_sqlite_db):
+    """Guessing/leaking a session_id must not bypass ownership — reads
+    as "not found," identical to a genuinely nonexistent session_id."""
+    store = isolated_sqlite_db
+    session_id = store.record_session("alice's q", "m", _fake_loop_result(), owner="alice-sub")
+
+    assert store.get_session_metrics(session_id, owner="bob-sub") is None
+    assert store.get_token_breakdown(session_id, owner="bob-sub") == []
+    assert store.get_agent_trace(session_id, owner="bob-sub") == []
+    assert store.get_context_timeline(session_id, owner="bob-sub") == []
+    assert store.get_tool_metrics(session_id, owner="bob-sub") == []
+    assert store.get_cost_estimate(session_id, owner="bob-sub") is None
+
+    # The actual owner, and the admin (owner=None), both still can.
+    assert store.get_session_metrics(session_id, owner="alice-sub") is not None
+    assert store.get_session_metrics(session_id, owner=None) is not None
+
+
+def test_owner_aggregate_cost_and_tool_metrics_filtered(isolated_sqlite_db):
+    store = isolated_sqlite_db
+    store.record_session("alice's q", "m", _fake_loop_result(), owner="alice-sub")
+    store.record_session("bob's q", "m", _fake_loop_result(), owner="bob-sub")
+
+    alice_cost = store.get_cost_estimate(owner="alice-sub")
+    total_cost = store.get_cost_estimate()
+    assert 0 < alice_cost < total_cost
+
+    alice_tools = store.get_tool_metrics(owner="alice-sub")
+    assert len(alice_tools) == 1  # list_services, from alice's one session
+    all_tools = store.get_tool_metrics()
+    assert all_tools[0]["calls"] == 2  # both sessions used list_services once each
+
+
+def test_owner_defaults_to_none_backward_compatible(isolated_sqlite_db):
+    """Every owner param defaults to None (admin view) — existing callers
+    that never pass owner keep working exactly as before this feature."""
+    store = isolated_sqlite_db
+    session_id = store.record_session("q", "m", _fake_loop_result())
+    assert store.get_session_metrics(session_id) is not None
+    assert len(store.get_recent_sessions()) == 1

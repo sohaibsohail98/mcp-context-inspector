@@ -29,7 +29,8 @@ _SCHEMA = """
         latency_ms INTEGER,
         tool_call_count INTEGER,
         estimated_cost REAL,
-        timestamp REAL
+        timestamp REAL,
+        owner TEXT
     );
     CREATE TABLE IF NOT EXISTS turns (
         session_id TEXT,
@@ -77,6 +78,18 @@ def _migrate_turns_table(conn):
             conn.execute(f"ALTER TABLE turns ADD COLUMN {column} INTEGER DEFAULT 0")
 
 
+def _migrate_sessions_table(conn):
+    """Same reasoning as _migrate_turns_table — a sessions table that
+    predates per-owner data isolation has no `owner` column. Existing
+    rows get owner=NULL, meaning "recorded before ownership existed" —
+    treated the same as the server owner's own sessions (visible with
+    the admin/owner token, invisible to any per-user token's filtered
+    view)."""
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(sessions)")}
+    if "owner" not in existing:
+        conn.execute("ALTER TABLE sessions ADD COLUMN owner TEXT")
+
+
 def _connect():
     # CREATE TABLE IF NOT EXISTS is cheap and idempotent, so every caller
     # (record AND every read) gets a guaranteed-initialized DB through
@@ -87,23 +100,38 @@ def _connect():
     conn.row_factory = sqlite3.Row
     conn.executescript(_SCHEMA)
     _migrate_turns_table(conn)
+    _migrate_sessions_table(conn)
     conn.commit()
     return conn
+
+
+def _session_owner(conn, session_id):
+    row = conn.execute("SELECT owner FROM sessions WHERE session_id=?", (session_id,)).fetchone()
+    return row["owner"] if row else None
+
+
+def _visible(session_owner, caller_owner):
+    """caller_owner=None means "the admin/owner token" — sees
+    everything. Otherwise a caller only sees sessions it owns."""
+    return caller_owner is None or session_owner == caller_owner
 
 
 def init_db():
     _connect().close()
 
 
-def record_session(prompt, model_id, loop_result):
-    """loop_result is runtime.run_agent_loop()'s return dict."""
+def record_session(prompt, model_id, loop_result, owner=None):
+    """loop_result is runtime.run_agent_loop()'s return dict. owner is
+    the Google account `sub` that recorded this session, or None for
+    the server owner's own (e.g. the local agent calling this directly,
+    not through an authenticated MCP connection) — see _visible()."""
     session_id = str(uuid.uuid4())
     cost = estimate_cost(model_id, loop_result["input_tokens"], loop_result["output_tokens"])
     ts = time.time()
 
     conn = _connect()
     conn.execute(
-        "INSERT INTO sessions VALUES (?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO sessions VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         (
             session_id,
             prompt,
@@ -115,6 +143,7 @@ def record_session(prompt, model_id, loop_result):
             len(loop_result["trace"]),
             cost,
             ts,
+            owner,
         ),
     )
     for i, turn in enumerate(loop_result["turns"]):
@@ -157,17 +186,22 @@ def record_session(prompt, model_id, loop_result):
 # --- Reads — shared by MCP tools and dashboard REST routes -----------------
 
 
-def get_session_metrics(session_id):
+def get_session_metrics(session_id, owner=None):
     """Session metadata split from per-prompt processing metrics — the two
     are conceptually different (identity/timing vs. what it cost to
     answer this prompt), so callers get them as separate sub-dicts rather
-    than one flat blob."""
+    than one flat blob. owner=None (the admin/owner token) sees any
+    session; a per-user owner only sees sessions it owns — everything
+    else reads as "not found," the same shape as a genuinely missing
+    session_id, so this can't be used to probe which session_ids exist."""
     conn = _connect()
     row = conn.execute("SELECT * FROM sessions WHERE session_id=?", (session_id,)).fetchone()
     conn.close()
     if not row:
         return None
     row = dict(row)
+    if not _visible(row["owner"], owner):
+        return None
     return {
         "session": {
             "session_id": row["session_id"],
@@ -186,8 +220,11 @@ def get_session_metrics(session_id):
     }
 
 
-def get_token_breakdown(session_id):
+def get_token_breakdown(session_id, owner=None):
     conn = _connect()
+    if not _visible(_session_owner(conn, session_id), owner):
+        conn.close()
+        return []
     rows = conn.execute(
         "SELECT turn_n, input_tokens, output_tokens, latency_ms, "
         "cache_read_input_tokens, cache_write_input_tokens FROM turns "
@@ -198,13 +235,23 @@ def get_token_breakdown(session_id):
     return [dict(r) for r in rows]
 
 
-def get_tool_metrics(session_id=None):
+def get_tool_metrics(session_id=None, owner=None):
     conn = _connect()
     if session_id:
+        if not _visible(_session_owner(conn, session_id), owner):
+            conn.close()
+            return []
         rows = conn.execute(
             "SELECT tool_name, status, COUNT(*) as calls FROM tool_calls "
             "WHERE session_id=? GROUP BY tool_name, status",
             (session_id,),
+        ).fetchall()
+    elif owner is not None:
+        rows = conn.execute(
+            "SELECT tool_name, status, COUNT(*) as calls FROM tool_calls "
+            "WHERE session_id IN (SELECT session_id FROM sessions WHERE owner=?) "
+            "GROUP BY tool_name, status",
+            (owner,),
         ).fetchall()
     else:
         rows = conn.execute(
@@ -215,8 +262,11 @@ def get_tool_metrics(session_id=None):
     return [dict(r) for r in rows]
 
 
-def get_agent_trace(session_id):
+def get_agent_trace(session_id, owner=None):
     conn = _connect()
+    if not _visible(_session_owner(conn, session_id), owner):
+        conn.close()
+        return []
     rows = conn.execute(
         "SELECT tool_name, args, status FROM tool_calls WHERE session_id=? ORDER BY seq",
         (session_id,),
@@ -228,30 +278,41 @@ def get_agent_trace(session_id):
     ]
 
 
-def get_cost_estimate(session_id=None, period_seconds=None):
+def get_cost_estimate(session_id=None, period_seconds=None, owner=None):
     conn = _connect()
     if session_id:
         row = conn.execute(
-            "SELECT estimated_cost FROM sessions WHERE session_id=?", (session_id,)
+            "SELECT estimated_cost, owner FROM sessions WHERE session_id=?", (session_id,)
         ).fetchone()
         conn.close()
-        return row["estimated_cost"] if row else None
+        if not row or not _visible(row["owner"], owner):
+            return None
+        return row["estimated_cost"]
 
     since = time.time() - period_seconds if period_seconds else 0
-    row = conn.execute(
-        "SELECT SUM(estimated_cost) as total FROM sessions WHERE timestamp >= ?", (since,)
-    ).fetchone()
+    if owner is not None:
+        row = conn.execute(
+            "SELECT SUM(estimated_cost) as total FROM sessions WHERE timestamp >= ? AND owner=?",
+            (since, owner),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT SUM(estimated_cost) as total FROM sessions WHERE timestamp >= ?", (since,)
+        ).fetchone()
     conn.close()
     return row["total"] or 0.0
 
 
-def get_context_timeline(session_id):
+def get_context_timeline(session_id, owner=None):
     """Ordered, categorized breakdown of everything that entered this
     session's context window, with a running cumulative_tokens/
     cumulative_pct — token_estimate is a character-based estimate (see
     agent/runtime.py), not exact Bedrock usage, so cumulative_pct is
     illustrative too."""
     conn = _connect()
+    if not _visible(_session_owner(conn, session_id), owner):
+        conn.close()
+        return []
     rows = conn.execute(
         "SELECT category, label, char_count, token_estimate, turn_n, status FROM context_blocks "
         "WHERE session_id=? ORDER BY seq",
@@ -277,12 +338,19 @@ def get_context_timeline(session_id):
     return blocks
 
 
-def get_recent_sessions(limit=10):
+def get_recent_sessions(limit=10, owner=None):
     conn = _connect()
-    rows = conn.execute(
-        "SELECT session_id, prompt, model, total_tokens, estimated_cost, timestamp "
-        "FROM sessions ORDER BY timestamp DESC LIMIT ?",
-        (limit,),
-    ).fetchall()
+    if owner is not None:
+        rows = conn.execute(
+            "SELECT session_id, prompt, model, total_tokens, estimated_cost, timestamp "
+            "FROM sessions WHERE owner=? ORDER BY timestamp DESC LIMIT ?",
+            (owner, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT session_id, prompt, model, total_tokens, estimated_cost, timestamp "
+            "FROM sessions ORDER BY timestamp DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
     conn.close()
     return [dict(r) for r in rows]

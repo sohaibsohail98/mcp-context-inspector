@@ -126,3 +126,54 @@ def test_signing_in_twice_returns_the_same_token_end_to_end(client, monkeypatch,
     first = client.post("/auth/verify", json={"credential": "fake-jwt"}).json()["mcp_token"]
     second = client.post("/auth/verify", json={"credential": "fake-jwt"}).json()["mcp_token"]
     assert first == second
+
+
+# --- /api/record-session + REST-level ownership -----------------------
+
+
+def _basic_loop_result():
+    return {
+        "trace": [],
+        "turns": [{"input_tokens": 10, "output_tokens": 5, "latency_ms": 100}],
+        "input_tokens": 10,
+        "output_tokens": 5,
+        "total_tokens": 15,
+        "latency_ms": 100,
+    }
+
+
+def test_api_record_session_attributes_to_the_calling_token(client, isolated_auth_store):
+    alice_token = isolated_auth_store.get_or_create_token("alice-sub", "alice@example.com")
+    bob_token = isolated_auth_store.get_or_create_token("bob-sub", "bob@example.com")
+
+    client.post(
+        "/api/record-session",
+        json={"prompt": "alice's q", "model_id": "m", "loop_result": _basic_loop_result()},
+        headers={"Authorization": f"Bearer {alice_token}"},
+    )
+
+    alice_view = client.get("/api/sessions", headers={"Authorization": f"Bearer {alice_token}"}).json()
+    bob_view = client.get("/api/sessions", headers={"Authorization": f"Bearer {bob_token}"}).json()
+    owner_view = client.get("/api/sessions", headers={"Authorization": "Bearer owner-secret"}).json()
+
+    assert len(alice_view) == 1
+    assert alice_view[0]["prompt"] == "alice's q"
+    assert bob_view == []
+    assert len(owner_view) == 1
+
+
+def test_api_record_session_missing_field_is_a_400(client):
+    resp = client.post(
+        "/api/record-session",
+        json={"prompt": "q", "model_id": "m"},  # missing loop_result
+        headers={"Authorization": "Bearer owner-secret"},
+    )
+    assert resp.status_code == 400
+
+
+def test_api_record_session_requires_auth(client):
+    resp = client.post(
+        "/api/record-session",
+        json={"prompt": "q", "model_id": "m", "loop_result": _basic_loop_result()},
+    )
+    assert resp.status_code == 401
