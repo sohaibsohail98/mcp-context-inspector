@@ -128,9 +128,6 @@ def test_signing_in_twice_returns_the_same_token_end_to_end(client, monkeypatch,
     assert first == second
 
 
-# --- /api/record-session + REST-level ownership -----------------------
-
-
 def _basic_loop_result():
     return {
         "trace": [],
@@ -219,9 +216,6 @@ def test_auth_verify_non_object_json_body_is_a_400(client, monkeypatch):
         headers={"Content-Type": "application/json"},
     )
     assert resp.status_code == 400
-
-
-# --- Full route sweep: every protected route must reject a garbage token
 
 
 _PROTECTED_ROUTES = [
