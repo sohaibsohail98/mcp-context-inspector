@@ -429,6 +429,29 @@ _PAGE_STYLE = """
   .preview-block .tok { font-family: ui-monospace, monospace; color: var(--text-dimmer); font-size: 0.72rem; }
   .byline { text-align: center; font-size: 0.82rem; color: var(--text-dimmer); margin: -1rem 0 2rem; }
   .byline a { color: var(--text-dim); }
+
+  /* Live dashboard — sessions list + Context Window Explorer, shown to
+     every authenticated user for their own data right after Authorize.
+     Reuses .preview-bar/.preview-legend/.preview-block from the landing
+     hero preview above — same visual language, real data instead of a
+     static mock. */
+  .dash-sessions { display: grid; gap: 0.4rem; margin-top: 0.9rem; max-height: 15rem; overflow-y: auto; }
+  .session-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
+    padding: 0.6rem 0.75rem; border-radius: 10px; border: 1px solid var(--border);
+    background: var(--bg-raised-2); cursor: pointer; font-size: 0.82rem; transition: border-color 0.15s ease;
+  }
+  .session-row:hover { border-color: #3a4459; }
+  .session-row.active { border-color: rgba(53,224,200,0.4); background: var(--accent-dim); }
+  .session-row .s-prompt { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+  .session-row .s-meta { color: var(--text-dimmer); font-size: 0.72rem; font-family: ui-monospace, monospace; flex-shrink: 0; margin-left: 0.75rem; }
+  .dash-detail { margin-top: 1.1rem; }
+  .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 0.6rem; margin: 0.9rem 0 1.2rem; }
+  .metric-tile { border: 1px solid var(--border-soft); border-radius: 10px; padding: 0.6rem 0.7rem; background: var(--bg-raised-2); }
+  .metric-tile .m-label { font-size: 0.68rem; color: var(--text-dimmer); text-transform: uppercase; letter-spacing: 0.04em; }
+  .metric-tile .m-value { font-size: 1.05rem; font-weight: 650; color: var(--text); margin-top: 0.15rem; font-family: ui-monospace, monospace; }
+  .dash-empty, .dash-error { color: var(--text-dim); font-size: 0.85rem; }
+  .dash-error { color: var(--warn); }
 """
 
 
@@ -559,6 +582,7 @@ async def auth_login(request: Request):
         <div style="display: flex; gap: 0.5rem; margin-top: 0.8rem;">
           <button class="copy" onclick="copyText('token-raw')">Copy token</button>
           <button class="copy" onclick="copyText('url-raw')">Copy URL</button>
+          <button class="copy" onclick="signOut()">Sign out</button>
         </div>
         <span id="token-raw" class="hidden">` + token + `</span>
         <span id="url-raw" class="hidden">` + mcpUrl + `</span>
@@ -596,6 +620,15 @@ async def auth_login(request: Request):
         </div>
       </div>
 
+      <div class="card accent">
+        <h3>Live dashboard <span class="badge">auto-refreshes</span></h3>
+        <p class="card-hint">Your own sessions only — every ` + "`record_session`" + ` call from your LLM/agent
+        (recorded through the token above) shows up here within a few seconds, including the full
+        Context Window Explorer breakdown. No separate app needed.</p>
+        <div id="dash-sessions" class="dash-sessions"><p class="dash-empty">Loading…</p></div>
+        <div id="dash-detail" class="dash-detail"></div>
+      </div>
+
       <details>
         <summary>How do I record my own agent's sessions here, not just read?</summary>
         <p>Call the <code>record_session</code> MCP tool (or POST <code>/api/record-session</code>) with the same
@@ -617,6 +650,132 @@ async def auth_login(request: Request):
 
   function copyText(id) {{
     navigator.clipboard.writeText(document.getElementById(id).textContent);
+  }}
+
+  // --- Live dashboard ------------------------------------------------
+  // Renders each authenticated caller's own sessions right on this page,
+  // via the same /api/* routes and bearer token an LLM/agent uses — no
+  // separate client needed to actually see what got recorded. Every
+  // read here is already owner-scoped server-side (see
+  // MultiTokenAuthMiddleware + metrics/store.py's owner filtering), so
+  // this page can never show another user's data even if it tried to.
+
+  const CATEGORY_COLORS = {{
+    system: "#6b7280", tools: "#8b98ac", user: "#e4eaf3", reasoning: "var(--accent)",
+    thinking: "#c084fc", tool_call: "var(--warn)", tool_result: "#4ade80", answer: "var(--accent-2)",
+  }};
+
+  async function apiGet(token, path) {{
+    const res = await fetch(path, {{ headers: {{ Authorization: "Bearer " + token }} }});
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    return res.json();
+  }}
+
+  function fmtCost(v) {{ return "$" + (v || 0).toFixed(4); }}
+
+  let dashboardTimer = null;
+  let dashboardSelected = null;
+
+  function renderSessionRow(s) {{
+    const prompt = (s.prompt || "(no prompt)").slice(0, 60);
+    const active = s.session_id === dashboardSelected ? " active" : "";
+    return `
+      <div class="session-row` + active + `" data-id="` + s.session_id + `" onclick="selectSession(event)">
+        <span class="s-prompt">` + prompt + `</span>
+        <span class="s-meta">` + s.total_tokens + ` tok &middot; ` + fmtCost(s.estimated_cost) + `</span>
+      </div>`;
+  }}
+
+  function renderContextBlock(b) {{
+    const color = CATEGORY_COLORS[b.category] || "#6b7280";
+    return `
+      <div class="preview-block">
+        <span class="label"><i style="background:` + color + `;"></i>` + (b.label || b.category) + `</span>
+        <span class="tok">` + b.token_estimate + ` tok &middot; ` + b.cumulative_pct + `%</span>
+      </div>`;
+  }}
+
+  function renderSessionDetail(detail, timeline) {{
+    const m = detail.metrics.prompt_metrics;
+    const total = timeline.length ? timeline[timeline.length - 1].cumulative_tokens : 0;
+    const bar = timeline.map((b) => {{
+      const color = CATEGORY_COLORS[b.category] || "#6b7280";
+      const pct = total ? (b.token_estimate / total * 100) : 0;
+      return '<div style="width:' + pct + '%; background:' + color + ';"></div>';
+    }}).join("");
+    const blocks = timeline.length
+      ? timeline.map(renderContextBlock).join("")
+      : '<p class="dash-empty">No context_blocks for this session — record_session was called without the optional field.</p>';
+    return `
+      <div class="metric-grid">
+        <div class="metric-tile"><div class="m-label">Tokens</div><div class="m-value">` + m.total_tokens + `</div></div>
+        <div class="metric-tile"><div class="m-label">Cost</div><div class="m-value">` + fmtCost(m.estimated_cost) + `</div></div>
+        <div class="metric-tile"><div class="m-label">Latency</div><div class="m-value">` + m.latency_ms + `ms</div></div>
+        <div class="metric-tile"><div class="m-label">Tool calls</div><div class="m-value">` + m.tool_call_count + `</div></div>
+      </div>
+      <h3 style="font-size:0.85rem; color: var(--text-dim); margin-bottom:0.5rem;">Context Window Explorer</h3>
+      <div class="preview-bar">` + bar + `</div>
+      <div class="preview-legend">
+        <span><i style="background:#6b7280;"></i>system</span>
+        <span><i style="background:#8b98ac;"></i>tools</span>
+        <span><i style="background:#e4eaf3;"></i>user</span>
+        <span><i style="background:var(--accent);"></i>reasoning</span>
+        <span><i style="background:#c084fc;"></i>thinking</span>
+        <span><i style="background:var(--warn);"></i>tool call</span>
+        <span><i style="background:#4ade80;"></i>tool result</span>
+        <span><i style="background:var(--accent-2);"></i>answer</span>
+      </div>
+      ` + blocks + `
+    `;
+  }}
+
+  async function selectSession(evt) {{
+    const sessionId = evt.currentTarget.dataset.id;
+    dashboardSelected = sessionId;
+    document.querySelectorAll(".session-row").forEach((r) => r.classList.toggle("active", r.dataset.id === sessionId));
+    const detailEl = document.getElementById("dash-detail");
+    if (!detailEl) return;
+    detailEl.innerHTML = '<p class="dash-empty">Loading…</p>';
+    try {{
+      const token = detailEl.dataset.token;
+      const [detail, timeline] = await Promise.all([
+        apiGet(token, "/api/sessions/" + sessionId),
+        apiGet(token, "/api/context-timeline/" + sessionId),
+      ]);
+      detailEl.innerHTML = renderSessionDetail(detail, timeline);
+    }} catch (err) {{
+      detailEl.innerHTML = '<p class="dash-error">Failed to load session: ' + err.message + '</p>';
+    }}
+  }}
+
+  async function refreshDashboard(token) {{
+    const listEl = document.getElementById("dash-sessions");
+    if (!listEl) {{ clearInterval(dashboardTimer); return; }}
+    try {{
+      const sessions = await apiGet(token, "/api/sessions?limit=15");
+      if (!sessions.length) {{
+        listEl.innerHTML = '<p class="dash-empty">No sessions recorded yet — call the record_session tool (or run your agent) and this list fills in automatically, no page refresh needed.</p>';
+        return;
+      }}
+      listEl.innerHTML = sessions.map(renderSessionRow).join("");
+      if (!sessions.some((s) => s.session_id === dashboardSelected)) {{
+        const row = listEl.querySelector(".session-row");
+        if (row) row.click();
+      }}
+    }} catch (err) {{
+      listEl.innerHTML = '<p class="dash-error">Failed to load sessions: ' + err.message + '</p>';
+    }}
+  }}
+
+  // One poll loop per page load; re-mounting (e.g. signing in again)
+  // clears the previous timer instead of stacking a second one.
+  function mountDashboard(token) {{
+    const detailEl = document.getElementById("dash-detail");
+    if (detailEl) detailEl.dataset.token = token;
+    dashboardSelected = null;
+    if (dashboardTimer) clearInterval(dashboardTimer);
+    refreshDashboard(token);
+    dashboardTimer = setInterval(() => refreshDashboard(token), 8000);
   }}
 
   // Decodes a Google ID token's payload for DISPLAY only (email, in the
@@ -711,7 +870,9 @@ async def auth_login(request: Request):
       const data = await res.json();
       pendingCredential = null;
       if (res.ok) {{
+        persistSession(data.mcp_token, data.email);
         landing.innerHTML = successBanner(data.email) + connectPage(data.email, data.mcp_token);
+        mountDashboard(data.mcp_token);
       }} else {{
         landing.innerHTML = "<div class='card security'>Sign-in failed: " + (data.error || "unknown error") + "</div>";
       }}
@@ -720,6 +881,53 @@ async def auth_login(request: Request):
       landing.innerHTML = "<div class='card security'>Sign-in failed: " + err.message + "</div>";
     }}
   }}
+
+  // --- Browser persistence ---------------------------------------------
+  // localStorage (not sessionStorage) — deliberately survives closing
+  // the browser entirely, same trust model as staying signed into any
+  // other Google-backed site: whoever authorized here once sees their
+  // own dashboard again next visit with no re-auth, until they sign out
+  // or the token is revoked server-side (see the README's "Can this
+  // token be revoked?"). Nothing else is ever stored here — the token
+  // itself is the only credential, same one shown in the "Your
+  // connection" card and handed to your MCP client's config.
+  const SS_TOKEN = "mci_token";
+  const SS_EMAIL = "mci_email";
+
+  function persistSession(token, email) {{
+    localStorage.setItem(SS_TOKEN, token);
+    localStorage.setItem(SS_EMAIL, email);
+  }}
+
+  function signOut() {{
+    localStorage.removeItem(SS_TOKEN);
+    localStorage.removeItem(SS_EMAIL);
+    pendingCredential = null;
+    dashboardSelected = null;
+    if (dashboardTimer) clearInterval(dashboardTimer);
+    document.getElementById("landing").classList.add("hidden");
+    document.getElementById("landing").innerHTML = "";
+    document.getElementById("intro").classList.remove("hidden");
+  }}
+
+  // Runs once on load. A stored token is trusted enough to render the
+  // dashboard immediately (no flash of the sign-in screen), but then
+  // verified with a real request — a token revoked server-side since
+  // the last visit signs this browser back out instead of showing a
+  // dashboard that just 401s on every fetch.
+  function rehydrateFromStorage() {{
+    const token = localStorage.getItem(SS_TOKEN);
+    const email = localStorage.getItem(SS_EMAIL);
+    if (!token || !email) return;
+    document.getElementById("intro").classList.add("hidden");
+    const landing = document.getElementById("landing");
+    landing.classList.remove("hidden");
+    landing.innerHTML = successBanner(email) + connectPage(email, token);
+    mountDashboard(token);
+    apiGet(token, "/api/sessions?limit=1").catch(() => signOut());
+  }}
+
+  rehydrateFromStorage();
 </script>
 </body></html>""")
 
