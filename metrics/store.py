@@ -1,8 +1,8 @@
 """Backend dispatcher — SQLite for local dev, DynamoDB once deployed.
-Set STORAGE_BACKEND=dynamodb (done automatically in the AgentCore
-deployment's environment_variables — see terraform/main.tf) to switch.
-Same function signatures either way; app.py and mcp_server/server.py
-import from here and never know which backend is active.
+Set STORAGE_BACKEND=dynamodb (done automatically by consuming deployments,
+e.g. sre-investigation-agent's AgentCore environment variables) to switch.
+Same function signatures either way; callers import from here and never
+know which backend is active.
 """
 
 import os

@@ -2,8 +2,8 @@
 via metrics/store.py's dispatcher; see store_dynamodb.py for the
 deployed backend, needed because a container's local filesystem
 doesn't persist across invocations. Same function signatures either
-way — callers (app.py, mcp_server/server.py) go through store.py and
-never know which backend is active.
+way — callers go through store.py and never know which backend is
+active.
 """
 
 import json
@@ -181,9 +181,6 @@ def record_session(prompt, model_id, loop_result, owner=None):
     conn.commit()
     conn.close()
     return session_id
-
-
-# --- Reads — shared by MCP tools and dashboard REST routes -----------------
 
 
 def get_session_metrics(session_id, owner=None):
