@@ -44,26 +44,16 @@ current_owner = contextvars.ContextVar("current_owner", default=None)
 
 class MultiTokenAuthMiddleware(BaseHTTPMiddleware):
     """Gates /mcp and /api/ behind a bearer token that's either the
-    owner's single shared token (`owner_token` — printed to stdout on
-    startup, same "whoever can read this process's console is assumed
-    to be you" model as before, kept for the maintainer's own
-    zero-friction local use) OR a per-user token minted for someone who
-    signed in with their own Google account via /auth/login and
-    /auth/verify (`auth_store.is_valid_token`). /auth/* itself is
-    deliberately unauthenticated — that's the pre-auth sign-in flow.
+    owner's single shared token (`owner_token`, printed to stdout on
+    startup) or a per-user token minted via /auth/login and /auth/verify
+    (`auth_store.is_valid_token`). /api/ is protected too, since those
+    routes return the same session data as the MCP tools; leaving them
+    open would make the MCP-side auth pointless. /auth/* itself stays
+    unauthenticated, since that is the pre-auth sign-in flow.
 
-    Originally REST routes under /api/ were left open entirely ("no
-    auth, local single-user" design) — that stopped being true the
-    moment this server is meant to be handed out to multiple friends:
-    those routes return the exact same session data as the MCP tools,
-    so leaving them open would make the MCP-side auth pointless. Both
-    paths are protected identically now.
-
-    Also sets `current_owner` for the rest of this request — the owner
-    token sees everything (current_owner stays None); a per-user token
-    is resolved to its google_sub so every read/write below can filter
-    to "this caller's own data only." See metrics/store.py's owner
-    param and the README's Auth section."""
+    Also sets `current_owner` for the rest of this request, so every
+    read/write below can filter to the caller's own data. See
+    metrics/store.py's owner param and the README's Auth section."""
 
     def __init__(self, app, owner_token, protected_prefixes=("/mcp", "/api/")):
         super().__init__(app)
@@ -81,9 +71,6 @@ class MultiTokenAuthMiddleware(BaseHTTPMiddleware):
             else:
                 return JSONResponse({"error": "unauthorized — missing or wrong bearer token"}, status_code=401)
         return await call_next(request)
-
-
-# --- MCP tools ---------------------------------------------------------
 
 
 @server.tool()
@@ -149,10 +136,6 @@ def record_session(prompt: str, model_id: str, loop_result: dict) -> str:
     return store.record_session(prompt, model_id, loop_result, owner=current_owner.get())
 
 
-# --- REST routes — documented curl-debugging alternative to the real MCP
-# protocol handshake (same underlying functions as the tools above) -----
-
-
 @server.custom_route("/api/sessions", methods=["GET"])
 async def api_sessions(request: Request):
     limit = int(request.query_params.get("limit", 10))
@@ -209,9 +192,8 @@ async def api_record_session(request: Request):
     return JSONResponse({"session_id": session_id})
 
 
-# --- Google sign-in — the pre-auth flow that mints a per-user MCP token.
-# Deliberately unauthenticated (that's the point) and deliberately not
-# gated by MultiTokenAuthMiddleware (which only checks /mcp and /api/).
+# Google sign-in: the pre-auth flow that mints a per-user MCP token; not
+# gated by MultiTokenAuthMiddleware, which only checks /mcp and /api/.
 
 
 _PAGE_STYLE = """

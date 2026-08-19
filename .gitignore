@@ -19,3 +19,6 @@ data/mcp_auth.db
 .env
 .env.*
 *.pem
+
+# Local-only cleanup notes, never shipped
+docs/internal/
