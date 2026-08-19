@@ -1,0 +1,6 @@
+name = "mcp-inspector"
+main = "worker.js"
+compatibility_date = "2026-08-19"
+
+[vars]
+ORIGIN = "https://mcp-context-inspector-1097847824883.us-central1.run.app"

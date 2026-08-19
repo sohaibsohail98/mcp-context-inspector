@@ -52,6 +52,59 @@ def test_api_route_rejects_revoked_per_user_token(client, isolated_auth_store):
     assert resp.status_code == 401
 
 
+def test_root_redirects_to_auth_login(client):
+    resp = client.get("/", follow_redirects=False)
+    assert resp.status_code in (301, 302, 307, 308)
+    assert resp.headers["location"] == "/auth/login"
+
+
+def test_healthz_is_unauthenticated_and_ok(client):
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ok"}
+
+
+def test_maybe_seed_demo_db_copies_when_missing(tmp_path):
+    src = tmp_path / "demo.db"
+    src.write_bytes(b"fake-db-contents")
+    target = tmp_path / "runtime" / "metrics.db"
+
+    copied = server_module._maybe_seed_demo_db(str(src), target)
+
+    assert copied is True
+    assert target.read_bytes() == b"fake-db-contents"
+
+
+def test_maybe_seed_demo_db_noop_without_src():
+    target_that_would_error_if_touched = None  # target.exists() would crash on None; src check short-circuits first
+    assert server_module._maybe_seed_demo_db(None, target_that_would_error_if_touched) is False
+
+
+def test_resolve_owner_token_strips_trailing_newline():
+    """Secret Manager values created via `echo | gcloud secrets create`
+    commonly carry a trailing newline that becomes part of the mounted
+    env var — an untrimmed comparison would reject the real token."""
+    assert server_module._resolve_owner_token("real-token\n") == "real-token"
+
+
+def test_resolve_owner_token_none_for_blank():
+    assert server_module._resolve_owner_token(None) is None
+    assert server_module._resolve_owner_token("") is None
+    assert server_module._resolve_owner_token("   \n") is None
+
+
+def test_maybe_seed_demo_db_noop_when_target_exists(tmp_path):
+    src = tmp_path / "demo.db"
+    src.write_bytes(b"fake-db-contents")
+    target = tmp_path / "metrics.db"
+    target.write_bytes(b"already-here")
+
+    copied = server_module._maybe_seed_demo_db(str(src), target)
+
+    assert copied is False
+    assert target.read_bytes() == b"already-here"
+
+
 def test_auth_login_is_unauthenticated(client):
     """The pre-auth sign-in page itself must not require a token —
     that would be circular."""
