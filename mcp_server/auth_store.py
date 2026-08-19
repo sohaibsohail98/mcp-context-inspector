@@ -1,10 +1,9 @@
 """Per-user MCP token store — separate from metrics/ (session-execution
 data) since this is identity/credential data with a different lifecycle
-and sensitivity. SQLite only for now, matching metrics/store_sqlite.py's
-"local dev" starting point (see docs/PROJECT.md's Storage section in the
-sre-investigation-agent repo for the precedent) — needs the same kind of
-swap to a persistent backend before this server runs somewhere with an
-ephemeral filesystem (e.g. Cloud Run without a mounted volume).
+and sensitivity. SQLite only for now, same "local dev" starting point
+as metrics/store_sqlite.py — needs the same kind of swap to a
+persistent backend before this server runs somewhere with an ephemeral
+filesystem (e.g. Cloud Run without a mounted volume).
 
 One row per Google account (`google_sub`, the stable, non-reassignable
 subject identifier from the verified ID token — never the email, which

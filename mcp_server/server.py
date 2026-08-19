@@ -32,13 +32,13 @@ server = MCPServer(name="sre-agent-metrics")
 # Set by MultiTokenAuthMiddleware once per request, read by every tool/REST
 # handler below — the caller's Google `sub` if they connected with a
 # per-user token, or None if they connected with the owner token (which
-# sees everything, same "it's your server" semantics as before). A plain
-# contextvar rather than threading it through every function signature:
-# Starlette's BaseHTTPMiddleware runs the downstream handler in the same
-# asyncio task, so a value set here before call_next() is visible inside
-# the request it wraps, including MCP tool dispatch — verified in
-# tests/test_mcp_protocol_ownership.py with a real MCP client over a real
-# subprocess, not just assumed from Starlette's docs.
+# sees everything, "it's your server" semantics). A plain contextvar
+# rather than threading it through every function signature: Starlette's
+# BaseHTTPMiddleware runs the downstream handler in the same asyncio
+# task, so a value set here before call_next() is visible inside the
+# request it wraps, including MCP tool dispatch — see
+# tests/test_mcp_protocol_ownership.py for a real MCP `tools/call` test
+# confirming this.
 current_owner = contextvars.ContextVar("current_owner", default=None)
 
 

@@ -1,12 +1,13 @@
 """Verifies a Google Identity Services ID token (a signed JWT handed to
 `/auth/verify` by the browser after "Sign in with Google") — the lighter
 half of the hybrid auth model documented in the README. Deliberately not
-a full OAuth 2.1 authorization-server build (the LockIn approach): no
-client secret, no redirect URIs, no authorization-code exchange. Google
-Identity Services' one-tap/button flow hands the frontend a signed JWT
-directly; verifying it server-side (signature + audience + issuer, all
-handled by google-auth's own library, not hand-rolled) is enough to know
-which real Google account is asking, at a fraction of the infrastructure.
+a full OAuth 2.1 authorization-server build: no client secret, no
+redirect URIs, no authorization-code exchange. Google Identity
+Services' one-tap/button flow hands the frontend a signed JWT directly;
+verifying it server-side (signature + audience + issuer, all handled by
+google-auth's own library, not hand-rolled) is enough to know which
+real Google account is asking, at a fraction of the infrastructure a
+full authorization server would need.
 """
 
 from google.auth.transport import requests as google_requests

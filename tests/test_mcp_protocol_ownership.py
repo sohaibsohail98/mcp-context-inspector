@@ -1,18 +1,16 @@
 """End-to-end proof that per-owner data isolation actually works over a
-REAL MCP JSON-RPC handshake (initialize -> notifications/initialized ->
-tools/call), not just at the metrics/store.py layer. This is the one
-thing that genuinely needed verifying rather than assuming: does
+real MCP JSON-RPC handshake (initialize -> notifications/initialized ->
+tools/call), not just at the metrics/store.py layer. Confirms
 MultiTokenAuthMiddleware's `current_owner.set(...)` (called before
-`call_next()`) actually stay visible by the time the MCP SDK dispatches
-the tools/call to our tool functions? Starlette's BaseHTTPMiddleware runs
+`call_next()`) stays visible by the time the MCP SDK dispatches the
+tools/call to our tool functions — Starlette's BaseHTTPMiddleware runs
 the downstream ASGI app in the same asyncio task, so a contextvar set
-here should propagate — this test exercises that claim against the real
-code path instead of trusting the docs.
+here propagates through to tool dispatch.
 
 In-process via Starlette's TestClient (isolated DB fixtures, no real
-subprocess, no real network) — the raw JSON-RPC wire format mirrors
-web/mcp-client.js in the sre-investigation-agent repo, the actual
-reference client for this protocol, rather than depending on the `mcp`
+subprocess, no real network) — the raw JSON-RPC wire format mirrors the
+`sre-investigation-agent` project's `web/mcp-client.js`, a reference
+implementation of this protocol, rather than depending on the `mcp`
 SDK's own client internals.
 """
 

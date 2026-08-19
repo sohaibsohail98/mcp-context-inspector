@@ -1,9 +1,9 @@
-"""SQLite backend for the execution recorder — Phases 1-4 (local dev
-only). Selected via metrics/store.py's dispatcher; see store_dynamodb.py
-for the Phase 5 backend and docs/PROJECT.md's Storage section for why
-the swap is mandatory at deployment, not optional. Same function
-signatures either way — callers (app.py, mcp_server/server.py) go
-through store.py and never know which backend is active.
+"""SQLite backend for the execution recorder — local dev only. Selected
+via metrics/store.py's dispatcher; see store_dynamodb.py for the
+deployed backend, needed because a container's local filesystem
+doesn't persist across invocations. Same function signatures either
+way — callers (app.py, mcp_server/server.py) go through store.py and
+never know which backend is active.
 """
 
 import json
