@@ -5,6 +5,9 @@ monkeypatched at the mcp_server.server module level, where auth_verify's
 route handler actually looks it up).
 """
 
+import json
+from pathlib import Path
+
 import pytest
 from starlette.testclient import TestClient
 
@@ -353,3 +356,84 @@ def test_otlp_route_rejects_non_object_body(client):
         headers={"Authorization": "Bearer owner-secret"},
     )
     assert resp.status_code == 400
+
+
+# --- /setup/apply-local-config -----------------------------------------
+# This route does a real local filesystem write (the caller's own
+# ~/.claude/settings.json) — every test here monkeypatches
+# server_module._CLAUDE_SETTINGS_PATH to a tmp_path file, never the real
+# path, and uses a loopback-address TestClient (Starlette's TestClient
+# defaults its "client" to ("testclient", 50000), not a loopback address,
+# which is itself the thing the non-loopback rejection test relies on).
+
+
+@pytest.fixture
+def loopback_client(isolated_auth_store, isolated_sqlite_db):
+    app = server_module.server.streamable_http_app()
+    app.add_middleware(server_module.MultiTokenAuthMiddleware, owner_token="owner-secret")
+    with TestClient(app, client=("127.0.0.1", 54321)) as c:
+        yield c
+
+
+def test_apply_local_config_rejects_non_loopback(client):
+    """The default `client` fixture's TestClient host is "testclient",
+    not a loopback address — exactly the case this endpoint must reject,
+    since it performs a real local filesystem write."""
+    resp = client.post("/setup/apply-local-config", headers={"Authorization": "Bearer owner-secret"})
+    assert resp.status_code == 403
+
+
+def test_apply_local_config_rejects_missing_token(loopback_client):
+    resp = loopback_client.post("/setup/apply-local-config")
+    assert resp.status_code == 401
+
+
+def test_apply_local_config_creates_new_file(loopback_client, tmp_path, monkeypatch):
+    settings_path = tmp_path / "settings.json"
+    monkeypatch.setattr(server_module, "_CLAUDE_SETTINGS_PATH", settings_path)
+
+    resp = loopback_client.post("/setup/apply-local-config", headers={"Authorization": "Bearer owner-secret"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["backed_up_to"] is None  # nothing existed to back up
+
+    written = json.loads(settings_path.read_text())
+    assert written["mcpServers"]["context-inspector"]["headers"]["Authorization"] == "Bearer owner-secret"
+    assert written["env"]["CLAUDE_CODE_ENABLE_TELEMETRY"] == "1"
+    assert written["env"]["CLAUDE_CODE_OTEL_CONTENT_MAX_LENGTH"] == "1048576"
+
+
+def test_apply_local_config_merges_without_clobbering_existing_entries(loopback_client, tmp_path, monkeypatch):
+    """An existing, unrelated mcpServers entry and env var must survive —
+    this route merges into the file, it never replaces it wholesale."""
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(json.dumps({
+        "effortLevel": "medium",
+        "mcpServers": {"lockin": {"url": "https://lockin.example/mcp", "headers": {"Authorization": "Bearer lin_x"}}},
+        "env": {"SOME_OTHER_VAR": "keep-me"},
+    }))
+    monkeypatch.setattr(server_module, "_CLAUDE_SETTINGS_PATH", settings_path)
+
+    resp = loopback_client.post("/setup/apply-local-config", headers={"Authorization": "Bearer owner-secret"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["backed_up_to"] is not None
+    assert Path(body["backed_up_to"]).exists()
+
+    written = json.loads(settings_path.read_text())
+    assert written["effortLevel"] == "medium"
+    assert written["mcpServers"]["lockin"]["url"] == "https://lockin.example/mcp"
+    assert written["mcpServers"]["context-inspector"]["headers"]["Authorization"] == "Bearer owner-secret"
+    assert written["env"]["SOME_OTHER_VAR"] == "keep-me"
+    assert written["env"]["CLAUDE_CODE_ENABLE_TELEMETRY"] == "1"
+
+
+def test_apply_local_config_refuses_to_touch_invalid_json(loopback_client, tmp_path, monkeypatch):
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text("not valid json {{{")
+    monkeypatch.setattr(server_module, "_CLAUDE_SETTINGS_PATH", settings_path)
+
+    resp = loopback_client.post("/setup/apply-local-config", headers={"Authorization": "Bearer owner-secret"})
+    assert resp.status_code == 409
+    assert settings_path.read_text() == "not valid json {{{"  # untouched
