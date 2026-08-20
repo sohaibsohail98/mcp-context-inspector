@@ -526,6 +526,27 @@ def test_append_context_block_orders_by_arrival(fake_table):
     assert timeline[-1]["cumulative_tokens"] == 110
 
 
+def test_append_context_block_round_trips_content(fake_table):
+    """Same contract as store_sqlite.py's version — a block's raw text
+    round-trips through storage; a block that never sets `content`
+    reads back as None, not a crash or an empty string."""
+    sid = store_dynamodb.start_or_get_session("otel-content", source="claude_code")
+    store_dynamodb.append_context_block(
+        sid,
+        {
+            "category": "system", "label": "System prompt", "char_count": 20,
+            "token_estimate": 5, "turn_n": None, "content": "You are a helpful assistant.",
+        },
+    )
+    store_dynamodb.append_context_block(
+        sid, {"category": "user", "label": "User message", "char_count": 40, "token_estimate": 10, "turn_n": 0}
+    )
+
+    timeline = store_dynamodb.get_context_timeline(sid)
+    assert timeline[0]["content"] == "You are a helpful assistant."
+    assert timeline[1]["content"] is None
+
+
 def test_close_session_marks_status_and_applies_final_totals(fake_table):
     """close_session's final_totals overwrite the incrementally-summed
     values with the client's own exact final report, when given."""

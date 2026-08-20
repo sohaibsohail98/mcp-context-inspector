@@ -30,6 +30,25 @@ def estimate_tokens(text):
     return max(1, len(text) // CHARS_PER_TOKEN_ESTIMATE)
 
 
+# Caps how much raw block text (Context Explorer's expand-to-view
+# feature) a single row stores. Well above any real system prompt or
+# typical tool_result, but bounds a pathological case (e.g. a tool
+# reading a huge file) from bloating a single row without limit — the
+# token_estimate/char_count above are always computed from the FULL
+# untruncated text, so cost/size numbers stay accurate even when the
+# stored preview is capped.
+_MAX_STORED_CONTENT_CHARS = 50_000
+
+
+def truncate_content(text):
+    """Caps text for storage in a context_block's `content` field —
+    does not affect char_count/token_estimate, which are always
+    computed from the real, untruncated text before this runs."""
+    if len(text) <= _MAX_STORED_CONTENT_CHARS:
+        return text
+    return text[:_MAX_STORED_CONTENT_CHARS] + f"\n\n[... truncated, {len(text)} chars total]"
+
+
 # A real AnyValue payload nests at most a couple of levels deep
 # (attribute -> kvlistValue -> nested attribute). A cap well above any
 # real payload but far below Python's default recursion limit stops a

@@ -538,6 +538,31 @@ _PAGE_STYLE = """
   .live-dot { width: 6px; height: 6px; border-radius: 999px; background: var(--ok); animation: pulse 2s infinite; }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
   @media (prefers-reduced-motion: reduce) { .live-dot { animation: none; } }
+  .identity-menu { position: relative; }
+  .identity-trigger {
+    display: flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0.6rem 0.35rem 0.4rem;
+    border: 1px solid var(--border); border-radius: 999px; background: var(--bg-raised-2); color: var(--text-dim);
+    font-size: 0.87rem; cursor: pointer; transition: border-color 0.15s ease, color 0.15s ease;
+  }
+  .identity-trigger:hover, .identity-trigger[aria-expanded="true"] { border-color: var(--accent); color: var(--text); }
+  .identity-trigger .chev { font-size: 0.65rem; color: var(--text-dimmer); transition: transform 0.15s ease; }
+  .identity-trigger[aria-expanded="true"] .chev { transform: rotate(180deg); }
+  .identity-dropdown {
+    position: absolute; top: calc(100% + 0.5rem); right: 0; min-width: 12rem; z-index: 20;
+    border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-raised);
+    box-shadow: var(--shadow); overflow: hidden; padding: 0.35rem;
+  }
+  .identity-dropdown-email {
+    padding: 0.5rem 0.65rem 0.6rem; font-size: 0.78rem; color: var(--text-dimmer);
+    border-bottom: 1px solid var(--border-soft); margin-bottom: 0.35rem; word-break: break-all;
+  }
+  .identity-dropdown button {
+    display: flex; align-items: center; gap: 0.55rem; width: 100%; text-align: left; font-size: 0.87rem;
+    padding: 0.5rem 0.65rem; border: none; background: none; color: var(--text); border-radius: 7px; cursor: pointer;
+  }
+  .identity-dropdown button:hover { background: var(--bg-raised-2); }
+  .identity-dropdown button.danger { color: var(--err); }
+  .identity-dropdown button.danger:hover { background: var(--err-dim); }
   .layout { display: grid; grid-template-columns: 1fr; gap: 1rem; padding: 1.4rem 1.5rem 4rem; max-width: 1320px; margin: 0 auto; }
   .kpi-strip { display: grid; grid-template-columns: repeat(6, 1fr); gap: 0.7rem; }
   @media (max-width: 1100px) { .kpi-strip { grid-template-columns: repeat(3, 1fr); } }
@@ -591,19 +616,28 @@ _PAGE_STYLE = """
   .metric-tile.accent-ok .m-value { color: var(--ok); }
   .metric-tile.accent-warn .m-value { color: var(--warn); }
   .section-heading { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.055em; color: var(--text-dimmer); padding: 0 1.1rem; margin: 0.4rem 0 0.55rem; }
-  .ctx-bar { display: flex; height: 10px; width: calc(100% - 2.2rem); margin: 0 1.1rem; border-radius: 999px; overflow: hidden; border: 1px solid var(--border-soft); }
+  .ctx-bar { display: flex; height: 10px; width: calc(100% - 2.2rem); margin: 0.3rem 1.1rem 0; border-radius: 999px; overflow: hidden; border: 1px solid var(--border-soft); }
   .ctx-bar > div { height: 100%; }
-  .ctx-legend { display: flex; flex-wrap: wrap; gap: 0.75rem; font-size: 10.5px; color: var(--text-dim); padding: 0.55rem 1.1rem 0.9rem; }
+  .ctx-legend { display: flex; flex-wrap: wrap; gap: 0.75rem; font-size: 10.5px; color: var(--text-dim); padding: 0.75rem 1.1rem 0.9rem; }
   .ctx-legend span { display: inline-flex; align-items: center; gap: 0.32rem; }
   .ctx-legend i { width: 7px; height: 7px; border-radius: 999px; display: inline-block; }
   .block-list { display: flex; flex-direction: column; gap: 0.25rem; padding: 0 0.6rem 0.9rem; }
-  .block-row { display: flex; align-items: center; gap: 0.55rem; padding: 0.45rem 0.55rem; border-radius: 8px; font-size: 12px; cursor: default; }
+  .block-row { display: flex; align-items: center; gap: 0.55rem; padding: 0.45rem 0.55rem; border-radius: 8px; font-size: 12px; cursor: pointer; }
   .block-row:hover { background: var(--bg-raised-2); }
   .block-dot { width: 7px; height: 7px; border-radius: 999px; flex-shrink: 0; }
   .block-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
   .block-label .redacted { color: var(--text-dimmer); font-style: italic; }
   .block-tok { color: var(--text-dimmer); font-size: 11px; flex-shrink: 0; }
   .block-pct { font-size: 10.5px; color: var(--text-dimmer); width: 3.4rem; text-align: right; flex-shrink: 0; }
+  .block-chev { color: var(--text-dimmer); font-size: 10px; flex-shrink: 0; width: 0.9rem; text-align: center; transition: transform 0.15s ease; }
+  .block-row.expanded .block-chev { transform: rotate(90deg); }
+  .block-detail {
+    margin: 0 0.55rem 0.4rem; padding: 0.7rem 0.85rem; border-radius: var(--radius-sm);
+    background: var(--bg-sunken); border: 1px solid var(--border-soft);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; line-height: 1.55;
+    color: var(--text-dim); white-space: pre-wrap; word-break: break-word; max-height: 20rem; overflow-y: auto;
+  }
+  .block-detail.unavailable { font-family: inherit; font-style: italic; color: var(--text-dimmer); white-space: normal; }
   .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; padding: 0 1.1rem 1.1rem; }
   @media (max-width: 760px) { .two-col { grid-template-columns: 1fr; } }
   .subpanel { border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--bg-raised-2); padding: 0.75rem 0.85rem; }
@@ -655,7 +689,7 @@ _PAGE_STYLE = """
   .quota-fill { height: 100%; border-radius: 999px; background: var(--accent); }
   .quota-fill.hot { background: var(--warn); }
   .quota-sub { font-size: 10.5px; color: var(--text-dimmer); }
-  .agent-tabs { display: flex; gap: 0.4rem; padding: 0 1.1rem 0.7rem; flex-wrap: wrap; }
+  .agent-tabs { display: flex; gap: 0.4rem; padding: 0.9rem 1.1rem 0.9rem; flex-wrap: wrap; }
   .agent-tab { display: flex; align-items: center; gap: 0.4rem; font-size: 11px; font-weight: 600; padding: 0.32rem 0.7rem; border-radius: 999px; border: 1px solid var(--border); background: var(--bg-raised); color: var(--text-dim); cursor: default; }
   .agent-tab.active { background: var(--thinking-dim); color: var(--thinking); border-color: color-mix(in srgb, var(--thinking) 40%, transparent); }
   .agent-tab .a-tok { font-family: ui-monospace, "SF Mono", Menlo, monospace; color: var(--text-dimmer); font-weight: 500; }
@@ -907,10 +941,18 @@ async def auth_login(request: Request):
         <div class="topbar-spacer"></div>
         <span class="live-pill"><span class="live-dot"></span> live</span>
         <button class="icon-btn" onclick="toggleSettings()">&#9881; Project settings</button>
-        <button class="icon-btn" onclick="backToConnect()">&larr; Token &amp; config</button>
-        <div class="identity-row" style="margin-bottom:0;">
-          <span class="avatar">` + avatarLetter + `</span>
-          ` + email + `
+        <div class="identity-menu">
+          <button class="identity-trigger" aria-expanded="false" onclick="toggleIdentityMenu(event)">
+            <span class="avatar">` + avatarLetter + `</span>
+            <span class="chev">&#9662;</span>
+          </button>
+          <div class="identity-dropdown hidden" id="identity-dropdown">
+            <div class="identity-dropdown-email">` + email + `</div>
+            <button onclick="closeIdentityMenu(); backToConnect();">&larr; Token &amp; config</button>
+            <button onclick="closeIdentityMenu(); copyCurrentToken();">&#9112; Copy token</button>
+            <button onclick="closeIdentityMenu(); refreshDashboard(currentToken);">&#8635; Refresh now</button>
+            <button class="danger" onclick="closeIdentityMenu(); signOut();">Sign out</button>
+          </div>
         </div>
       </div>
       <div id="dash-root"><p class="dash-empty">Loading…</p></div>
@@ -930,6 +972,32 @@ async def auth_login(request: Request):
     if (dashboardTimer) clearInterval(dashboardTimer);
     document.getElementById("dashboard-screen").classList.add("hidden");
     document.querySelector(".narrow-page").classList.remove("hidden");
+  }}
+
+  function toggleIdentityMenu(evt) {{
+    evt.stopPropagation();
+    const dd = document.getElementById("identity-dropdown");
+    const opening = dd.classList.contains("hidden");
+    dd.classList.toggle("hidden", !opening);
+    evt.currentTarget.setAttribute("aria-expanded", opening ? "true" : "false");
+  }}
+
+  function closeIdentityMenu() {{
+    const dd = document.getElementById("identity-dropdown");
+    if (dd) dd.classList.add("hidden");
+    const trigger = document.querySelector(".identity-trigger");
+    if (trigger) trigger.setAttribute("aria-expanded", "false");
+  }}
+
+  // Closes the identity dropdown on any click outside it — cheap to
+  // register once at load rather than per dashboardScreen() render,
+  // since #identity-dropdown only exists (and only needs closing)
+  // while the dashboard screen is mounted; closeIdentityMenu() itself
+  // already no-ops safely when it doesn't.
+  document.addEventListener("click", closeIdentityMenu);
+
+  function copyCurrentToken() {{
+    if (currentToken) navigator.clipboard.writeText(currentToken);
   }}
 
   function copyText(id) {{
@@ -1080,18 +1148,43 @@ async def auth_login(request: Request):
     }}).join("");
   }}
 
-  function renderContextBlockRow(b) {{
+  function escapeHtml(s) {{
+    const div = document.createElement("div");
+    div.textContent = s == null ? "" : String(s);
+    return div.innerHTML;
+  }}
+
+  function toggleBlockDetail(idx) {{
+    const row = document.getElementById("block-row-" + idx);
+    const detail = document.getElementById("block-detail-" + idx);
+    if (!row || !detail) return;
+    const opening = detail.classList.contains("hidden");
+    detail.classList.toggle("hidden", !opening);
+    row.classList.toggle("expanded", opening);
+  }}
+
+  function renderContextBlockRow(b, idx) {{
     const color = CATEGORY_COLORS[b.category] || "var(--cat-system)";
     const label = b.status === "redacted"
       ? '<span class="redacted">' + (b.label || b.category) + ' (redacted)</span>'
       : (b.label || b.category);
+    const hasContent = typeof b.content === "string" && b.content.length > 0;
+    const detail = hasContent
+      ? '<div class="block-detail hidden" id="block-detail-' + idx + '">' + escapeHtml(b.content) + '</div>'
+      : '<div class="block-detail unavailable hidden" id="block-detail-' + idx + '">' +
+        (b.status === "redacted"
+          ? "Content is redacted by the client itself before export — not available here either."
+          : "Content wasn't captured for this block (recorded before this feature existed, or via record_session without the optional field).") +
+        '</div>';
     return `
-      <div class="block-row">
+      <div class="block-row" id="block-row-` + idx + `" onclick="toggleBlockDetail(` + idx + `)">
+        <span class="block-chev">&#9656;</span>
         <span class="block-dot" style="background:` + color + `;"></span>
         <span class="block-label">` + label + `</span>
         <span class="block-tok">` + b.token_estimate + ` tok</span>
         <span class="block-pct">` + b.cumulative_pct + `%</span>
-      </div>`;
+      </div>
+      ` + detail;
   }}
 
   function renderContextTab(timeline) {{
@@ -1114,7 +1207,7 @@ async def auth_login(request: Request):
         <span><i style="background:var(--cat-answer);"></i>answer</span>
       </div>
       <div class="section-heading">Context blocks</div>
-      <div class="block-list">` + timeline.map(renderContextBlockRow).join("") + `</div>
+      <div class="block-list">` + timeline.map((b, i) => renderContextBlockRow(b, i)).join("") + `</div>
     `;
   }}
 
@@ -1136,11 +1229,20 @@ async def auth_login(request: Request):
   }}
 
   function cacheHitPct(turns) {{
+    // Anthropic's usage accounting: cache_read_input_tokens is a
+    // SEPARATE bucket from input_tokens (the fresh/uncached portion),
+    // not a subset of it — a turn that's almost entirely served from
+    // cache can have cache_read_input_tokens far exceed input_tokens
+    // (e.g. read=22134, input=2). Dividing read/input (found via a live
+    // browser E2E test — a real session rendered "4184%") can exceed
+    // 100%; the correct hit rate is read's share of the turn's TOTAL
+    // input (read + fresh), which is always <= 100%.
     if (!turns || !turns.length) return "—";
-    let read = 0, input = 0;
-    turns.forEach((t) => {{ read += t.cache_read_input_tokens || 0; input += t.input_tokens || 0; }});
-    if (!input) return "—";
-    return Math.round((read / input) * 100) + "%";
+    let read = 0, fresh = 0;
+    turns.forEach((t) => {{ read += t.cache_read_input_tokens || 0; fresh += t.input_tokens || 0; }});
+    const total = read + fresh;
+    if (!total) return "—";
+    return Math.round((read / total) * 100) + "%";
   }}
 
   function statusBadge(status) {{

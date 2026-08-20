@@ -238,7 +238,7 @@ def seed(out_path: Path):
             )
         for seq, block in enumerate(s["context_blocks"]):
             conn.execute(
-                "INSERT INTO context_blocks VALUES (?,?,?,?,?,?,?,?)",
+                "INSERT INTO context_blocks VALUES (?,?,?,?,?,?,?,?,?)",
                 (
                     s["session_id"],
                     seq,
@@ -248,6 +248,7 @@ def seed(out_path: Path):
                     block["token_estimate"],
                     block["turn_n"],
                     block.get("status"),
+                    block.get("content"),
                 ),
             )
     conn.commit()
