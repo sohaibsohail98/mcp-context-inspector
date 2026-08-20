@@ -3,7 +3,10 @@ data) since this is identity/credential data with a different lifecycle
 and sensitivity. SQLite only for now, same "local dev" starting point
 as metrics/store_sqlite.py — needs the same kind of swap to a
 persistent backend before this server runs somewhere with an ephemeral
-filesystem (e.g. Cloud Run without a mounted volume).
+filesystem (e.g. Cloud Run without a mounted volume). This is a known,
+pre-existing, documented tradeoff (see docs/DEPLOYMENT.md's note on
+sign-in writes resetting on cold start) — the OAuth tables added below
+inherit the same limitation, not a new one.
 
 One row per Google account (`google_sub`, the stable, non-reassignable
 subject identifier from the verified ID token — never the email, which
@@ -11,12 +14,24 @@ a user can change). A user who signs in again gets their existing token
 back rather than a fresh one, so pasting the same "Sign in with Google"
 flow twice doesn't invalidate a token they've already put in an MCP
 client config.
+
+Also stores the OAuth 2.1 + PKCE authorization-server data (client
+registrations, one-time authorization codes, per-client access tokens)
+that backs the /oauth/* routes in server.py — see that module's
+docstring for why this exists and how the flow works. Kept in this
+module rather than a separate one since it's the same underlying
+concern ("how does a caller prove who they are"), just a second way to
+get there.
 """
 
+import base64
+import hashlib
+import json
 import secrets
 import sqlite3
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 DB_PATH = Path(__file__).parent.parent / "data" / "mcp_auth.db"
 
@@ -25,6 +40,52 @@ _SCHEMA = """
         google_sub TEXT PRIMARY KEY,
         email TEXT,
         token TEXT UNIQUE,
+        created_at REAL
+    );
+
+    -- OAuth clients registered via POST /oauth/register (RFC 7591 Dynamic
+    -- Client Registration) — e.g. claude.ai registers itself here once,
+    -- the first time a user tries to add this server as a Connector.
+    CREATE TABLE IF NOT EXISTS oauth_clients (
+        client_id TEXT PRIMARY KEY,
+        client_name TEXT,
+        redirect_uris TEXT,  -- JSON list
+        token_endpoint_auth_method TEXT,
+        created_at REAL
+    );
+
+    -- One-time authorization codes (10-minute TTL, single-use) minted by
+    -- GET/POST /oauth/authorize after the user signs in with Google, and
+    -- redeemed by POST /oauth/token. code_hash, not the raw code, is
+    -- stored — same reasoning as hashing a password: a code is a bearer
+    -- secret, and this table being readable shouldn't hand out usable
+    -- codes. SHA-256 (not a slow KDF like bcrypt) is enough here since
+    -- the code is a 256-bit random secret, not a low-entropy password —
+    -- matches how this project already treats bearer tokens elsewhere.
+    CREATE TABLE IF NOT EXISTS oauth_codes (
+        code_hash TEXT PRIMARY KEY,
+        client_id TEXT,
+        google_sub TEXT,
+        email TEXT,
+        redirect_uri TEXT,
+        code_challenge TEXT,
+        resource TEXT,
+        created_at REAL,
+        expires_at REAL,
+        consumed_at REAL
+    );
+
+    -- Access tokens minted at the end of the OAuth flow. Deliberately a
+    -- SEPARATE table from mcp_users.token, one row per (google_sub,
+    -- client) rather than reusing that single sign-in token: an OAuth
+    -- client (claude.ai, say) gets its own named token, so disconnecting
+    -- it later (DELETE FROM oauth_tokens) can't also break the same
+    -- user's direct Claude Code config, which uses the mcp_users token.
+    CREATE TABLE IF NOT EXISTS oauth_tokens (
+        token TEXT PRIMARY KEY,
+        google_sub TEXT,
+        email TEXT,
+        client_name TEXT,
         created_at REAL
     );
 """
@@ -67,20 +128,29 @@ def get_or_create_token(google_sub, email):
 
 
 def is_valid_token(token):
+    """True for either a direct Google-sign-in token (mcp_users) or a
+    token minted through the OAuth flow for a Connector-style client
+    (oauth_tokens) — both are equally valid bearer credentials from the
+    caller's perspective; only their provenance differs."""
     conn = _connect()
-    row = conn.execute("SELECT 1 FROM mcp_users WHERE token=?", (token,)).fetchone()
+    row = conn.execute(
+        "SELECT 1 FROM mcp_users WHERE token=? UNION SELECT 1 FROM oauth_tokens WHERE token=?",
+        (token, token),
+    ).fetchone()
     conn.close()
     return row is not None
 
 
 def get_sub_for_token(token):
-    """The google_sub that owns this per-user token — used to attribute
-    data (record/filter by owner) to whoever's actually connected, not
-    just to check "is this token valid at all." Returns None if the
-    token doesn't belong to any signed-in user (e.g. it's the owner
-    token, or invalid)."""
+    """The google_sub that owns this token — used to attribute data
+    (record/filter by owner) to whoever's actually connected, not just to
+    check "is this token valid at all." Checks both mcp_users and
+    oauth_tokens (see is_valid_token). Returns None if the token doesn't
+    belong to any signed-in user (e.g. it's the owner token, or invalid)."""
     conn = _connect()
     row = conn.execute("SELECT google_sub FROM mcp_users WHERE token=?", (token,)).fetchone()
+    if row is None:
+        row = conn.execute("SELECT google_sub FROM oauth_tokens WHERE token=?", (token,)).fetchone()
     conn.close()
     return row["google_sub"] if row else None
 
@@ -104,3 +174,131 @@ def revoke(google_sub):
     conn.execute("DELETE FROM mcp_users WHERE google_sub=?", (google_sub,))
     conn.commit()
     conn.close()
+
+
+# --- OAuth 2.1 + PKCE authorization server ------------------------------
+# Backs the /oauth/* routes in server.py — see that module's docstring for
+# the flow. A generic, spec-compliant implementation: any MCP client that
+# does OAuth discovery (Dynamic Client Registration + authorization code +
+# PKCE) can use this, not just one specific product.
+
+
+def _sha256_hex(value):
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
+def _s256_challenge(code_verifier):
+    digest = hashlib.sha256(code_verifier.encode()).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
+
+
+def register_oauth_client(redirect_uris, client_name=None, token_endpoint_auth_method="none"):
+    """Dynamic Client Registration (RFC 7591) — mints a fresh client_id for
+    a caller (an MCP client doing OAuth discovery) that presents at least
+    one redirect URI. Raises ValueError on a malformed request; the route
+    handler turns that into a 400."""
+    if not redirect_uris:
+        raise ValueError("redirect_uris is required")
+    for uri in redirect_uris:
+        parsed = urlparse(uri)
+        if parsed.scheme not in ("https", "http") or not parsed.netloc:
+            raise ValueError("redirect_uris must be absolute URLs")
+
+    client_id = secrets.token_urlsafe(24)
+    conn = _connect()
+    conn.execute(
+        "INSERT INTO oauth_clients (client_id, client_name, redirect_uris, token_endpoint_auth_method, created_at) "
+        "VALUES (?,?,?,?,?)",
+        (client_id, client_name, json.dumps(redirect_uris), token_endpoint_auth_method or "none", time.time()),
+    )
+    conn.commit()
+    conn.close()
+    return client_id
+
+
+def get_oauth_client(client_id):
+    conn = _connect()
+    row = conn.execute("SELECT * FROM oauth_clients WHERE client_id=?", (client_id,)).fetchone()
+    conn.close()
+    if row is None:
+        return None
+    client = dict(row)
+    client["redirect_uris"] = json.loads(client["redirect_uris"])
+    return client
+
+
+def issue_oauth_code(client_id, google_sub, email, redirect_uri, code_challenge, resource, ttl_seconds=600):
+    """Mints a one-time authorization code for a client whose redirect_uri
+    has already been validated against its registration by the /oauth/authorize
+    route. Returns the raw code (shown to the caller exactly once); only
+    its hash is stored."""
+    raw = secrets.token_urlsafe(32)
+    now = time.time()
+    conn = _connect()
+    conn.execute(
+        "INSERT INTO oauth_codes "
+        "(code_hash, client_id, google_sub, email, redirect_uri, code_challenge, resource, created_at, expires_at, consumed_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,NULL)",
+        (_sha256_hex(raw), client_id, google_sub, email, redirect_uri, code_challenge, resource, now, now + ttl_seconds),
+    )
+    conn.commit()
+    conn.close()
+    return raw
+
+
+def redeem_oauth_code(code, client_id, redirect_uri, code_verifier, resource):
+    """Validates and single-use-consumes an authorization code: right
+    client, right redirect_uri, unexpired, unused, and the PKCE verifier
+    actually hashes to the challenge that was presented at /oauth/authorize
+    (this is what stops an attacker who intercepts the code — without the
+    verifier, which never left the original requester — from redeeming
+    it). Also checks the resource (audience) matches, so a token minted
+    here can't be replayed against a different MCP server. Raises
+    ValueError with a caller-safe message on any failure; returns
+    (google_sub, email) on success."""
+    code_hash = _sha256_hex(code)
+    conn = _connect()
+    row = conn.execute("SELECT * FROM oauth_codes WHERE code_hash=?", (code_hash,)).fetchone()
+    if row is None:
+        conn.close()
+        raise ValueError("invalid authorization code")
+    row = dict(row)
+    now = time.time()
+    if row["consumed_at"] is not None:
+        conn.close()
+        raise ValueError("authorization code already used")
+    if row["expires_at"] < now:
+        conn.close()
+        raise ValueError("authorization code expired")
+    if row["client_id"] != client_id or row["redirect_uri"] != redirect_uri:
+        conn.close()
+        raise ValueError("client_id or redirect_uri does not match")
+    if row["resource"].rstrip("/") != resource.rstrip("/"):
+        conn.close()
+        raise ValueError("resource does not match")
+    if _s256_challenge(code_verifier) != row["code_challenge"]:
+        conn.close()
+        raise ValueError("PKCE verification failed")
+
+    conn.execute("UPDATE oauth_codes SET consumed_at=? WHERE code_hash=?", (now, code_hash))
+    conn.commit()
+    conn.close()
+    return row["google_sub"], row["email"]
+
+
+def mint_oauth_token(google_sub, email, client_name):
+    """A fresh access token for one (user, OAuth client) pair — deliberately
+    not the same token get_or_create_token returns, so disconnecting this
+    client later doesn't also invalidate the user's direct MCP client
+    config. Always mints a new token, unlike get_or_create_token: a second
+    OAuth authorization for the same client is a re-consent, not a replay,
+    and each grant gets its own revocable credential."""
+    token = secrets.token_urlsafe(32)
+    conn = _connect()
+    conn.execute(
+        "INSERT INTO oauth_tokens (token, google_sub, email, client_name, created_at) VALUES (?,?,?,?,?)",
+        (token, google_sub, email, client_name, time.time()),
+    )
+    conn.commit()
+    conn.close()
+    return token
