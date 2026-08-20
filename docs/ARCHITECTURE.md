@@ -19,7 +19,7 @@ flowchart LR
         FR[Their run_agent_loop] -->|"record_session MCP tool /\nPOST /api/record-session\n(bearer token, owner=their sub)"| MCP
     end
 
-    Client["Any MCP client\n(Claude Desktop, chat UI, ...)"] -->|"Streamable HTTP,\nBearer token"| MCP
+    Client["Bedrock-based agents / Claude Code"] -->|"Streamable HTTP,\nBearer token"| MCP
 ```
 
 One data-access layer (`metrics/store.py`), two entry points: a direct

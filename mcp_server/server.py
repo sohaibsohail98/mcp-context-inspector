@@ -7,7 +7,8 @@ actual protocol client). Both paths call the same underlying functions
 in metrics/store.py — one data-access layer, not two implementations of
 "how do I read a session."
 
-Reusable, connectable by any agent — not coupled to any specific chat UI.
+Reusable, connectable by Bedrock-based agents and by Claude Code — not
+coupled to any specific chat UI.
 See web/server.py for the chat frontend, a separate process.
 
 Run from repo root:
@@ -461,7 +462,7 @@ async def auth_login(request: Request):
 <div class="hero">
   <span class="hero-eyebrow">Model Context Protocol server</span>
   <h1>mcp-context-inspector</h1>
-  <p class="sub">Execution metrics and a full Context Window Explorer for any tool-calling agent — over a real MCP server, not a mock.</p>
+  <p class="sub">Execution metrics and a full Context Window Explorer for Bedrock-based agents and Claude Code — over a real MCP server, not a mock.</p>
 </div>
 
 <div class="preview-frame">
@@ -495,7 +496,7 @@ async def auth_login(request: Request):
 <p class="byline">Built by <a href="https://github.com/sohaibsohail98" target="_blank" rel="noopener">@sohaibsohail98</a></p>
 
 <div class="card">
-  <h3>What this gives your LLM/agent</h3>
+  <h3>What this gives your agent</h3>
   <ul class="features">
     <li>Real per-session cost, token, and tool-call metrics — 7 read-only MCP tools</li>
     <li>The <strong>Context Window Explorer</strong> — exactly what entered the model's context window, block by block, with honest token estimates</li>
@@ -505,9 +506,9 @@ async def auth_login(request: Request):
 <details>
   <summary>What is an MCP server?</summary>
   <p>MCP (Model Context Protocol) is an open standard that lets an LLM or agent call tools over a
-  normal HTTP connection — the same handshake works whether you're connecting Claude, ChatGPT,
-  Cursor, or your own custom agent. This server exposes read/write tools for agent execution
-  data; nothing here is specific to any one AI provider.</p>
+  normal HTTP connection. This server exposes read/write tools for agent execution
+  data, and is built to support two integration paths: Bedrock-based agents calling the
+  <code>record_session</code> tool directly, and Claude Code.</p>
 </details>
 <details>
   <summary>Why sign in with Google instead of a password?</summary>
@@ -559,15 +560,6 @@ async def auth_login(request: Request):
         }}
       }}
     }}, null, 2);
-    const vscodeConfig = JSON.stringify({{
-      servers: {{
-        "context-inspector": {{
-          type: "http",
-          url: mcpUrl,
-          headers: {{ Authorization: "Bearer " + token }}
-        }}
-      }}
-    }}, null, 2);
     const rawHeader = "Authorization: Bearer " + token;
     const curlCmd = 'curl -H "Authorization: Bearer ' + token + '" ' + window.location.origin + '/api/sessions';
 
@@ -591,9 +583,7 @@ async def auth_login(request: Request):
       <div class="card">
         <h3>Connect your client</h3>
         <div class="tab-row" style="margin-top: 0.9rem;">
-          <button class="tab-btn active" data-tab="claude" onclick="showConnectTab('claude')">Claude Desktop</button>
-          <button class="tab-btn" data-tab="vscode" onclick="showConnectTab('vscode')">VS Code</button>
-          <button class="tab-btn" data-tab="webui" onclick="showConnectTab('webui')">Claude.ai / ChatGPT</button>
+          <button class="tab-btn active" data-tab="claude" onclick="showConnectTab('claude')">Claude Code</button>
           <button class="tab-btn" data-tab="api" onclick="showConnectTab('api')">API / curl</button>
         </div>
 
@@ -602,16 +592,8 @@ async def auth_login(request: Request):
           <pre id="claude-config">` + claudeConfig + `</pre>
           <button class="copy" onclick="copyText('claude-config')">Copy config</button>
         </div>
-        <div class="tab-panel" data-panel="vscode">
-          <p class="card-hint">Add this to <code>.vscode/mcp.json</code>:</p>
-          <pre id="vscode-config">` + vscodeConfig + `</pre>
-          <button class="copy" onclick="copyText('vscode-config')">Copy config</button>
-        </div>
-        <div class="tab-panel" data-panel="webui">
-          <p class="card-hint">Add a custom connector and paste the MCP server URL above — no config file, no header to set by hand.</p>
-        </div>
         <div class="tab-panel" data-panel="api">
-          <p class="card-hint">Any other LLM/agent — point it at the MCP server URL above with this header on every request:</p>
+          <p class="card-hint">Bedrock-based agents — point them at the MCP server URL above with this header on every request:</p>
           <pre id="raw-header">` + rawHeader + `</pre>
           <button class="copy" onclick="copyText('raw-header')">Copy header</button>
           <p class="card-hint" style="margin-top: 0.9rem;">curl (debugging):</p>
@@ -980,8 +962,8 @@ if __name__ == "__main__":
             "\n─── No MCP_AUTH_TOKEN set — generated one for this run "
             + "─" * 10
             + f"\n\n    {mcp_auth_token}\n\n"
-            "This is YOUR (owner) token — paste it into any MCP-config-based "
-            "client (Claude Desktop, VS Code, curl) to authenticate. The chat "
+            "This is YOUR (owner) token — paste it into your MCP-config-based "
+            "client (Claude Code, curl) to authenticate. The chat "
             "UI's own MCP panel uses Google sign-in instead, not this token.\n"
         )
 
