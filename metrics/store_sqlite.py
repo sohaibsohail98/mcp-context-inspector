@@ -112,7 +112,7 @@ _TOOL_CALLS_MIGRATION_COLUMNS = ("latency_ms", "timestamp")
 
 def _migrate_tool_calls_table(conn):
     """Same reasoning as _migrate_turns_table — the Tool calls tab
-    (docs/OTLP_INTEGRATION_PLAN.md's dashboard spec) needs a per-call
+    (docs/internal/OTLP_INTEGRATION_PLAN.md's dashboard spec) needs a per-call
     latency and timestamp that a pre-existing tool_calls table doesn't
     have. Both default to 0 for rows written before this column
     existed — "unknown," not a real zero latency."""

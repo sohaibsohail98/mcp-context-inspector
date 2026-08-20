@@ -8,7 +8,7 @@ from mci_common.config import CHARS_PER_TOKEN_ESTIMATE
 
 # The five context_blocks categories the dashboard's CATEGORY_COLORS map
 # and mci_common/timeline.py both already expect (see the recon note in
-# docs/OTLP_INTEGRATION_PLAN.md) — every mapper must emit one of these,
+# docs/internal/OTLP_INTEGRATION_PLAN.md) — every mapper must emit one of these,
 # never an invented category string, or the block silently fails to
 # render/color in the existing dashboard.
 CATEGORY_SYSTEM = "system"

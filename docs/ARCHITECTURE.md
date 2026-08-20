@@ -20,14 +20,34 @@ flowchart LR
     end
 
     Client["Bedrock-based agents / Claude Code"] -->|"Streamable HTTP,\nBearer token"| MCP
+
+    subgraph OTLPClients["Claude Code / GitHub Copilot's own telemetry"]
+        CC["Claude Code\n(OTEL_LOGS_EXPORTER=otlp)"] -->|"POST /otlp/v1/logs\nBearer token"| OTLP
+        GHC["GitHub Copilot\n(COPILOT_OTEL_ENABLED)"] -->|"POST /otlp/v1/traces\nBearer token"| OTLP
+    end
+    OTLP["mcp_server/otlp/\n(claude_code.py, copilot.py)"] -->|"append_turn / append_tool_call /\nappend_context_block, owner=their sub"| S
 ```
 
-One data-access layer (`metrics/store.py`), two entry points: a direct
-Python import for your own local agent (owner defaults to `None`, the
-server owner), and the authenticated MCP tool / REST route for anyone
-else's remote agent (owner resolved from their bearer token). Every
-read goes through the same layer, filtered by `owner` — see
-`docs/AUTH.md` for the isolation guarantee.
+One data-access layer (`metrics/store.py`), three entry points: a
+direct Python import for your own local agent (owner defaults to
+`None`, the server owner), the authenticated MCP tool / REST route for
+anyone else's remote agent (owner resolved from their bearer token),
+and the `/otlp/v1/{logs,metrics,traces}` routes that accept Claude
+Code's/Copilot's own native OpenTelemetry export directly — no
+`record_session` call needed, just OTLP env vars pointed at this
+server (see the README's "Claude Code / Copilot live telemetry"
+section). Every read goes through the same layer, filtered by `owner`
+— see `docs/AUTH.md` for the isolation guarantee.
+
+Unlike `record_session`'s one-shot "here's the whole finished session"
+write, OTLP ingestion is incremental: each batch calls
+`start_or_get_session` once per session, then `append_turn`/
+`append_tool_call`/`append_context_block` as new data arrives, diffing
+against what's already stored so a retried/duplicate batch is safe to
+reprocess. `mcp_server/otlp/claude_code.py` and `copilot.py` hold the
+per-vendor mapping from each client's native OTLP attribute shape to
+that append call sequence — see their module docstrings for the wire
+format each is written against.
 
 ## The `record_session` contract
 

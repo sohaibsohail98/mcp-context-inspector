@@ -1,7 +1,7 @@
 """Claude Code OTLP mapper.
 
 Parses Claude Code's native OpenTelemetry export (`http/json` protocol,
-`OTEL_LOG_RAW_API_BODIES=1` inline mode — see docs/OTLP_INTEGRATION_PLAN.md,
+`OTEL_LOG_RAW_API_BODIES=1` inline mode — see docs/internal/OTLP_INTEGRATION_PLAN.md,
 "### Claude Code" section) into the append_*/start_or_get_session calls in
 metrics/store.py.
 
@@ -17,17 +17,26 @@ duplicate batch safe.
 api_response_body content, by contrast, is genuinely new every time (the
 assistant's fresh reply) and is always appended directly, no diffing.
 
-Unverified against a real captured payload (see the plan's "Unverified"
-note under the Claude Code research section) — this is written against
-the documented/assumed wire shape only:
+Verified against a real captured payload (CLAUDE_CODE_ENABLE_TELEMETRY=1,
+OTEL_LOG_RAW_API_BODIES=1, claude-code 2.1.233), 2026-08-20:
+  - session.id, model, and event.name are all stamped on the log
+    record's own attributes (not just resource attributes) — confirmed.
+  - event.name values are the bare event name (`"api_request_body"`,
+    not `"claude_code.api_request_body"`) — confirmed, matches
+    _handle_log_record's dispatch.
+  - the raw Messages API JSON is in the log record's `body` ATTRIBUTE
+    (`attrs["body"]`), not the LogRecord's own top-level `body` field —
+    this was WRONG in the original assumption and silently broke every
+    request/response body handler; fixed in _parse_body.
+
+Still unverified (no tool call happened in the captured session):
   - exact attribute key names on tool_result events (tool_name/success/
     duration_ms/error_type below are the plausible OTel-semantic-
     convention-style names, not confirmed)
-  - whether session.id is stamped on the log record's own attributes or
-    only on the resource attributes (we check both, record first)
   - exact latency/duration attribute name on api_response_body records
-A real local capture (build_order step 1 in the plan) should be diffed
-against these assumptions before this is trusted in production.
+    (not present as a top-level attribute in the captured payload;
+    latency/duration_ms/timestamps live inside the separate
+    claude_code.api_request event instead — see _handle_response_body)
 """
 
 import json
@@ -44,7 +53,6 @@ from mcp_server.otlp.common import (
     CATEGORY_USER,
     attrs_list_to_dict,
     estimate_tokens,
-    log_record_body_text,
 )
 
 # Narrow, deliberate exception set for per-record try/except in the batch
@@ -207,13 +215,24 @@ def _walk_request_body(body):
     return blocks
 
 
-def _parse_body(record):
-    """Returns the parsed JSON dict body, or None if unavailable. `None`
-    covers both a genuinely missing body and the file-mode `body_ref`
-    case (see module docstring / plan: this repo's onboarding always
-    uses inline mode, but a record with only body_ref and no real body
-    should degrade to content-unavailable, not crash)."""
-    body = log_record_body_text(record)
+def _parse_body(attrs):
+    """Returns the parsed JSON dict body, or None if unavailable.
+
+    CONFIRMED against a real captured payload (CLAUDE_CODE_ENABLE_TELEMETRY=1,
+    OTEL_LOG_RAW_API_BODIES=1): the raw Messages API JSON lives in the log
+    record's `body` ATTRIBUTE (inside `attributes`, alongside `body_length`/
+    `model`/etc — i.e. `attrs["body"]`, already unwrapped by
+    attrs_list_to_dict), not in the LogRecord's own top-level `body` field.
+    That field instead carries the dotted event name
+    (`"claude_code.api_request_body"`) as its stringValue — reading it as
+    the payload silently no-ops every request/response body (the
+    json.JSONDecodeError falls into _SKIP_EXCEPTIONS).
+
+    `None` covers both a genuinely missing body and the file-mode
+    `body_ref` case (this repo's onboarding always uses inline mode, but a
+    record with only body_ref and no real body should degrade to
+    content-unavailable, not crash)."""
+    body = attrs.get("body")
     if isinstance(body, str):
         return json.loads(body)
     if isinstance(body, dict):
@@ -236,8 +255,8 @@ def _current_turn_n(session_id, owner):
     return max(turn_ns) if turn_ns else 0
 
 
-def _handle_request_body(session_id, record, owner):
-    body = _parse_body(record)
+def _handle_request_body(session_id, attrs, owner):
+    body = _parse_body(attrs)
     if not isinstance(body, dict):
         return  # content unavailable (e.g. body_ref-only) — nothing to walk
     fresh_blocks = _walk_request_body(body)
@@ -247,8 +266,8 @@ def _handle_request_body(session_id, record, owner):
         store.append_context_block(session_id, block, owner=owner)
 
 
-def _handle_response_body(session_id, record, attrs, owner):
-    body = _parse_body(record)
+def _handle_response_body(session_id, attrs, owner):
+    body = _parse_body(attrs)
     if not isinstance(body, dict):
         return  # content unavailable
 
@@ -307,9 +326,9 @@ def _handle_log_record(resource_attrs, record, owner):
 
     event_name = attrs.get("event.name")
     if event_name == "api_request_body":
-        _handle_request_body(session_id, record, owner)
+        _handle_request_body(session_id, attrs, owner)
     elif event_name == "api_response_body":
-        _handle_response_body(session_id, record, attrs, owner)
+        _handle_response_body(session_id, attrs, owner)
     elif event_name == "tool_result":
         _handle_tool_result(session_id, attrs, owner)
     # user_prompt / assistant_response / mcp_server_connection: not

@@ -3,7 +3,7 @@
 Self-consistent fixture tests only: no real captured GitHub Copilot OTLP
 payload exists to validate against (Copilot's OTel export is genuinely
 unverified end-to-end — see the module docstring in
-mcp_server/otlp/copilot.py and docs/OTLP_INTEGRATION_PLAN.md's "###
+mcp_server/otlp/copilot.py and docs/internal/OTLP_INTEGRATION_PLAN.md's "###
 GitHub Copilot" section for what is/isn't confirmed). These tests
 hand-construct OTLP JSON span payloads matching copilot.py's own
 documented attribute-name/shape assumptions and assert the mapper wires

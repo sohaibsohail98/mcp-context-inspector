@@ -42,5 +42,6 @@ Stub — full deploy walkthrough not written yet. What's true today:
   fine, so a plain unauthenticated curl smoke test won't catch it; test
   with a real bearer token.
 
-GitHub Actions deploy workflow (Workload Identity Federation) is not
-built yet.
+GitHub Actions deploy workflow (Workload Identity Federation) is live —
+pushes to `main` touching `mcp_server/**` (or other deploy-relevant
+paths) auto-deploy to the Cloud Run service and Cloudflare Worker above.

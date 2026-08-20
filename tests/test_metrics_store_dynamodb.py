@@ -112,8 +112,9 @@ class FakeTable:
         return {}
 
     def put_item(self, Item, ConditionExpression=None):
-        """Handles the one ConditionExpression start_or_get_session
-        actually issues ("attribute_not_exists(session_id)") — raises the
+        """Handles the two ConditionExpressions store_dynamodb.py issues
+        ("attribute_not_exists(session_id)" from start_or_get_session,
+        "attribute_not_exists(sk)" from _put_next_indexed) — raises the
         fake ConditionalCheckFailedException if an item with the same
         session_id+sk already exists, otherwise upserts."""
         existing_idx = next(
@@ -124,7 +125,7 @@ class FakeTable:
             None,
         )
         if existing_idx is not None:
-            if ConditionExpression == "attribute_not_exists(session_id)":
+            if ConditionExpression in ("attribute_not_exists(session_id)", "attribute_not_exists(sk)"):
                 raise self.meta.client.exceptions.ConditionalCheckFailedException()
             self.items[existing_idx] = Item
         else:
@@ -445,6 +446,41 @@ def test_start_or_get_session_conditional_put_does_not_raise(fake_table):
     result = store_dynamodb.start_or_get_session("otel-race", source="claude_code")
     assert result == sid
     assert len([i for i in fake_table.items if i["session_id"] == sid and i["sk"] == "SESSION"]) == 1
+
+
+def test_append_turn_retries_past_index_collision(fake_table, monkeypatch):
+    """Two concurrent OTLP batches for the same session can both call
+    _next_index and get the same count back before either write commits
+    — a plain put_item would let the second silently overwrite the
+    first (the DynamoDB append-race gap noted in plan.md). The
+    attribute_not_exists(sk) ConditionExpression must reject the
+    collision and _put_next_indexed must retry with a freshly
+    recomputed index rather than losing either row."""
+    sid = store_dynamodb.start_or_get_session("otel-append-race", source="claude_code")
+
+    # Simulate a concurrent writer that already claimed index 0.
+    fake_table.items.append({
+        "session_id": sid, "sk": "TURN#0000", "turn_n": 0,
+        "input_tokens": 1, "output_tokens": 1, "latency_ms": 1,
+        "cache_read_input_tokens": 0, "cache_write_input_tokens": 0,
+    })
+
+    real_next_index = store_dynamodb._next_index
+    calls = {"n": 0}
+
+    def stale_first_call(session_id, sk_prefix):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return 0  # stale: computed before the "concurrent" row above landed
+        return real_next_index(session_id, sk_prefix)
+
+    monkeypatch.setattr(store_dynamodb, "_next_index", stale_first_call)
+    store_dynamodb.append_turn(sid, {"input_tokens": 100, "output_tokens": 20, "latency_ms": 500})
+
+    turn_rows = [i for i in fake_table.items if i["session_id"] == sid and i["sk"].startswith("TURN#")]
+    assert {r["sk"] for r in turn_rows} == {"TURN#0000", "TURN#0001"}
+    original = next(r for r in turn_rows if r["sk"] == "TURN#0000")
+    assert original["input_tokens"] == 1  # untouched, not overwritten by the retrying writer
 
 
 def test_append_turn_accumulates_session_totals(fake_table):

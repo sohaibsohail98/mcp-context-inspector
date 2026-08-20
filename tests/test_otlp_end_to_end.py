@@ -44,16 +44,20 @@ def _claude_code_logs_payload(session_id="e2e-cc-1"):
         },
     }
 
-    def _attrs(event_name, **extra):
+    import json as _json
+
+    def _attrs(event_name, body, **extra):
+        # Real Claude Code puts the raw body in a `body` ATTRIBUTE, not
+        # the LogRecord's own top-level `body` field — confirmed via live
+        # capture, see claude_code.py's module docstring.
         attrs = [
             {"key": "event.name", "value": {"stringValue": event_name}},
             {"key": "session.id", "value": {"stringValue": session_id}},
+            {"key": "body", "value": {"stringValue": _json.dumps(body)}},
         ]
         for k, v in extra.items():
             attrs.append({"key": k, "value": {"stringValue": str(v)}})
         return attrs
-
-    import json as _json
 
     return {
         "resourceLogs": [
@@ -64,13 +68,13 @@ def _claude_code_logs_payload(session_id="e2e-cc-1"):
                         "logRecords": [
                             {
                                 "timeUnixNano": "1000000000",
-                                "attributes": _attrs("api_request_body"),
-                                "body": {"stringValue": _json.dumps(request_body)},
+                                "attributes": _attrs("api_request_body", request_body),
+                                "body": {"stringValue": "claude_code.api_request_body"},
                             },
                             {
                                 "timeUnixNano": "2000000000",
-                                "attributes": _attrs("api_response_body"),
-                                "body": {"stringValue": _json.dumps(response_body)},
+                                "attributes": _attrs("api_response_body", response_body),
+                                "body": {"stringValue": "claude_code.api_response_body"},
                             },
                         ]
                     }
