@@ -35,7 +35,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.0.1
       - run: uv venv && uv pip install -e ".[dev]"
       # Same reasoning as tests.yml — never deploy on top of a failing
       # unit suite, even though tests.yml already ran on this push.
