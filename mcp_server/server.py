@@ -816,7 +816,17 @@ async def auth_login(request: Request):
       "export OTEL_EXPORTER_OTLP_ENDPOINT=" + otlpUrl,
       'export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer ' + token + '"',
     ].join("\\n");
-    const claudeOtelOptin = "export OTEL_LOG_RAW_API_BODIES=1";
+    const claudeOtelOptin = [
+      "export OTEL_LOG_RAW_API_BODIES=1",
+      // Claude Code truncates any content-bearing attribute (including this
+      // raw body) at 60KB by default — real sessions with a system prompt
+      // and tool specs exceed that almost immediately, which truncates the
+      // body's JSON mid-string and makes it unparseable, silently losing
+      // that turn's Context Explorer detail (confirmed via a live capture).
+      // Raised here to 1MB, comfortably inside this server's own 25MB cap
+      // on a whole OTLP batch.
+      "export CLAUDE_CODE_OTEL_CONTENT_MAX_LENGTH=1048576",
+    ].join("\\n");
     const copilotOtelSnippet = [
       "export COPILOT_OTEL_ENABLED=true",
       "export OTEL_EXPORTER_OTLP_ENDPOINT=" + otlpUrl,
