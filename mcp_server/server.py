@@ -19,6 +19,8 @@ import contextvars
 import json
 import os
 import shutil
+from html import escape
+from urllib.parse import urlencode
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
@@ -73,7 +75,24 @@ class MultiTokenAuthMiddleware(BaseHTTPMiddleware):
             elif token and auth_store.is_valid_token(token):
                 current_owner.set(auth_store.get_sub_for_token(token))
             else:
-                return JSONResponse({"error": "unauthorized — missing or wrong bearer token"}, status_code=401)
+                # WWW-Authenticate here is what lets an MCP client do OAuth
+                # discovery (RFC 9728 §5.1): on a 401 with no/invalid token,
+                # it looks at this header to find the protected-resource
+                # metadata document, which in turn points it at
+                # /.well-known/oauth-authorization-server (see the OAuth
+                # routes below). Also set on this specific response — not
+                # relying on the global CORSMiddleware — since a browser-
+                # side client's discovery fetch needs the header readable
+                # cross-origin even though this response is a plain 401.
+                metadata_url = str(request.base_url).rstrip("/") + "/.well-known/oauth-protected-resource/mcp"
+                return JSONResponse(
+                    {"error": "unauthorized — missing or wrong bearer token"},
+                    status_code=401,
+                    headers={
+                        "WWW-Authenticate": f'Bearer error="invalid_token", resource_metadata="{metadata_url}"',
+                        "Access-Control-Allow-Origin": "*",
+                    },
+                )
         return await call_next(request)
 
 
@@ -878,9 +897,9 @@ async def auth_login(request: Request):
         <div id="local-script-result" style="margin-top: 0.7rem; font-size: 0.85rem;"></div>
         <p class="card-hint" style="margin-top: 0.6rem;">
           Prefer not to run a script? <a href="https://claude.ai/settings/connectors" target="_blank" rel="noopener" onclick="document.querySelector('details').open=true;">Connect via claude.ai Connectors instead &rarr;</a>
-          — opens claude.ai's Connectors settings in a new tab, where you can add this server's URL and token
-          (both in the "Your connection" card above) under <strong>Add custom connector</strong>. Full steps in
-          the "Advanced" section below, now expanded.
+          — opens claude.ai's Connectors settings in a new tab. Paste just the MCP server URL from
+          "Your connection" above (no token needed — you'll sign in with Google right there) under
+          <strong>Add custom connector</strong>. Full steps in the "Advanced" section below, now expanded.
         </p>
       </div>
       `) + `
@@ -898,11 +917,11 @@ async def auth_login(request: Request):
           won't auto-populate as you code unless you also paste the "Claude Code (live telemetry)" snippet
           below once per machine.</p>
           <ol class="card-hint" style="padding-left: 1.2rem; margin: 0.7rem 0;">
-            <li>Copy the MCP server URL and token above.</li>
+            <li>Copy the MCP server URL above.</li>
             <li>Go to <strong>claude.ai &rarr; Customize &rarr; Connectors &rarr; Add custom connector.</strong></li>
-            <li>Paste the URL. Under Advanced settings, add your token as an
-            <code>Authorization: Bearer &lt;token&gt;</code> header (exact field names may vary &mdash; look
-            for a header/token option, not just OAuth client ID/secret).</li>
+            <li>Paste the URL and click <strong>Add</strong> — leave the OAuth Client ID/Secret fields blank,
+            those aren't used here. claude.ai will open a Google sign-in page for this server automatically;
+            once you sign in, the connector is live. No token to copy or paste anywhere.</li>
           </ol>
           <a class="copy" href="https://claude.ai/settings/connectors" target="_blank" rel="noopener" style="display:inline-block; text-decoration:none;">Open claude.ai Connectors</a>
         </div>
@@ -1841,6 +1860,338 @@ async def auth_verify(request: Request):
 
     token = auth_store.get_or_create_token(identity["sub"], identity["email"])
     return JSONResponse({"mcp_token": token, "email": identity["email"]})
+
+
+# --- OAuth 2.1 + PKCE authorization server ------------------------------
+# Lets an MCP client that only knows how to do OAuth (e.g. a "Connectors"
+# style integration in a chat UI, which offers no way to paste a plain
+# bearer token) authenticate anyway. This server acts as BOTH the OAuth
+# resource server (the /mcp endpoint itself, gated by
+# MultiTokenAuthMiddleware above) and the authorization server (the
+# /oauth/* + /.well-known/* routes below) — the MCP spec allows either a
+# combined or split deployment, and combined is simplest here since
+# there's no separate identity provider to delegate to beyond Google
+# sign-in, which this server already does its own verification of.
+#
+# Flow (RFC 8414 authorization server metadata, RFC 9728 protected
+# resource metadata, RFC 7591 dynamic client registration, OAuth 2.1 +
+# PKCE for the actual grant):
+#   1. Client hits /mcp with no/bad token -> 401 with a WWW-Authenticate
+#      header pointing at /.well-known/oauth-protected-resource/mcp (see
+#      MultiTokenAuthMiddleware above).
+#   2. Client fetches that, learns this server is also its own
+#      authorization server, fetches /.well-known/oauth-authorization-server
+#      for the actual endpoints.
+#   3. Client POSTs /oauth/register once (RFC 7591) to get a client_id —
+#      no manual setup, no client secret (public client, PKCE-protected).
+#   4. Client opens /oauth/authorize in a browser; user signs in with
+#      Google (this server's existing identity check, reused as the
+#      consent step); server redirects back with a one-time code.
+#   5. Client exchanges the code at /oauth/token (with the PKCE verifier)
+#      for an access token — which is just an ordinary bearer token, so
+#      MultiTokenAuthMiddleware needs no special-casing to accept it (see
+#      auth_store.is_valid_token, which checks both sign-in tokens and
+#      OAuth-issued ones).
+#
+# All of this is generic, spec-compliant OAuth — any MCP client that does
+# discovery correctly can use it, not just one specific product.
+
+
+def _oauth_cors_json(payload, status_code=200):
+    """These endpoints are meant to be reachable cross-origin from
+    whatever chat UI is doing the discovery/registration/token-exchange —
+    that's the entire point of them existing — so they carry their own
+    permissive CORS headers rather than relying on the app-wide
+    CORSMiddleware, which is deliberately scoped to this deployment's own
+    known origins (see CHAT_UI_ORIGIN) and would otherwise block this."""
+    return JSONResponse(
+        payload,
+        status_code=status_code,
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "Authorization, Content-Type",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+def _mcp_resource_url(request):
+    """The canonical resource URI (RFC 8707) this server's tokens are
+    scoped to — always the /mcp endpoint itself, never a trailing slash
+    (see the MCP spec's canonical-URI guidance)."""
+    return str(request.base_url).rstrip("/") + "/mcp"
+
+
+def _validate_oauth_request(client_id, redirect_uri, code_challenge, code_challenge_method, resource, request):
+    """Shared validation for both the GET (initial request) and POST
+    (post-Google-sign-in completion) halves of /oauth/authorize. Raises
+    ValueError with a message safe to show the caller; returns
+    (client_dict, resource_to_record)."""
+    if code_challenge_method and code_challenge_method != "S256":
+        raise ValueError("code_challenge_method must be S256")
+    if not code_challenge:
+        raise ValueError("code_challenge is required")
+    if not redirect_uri:
+        raise ValueError("redirect_uri is required")
+    client = auth_store.get_oauth_client(client_id) if client_id else None
+    if client is None:
+        raise ValueError("unknown client_id — register via /oauth/register first")
+    if redirect_uri not in client["redirect_uris"]:
+        raise ValueError("redirect_uri is not registered for this client")
+    expected_resource = _mcp_resource_url(request)
+    if resource and resource.rstrip("/") != expected_resource.rstrip("/"):
+        raise ValueError("resource does not match this server")
+    return client, (resource or expected_resource)
+
+
+@server.custom_route("/.well-known/oauth-protected-resource", methods=["GET", "OPTIONS"])
+@server.custom_route("/.well-known/oauth-protected-resource/mcp", methods=["GET", "OPTIONS"])
+async def oauth_protected_resource_metadata(request: Request):
+    """RFC 9728 — tells a client where its authorization server is. Two
+    paths registered: the bare well-known path some clients probe by
+    default, and the resource-specific one (.../oauth-protected-resource/mcp)
+    that RFC 9728 §3.1 actually specifies for a resource at /mcp."""
+    if request.method == "OPTIONS":
+        return _oauth_cors_json({})
+    origin = str(request.base_url).rstrip("/")
+    return _oauth_cors_json({
+        "resource": _mcp_resource_url(request),
+        "authorization_servers": [origin],
+        "bearer_methods_supported": ["header"],
+    })
+
+
+@server.custom_route("/.well-known/oauth-authorization-server", methods=["GET", "OPTIONS"])
+async def oauth_authorization_server_metadata(request: Request):
+    """RFC 8414 — the actual endpoint URLs and capabilities of this
+    server acting as its own authorization server."""
+    if request.method == "OPTIONS":
+        return _oauth_cors_json({})
+    origin = str(request.base_url).rstrip("/")
+    return _oauth_cors_json({
+        "issuer": origin,
+        "authorization_endpoint": origin + "/oauth/authorize",
+        "token_endpoint": origin + "/oauth/token",
+        "registration_endpoint": origin + "/oauth/register",
+        "response_types_supported": ["code"],
+        "grant_types_supported": ["authorization_code"],
+        "code_challenge_methods_supported": ["S256"],
+        "token_endpoint_auth_methods_supported": ["none"],
+        "scopes_supported": ["mcp"],
+    })
+
+
+@server.custom_route("/oauth/register", methods=["POST", "OPTIONS"])
+async def oauth_register(request: Request):
+    """RFC 7591 Dynamic Client Registration — lets a client obtain a
+    client_id with no manual setup. Public clients only (PKCE protects
+    the actual grant instead of a client secret), matching
+    token_endpoint_auth_methods_supported above."""
+    if request.method == "OPTIONS":
+        return _oauth_cors_json({})
+    try:
+        body = await request.json()
+    except ValueError:
+        return _oauth_cors_json({"error": "invalid_client_metadata", "error_description": "malformed JSON body"}, 400)
+    if not isinstance(body, dict):
+        return _oauth_cors_json({"error": "invalid_client_metadata"}, 400)
+
+    try:
+        client_id = auth_store.register_oauth_client(
+            body.get("redirect_uris"),
+            client_name=body.get("client_name"),
+            token_endpoint_auth_method=body.get("token_endpoint_auth_method", "none"),
+        )
+    except ValueError as e:
+        return _oauth_cors_json({"error": "invalid_client_metadata", "error_description": str(e)}, 400)
+
+    client = auth_store.get_oauth_client(client_id)
+    return _oauth_cors_json(
+        {
+            "client_id": client["client_id"],
+            "client_name": client["client_name"],
+            "redirect_uris": client["redirect_uris"],
+            "token_endpoint_auth_method": client["token_endpoint_auth_method"],
+            "grant_types": ["authorization_code"],
+            "response_types": ["code"],
+        },
+        201,
+    )
+
+
+@server.custom_route("/oauth/authorize", methods=["GET"])
+async def oauth_authorize_page(request: Request):
+    """Renders a sign-in page for the OAuth authorization request — reuses
+    this server's existing Google sign-in (see /auth/login) as the
+    identity check AND the consent step: signing in here is what grants
+    the requesting client access, same one-click model as everywhere else
+    on this server. Validates the request up front so a malformed or
+    unregistered client fails fast with a clear message instead of only
+    after the user signs in."""
+    q = request.query_params
+    if q.get("response_type") != "code":
+        return PlainTextResponse("response_type must be 'code'", status_code=400)
+    try:
+        client, resource = _validate_oauth_request(
+            q.get("client_id"),
+            q.get("redirect_uri"),
+            q.get("code_challenge"),
+            q.get("code_challenge_method", "S256"),
+            q.get("resource"),
+            request,
+        )
+    except ValueError as e:
+        return PlainTextResponse(str(e), status_code=400)
+
+    google_client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID")
+    if not google_client_id:
+        return PlainTextResponse("Google sign-in isn't configured on this server", status_code=503)
+
+    client_name = client["client_name"] or "This application"
+    oauth_params_json = json.dumps({
+        "client_id": client["client_id"],
+        "redirect_uri": q.get("redirect_uri"),
+        "code_challenge": q.get("code_challenge"),
+        "state": q.get("state"),
+        "resource": resource,
+    })
+    return HTMLResponse(f"""<!doctype html>
+<html><head><title>Authorize &middot; mcp-context-inspector</title>
+<style>{_PAGE_STYLE}</style>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+</head><body>
+<div class="narrow-page">
+<div class="card accent">
+  <h3>Authorize {escape(client_name)}</h3>
+  <p class="card-hint">Sign in with Google to let <strong>{escape(client_name)}</strong> connect to
+  mcp-context-inspector as you. It gets the same access your own signed-in session already has —
+  your own data only, scoped to your account.</p>
+  <div id="g_id_onload" data-client_id="{google_client_id}" data-callback="onOAuthSignIn"></div>
+  <div class="g_id_signin" data-type="standard" data-theme="filled_black"></div>
+  <div id="oauth-result" style="margin-top:0.7rem; font-size:0.85rem;"></div>
+</div>
+</div>
+<script>
+  const oauthParams = {oauth_params_json};
+  async function onOAuthSignIn(response) {{
+    const result = document.getElementById("oauth-result");
+    result.textContent = "Authorizing…";
+    try {{
+      const res = await fetch("/oauth/authorize", {{
+        method: "POST",
+        headers: {{"Content-Type": "application/json"}},
+        body: JSON.stringify(Object.assign({{credential: response.credential}}, oauthParams)),
+      }});
+      const data = await res.json();
+      if (res.ok && data.redirect) {{
+        window.location.href = data.redirect;
+      }} else {{
+        result.innerHTML = '<span style="color:var(--err);">' + (data.error_description || data.error || "Something went wrong.") + '</span>';
+      }}
+    }} catch (err) {{
+      result.innerHTML = '<span style="color:var(--err);">' + err.message + '</span>';
+    }}
+  }}
+</script>
+</body></html>""")
+
+
+@server.custom_route("/oauth/authorize", methods=["POST"])
+async def oauth_authorize_complete(request: Request):
+    """Completes the authorize step after the browser has a fresh Google
+    credential: re-validates the request (defense in depth — don't trust
+    client-supplied params just because the GET page rendered), verifies
+    the credential server-side the same way /auth/verify does, and mints
+    a one-time authorization code the client exchanges at /oauth/token."""
+    google_client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID")
+    if not google_client_id:
+        return JSONResponse({"error": "server_error", "error_description": "GOOGLE_OAUTH_CLIENT_ID not configured"}, status_code=503)
+
+    try:
+        body = await request.json()
+    except ValueError:
+        return JSONResponse({"error": "invalid_request"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "invalid_request"}, status_code=400)
+
+    credential = body.get("credential")
+    if not credential:
+        return JSONResponse({"error": "invalid_request", "error_description": "missing credential"}, status_code=400)
+
+    try:
+        client, resource = _validate_oauth_request(
+            body.get("client_id"),
+            body.get("redirect_uri"),
+            body.get("code_challenge"),
+            "S256",
+            body.get("resource"),
+            request,
+        )
+    except ValueError as e:
+        return JSONResponse({"error": "invalid_request", "error_description": str(e)}, status_code=400)
+
+    try:
+        identity = verify_credential(credential, google_client_id)
+    except InvalidGoogleToken as e:
+        return JSONResponse({"error": "access_denied", "error_description": f"invalid Google credential: {e}"}, status_code=401)
+
+    code = auth_store.issue_oauth_code(
+        client["client_id"],
+        identity["sub"],
+        identity["email"],
+        body.get("redirect_uri"),
+        body.get("code_challenge"),
+        resource,
+    )
+    params = {"code": code}
+    if body.get("state"):
+        params["state"] = body["state"]
+    redirect_uri = body.get("redirect_uri")
+    separator = "&" if "?" in redirect_uri else "?"
+    return JSONResponse({"redirect": redirect_uri + separator + urlencode(params)})
+
+
+@server.custom_route("/oauth/token", methods=["POST", "OPTIONS"])
+async def oauth_token(request: Request):
+    """Exchanges a one-time authorization code (+ PKCE verifier) for an
+    access token — an ordinary bearer token, same format and same
+    MultiTokenAuthMiddleware check as every other token this server
+    issues (see auth_store.mint_oauth_token)."""
+    if request.method == "OPTIONS":
+        return _oauth_cors_json({})
+
+    form = await request.form()
+    if form.get("grant_type") != "authorization_code":
+        return _oauth_cors_json({"error": "unsupported_grant_type"}, 400)
+
+    code = form.get("code")
+    client_id = form.get("client_id")
+    redirect_uri = form.get("redirect_uri")
+    code_verifier = form.get("code_verifier")
+    if not all([code, client_id, redirect_uri, code_verifier]):
+        return _oauth_cors_json({"error": "invalid_request", "error_description": "missing required parameter"}, 400)
+
+    resource = form.get("resource") or _mcp_resource_url(request)
+    try:
+        google_sub, email = auth_store.redeem_oauth_code(code, client_id, redirect_uri, code_verifier, resource)
+    except ValueError as e:
+        return _oauth_cors_json({"error": "invalid_grant", "error_description": str(e)}, 400)
+
+    client = auth_store.get_oauth_client(client_id)
+    client_name = (client or {}).get("client_name") or "OAuth client"
+    token = auth_store.mint_oauth_token(google_sub, email, client_name)
+    return _oauth_cors_json({
+        "access_token": token,
+        "token_type": "Bearer",
+        # This server's bearer tokens don't actually expire (see
+        # auth_store) — a large-but-finite value here rather than
+        # omitting the field, since some clients treat a missing
+        # expires_in as "unknown, refresh soon" rather than "doesn't
+        # expire."
+        "expires_in": 60 * 60 * 24 * 365,
+        "scope": "mcp",
+    })
 
 
 # One-click local setup: writes this account's MCP config + OTLP telemetry

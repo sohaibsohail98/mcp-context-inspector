@@ -10,8 +10,10 @@ a paste-ready Claude Code / MCP-client config block.
 
 <img src="screenshots/connected-page.png" width="360" alt="Connected: your token and config">
 
-Two ways in, both accepted by the same `Authorization: Bearer <token>`
-header on `/mcp` and every `/api/*` route:
+Two ways to get a token by hand, both accepted by the same
+`Authorization: Bearer <token>` header on `/mcp` and every `/api/*`
+route (a third way, for clients that can't be handed a token directly,
+is covered further down):
 
 1. **Owner token**: the `MCP_AUTH_TOKEN` env var. Yours, printed on
    startup. Fine for solo local use.
@@ -25,21 +27,40 @@ header on `/mcp` and every `/api/*` route:
    Signing in again returns the *same* token, so pasting it into an MCP
    client config once doesn't get invalidated by a second sign-in.
 
-This is bearer token plus a Google ID token, not the MCP spec's OAuth
-2.1 authorization-server flow. A client user pastes a token rather
-than clicking "sign in" inside their MCP client.
+That covers a client that can be handed a plain bearer token directly
+(Claude Code's own MCP config, curl, a Bedrock agent). Some MCP
+clients — claude.ai's Connectors UI is one — offer no way to paste a
+token at all; they only speak the MCP spec's OAuth 2.1 Resource Server
+flow. This server implements that too, as a third way in.
 
-## Why not a full OAuth 2.1 authorization server
+## OAuth 2.1 + PKCE (for clients that only speak OAuth)
 
-The "real" way an MCP client is meant to discover and authenticate, per
-the MCP spec's OAuth Resource Server support, needs a genuine
-authorization server: PKCE, dynamic client registration, a consent
-screen, its own client/token tables, real infrastructure disproportionate
-to a personal-scale server. This gets the property that actually matters
-(each friend authenticates as themselves, with their own Google account,
-and you can revoke just one person) via Google Identity Services'
-one-tap credential flow instead: no redirect URIs, no client secret,
-just a signed ID token verified server-side (`mcp_server/google_auth.py`).
+`mcp_server/server.py`'s `/oauth/*` and `/.well-known/*` routes make
+this server act as its own OAuth 2.1 authorization server, per the MCP
+spec: RFC 9728 protected resource metadata, RFC 8414 authorization
+server metadata, RFC 7591 dynamic client registration, and a standard
+PKCE authorization-code grant. A client discovers everything itself
+(hit `/mcp` with no token, follow the `WWW-Authenticate` header) — no
+manual setup on either side.
+
+The consent step reuses the same Google sign-in already described
+above rather than building a separate login system: signing in *is*
+the authorization. Each OAuth client gets its own freshly-minted token
+(`mcp_server/auth_store.py`'s `mint_oauth_token`), kept separate from
+the plain sign-in token — so disconnecting a Connector later can't
+also break a paste-in-config client using the other token. Client
+registrations, one-time authorization codes, and OAuth-issued tokens
+all live in the same `auth_store` SQLite file as everything else here,
+and inherit its documented ephemeral-storage caveat (see
+`docs/DEPLOYMENT.md`).
+
+This is deliberately the minimum viable version of a real OAuth server —
+public clients only (no client secrets; PKCE carries the security
+instead), tokens that don't expire (matching this server's existing
+bearer-token model rather than adding refresh-token rotation), no
+consent-screen customization beyond the sign-in page itself. Good
+enough for what MCP clients actually need, without the extra surface a
+production-grade multi-tenant authorization server would carry.
 
 ## Google Cloud setup (one-time, ~2 minutes)
 

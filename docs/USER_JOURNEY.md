@@ -56,31 +56,34 @@ hand-edit the *global* config file, which nothing in the UI said.
 
 ## 4. The claude.ai Connectors path — a second way to "everywhere"
 
-Direct evidence, not speculation: this account's own `~/.claude/settings.json`
-already contained a working example before this session touched anything —
+**Correcting an earlier version of this doc.** A previous pass of this
+audit inferred, from an existing unrelated connector already present in
+this account's `~/.claude/settings.json`, that claude.ai's Connectors UI
+accepts a plain bearer-token header. That was an inference, never
+directly observed — and live testing this session proved it wrong for
+*this* server: claude.ai's "Add custom connector" dialog offers only
+**OAuth Client ID** / **OAuth Client Secret** fields, no plain header
+option. Leaving those blank and clicking Add triggered claude.ai
+attempting OAuth **Dynamic Client Registration** against this server —
+which failed outright, since at the time this server had no OAuth
+endpoints at all. Direct, first-hand evidence beats an inference from an
+unrelated data point; this section now reflects that.
 
-```json
-"mcpServers": {
-  "lockin": {
-    "url": "https://lockin.talhaakhoon.dev/mcp",
-    "headers": { "Authorization": "Bearer lin_<redacted>" }
-  }
-}
-```
-
-added entirely through claude.ai's account-level **Connectors** settings
-(Customize → Connectors → Add custom connector) — not by hand-editing this
-file. Anthropic's own support docs confirm connectors added there work
-across Claude, Cowork, and Claude Desktop, and are silent on Claude Code
-specifically — but this file is direct, current proof it reaches Claude Code
-too, at least for this account, and confirms a **plain bearer-token header**
-(no OAuth client ID/secret) is enough.
+**Fixed this session** — this server now implements a real (if minimal)
+OAuth 2.1 + PKCE authorization server for exactly this case: RFC 9728
+protected-resource metadata, RFC 8414 authorization-server metadata, RFC
+7591 dynamic client registration, and a standard PKCE authorization-code
+grant, reusing the existing Google sign-in as the consent step. See
+`docs/AUTH.md`'s OAuth section for the implementation, and §5b below for
+what was verified this session versus what still needs a live
+claude.ai-in-the-browser confirmation.
 
 **What this path can and can't do:**
 
 - **Can**: make the MCP query tools available in every Claude Code session
   automatically — no local file edits at all, for any client, once added at
-  claude.ai. The only path that works for the *deployed* instance without
+  claude.ai, with a one-click Google sign-in instead of copying a token
+  anywhere. The only path that works for the *deployed* instance without
   any local setup step.
 - **Can't**: carry the OTLP auto-telemetry half. Connectors configure an MCP
   server connection, not arbitrary session environment variables. §5's local
