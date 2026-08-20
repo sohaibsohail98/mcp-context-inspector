@@ -19,6 +19,8 @@ import contextvars
 import json
 import os
 import shutil
+import time
+from pathlib import Path
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
@@ -59,7 +61,7 @@ class MultiTokenAuthMiddleware(BaseHTTPMiddleware):
     read/write below can filter to the caller's own data. See
     metrics/store.py's owner param and the README's Auth section."""
 
-    def __init__(self, app, owner_token, protected_prefixes=("/mcp", "/api/", "/otlp")):
+    def __init__(self, app, owner_token, protected_prefixes=("/mcp", "/api/", "/otlp", "/setup")):
         super().__init__(app)
         self.owner_token = owner_token
         self.protected_prefixes = protected_prefixes
@@ -797,6 +799,7 @@ async def auth_login(request: Request):
   const mcpUrl = window.location.origin + "/mcp";
 
   function connectPage(email, token) {{
+    const isLocalHost = ["localhost", "127.0.0.1"].includes(window.location.hostname);
     const claudeConfig = JSON.stringify({{
       mcpServers: {{
         "context-inspector": {{
@@ -850,6 +853,29 @@ async def auth_login(request: Request):
         <span id="token-raw" class="hidden">` + token + `</span>
         <span id="url-raw" class="hidden">` + mcpUrl + `</span>
       </div>
+
+      ` + (isLocalHost ? `
+      <div id="local-setup-card" class="card accent">
+        <h3>Set up Claude Code automatically</h3>
+        <p class="card-hint">Writes the MCP connection and telemetry config below directly into
+        your own <code>~/.claude/settings.json</code> — the same file the manual snippets below
+        would have you paste into by hand, applied for you instead. Your existing settings are
+        backed up first and merged, never overwritten.</p>
+        <p class="card-hint" style="color: var(--ok);">This is a local file write on your own
+        machine only — nothing here is sent anywhere except this server, which is also running
+        on your machine right now.</p>
+        <button class="copy" onclick="applyLocalConfig()" id="local-setup-btn">Apply to my Claude Code config</button>
+        <div id="local-setup-result" style="margin-top: 0.7rem; font-size: 0.85rem;"></div>
+      </div>
+      ` : `
+      <div class="card">
+        <h3>Set up Claude Code automatically</h3>
+        <p class="card-hint">Only available when you're self-hosting and viewing this page at
+        <code>localhost</code> — this server can only write to the local Claude Code config on
+        whatever machine it's actually running on, and that isn't this one. Use the manual steps
+        below instead.</p>
+      </div>
+      `) + `
 
       <div class="card">
         <h3>Connect your client</h3>
@@ -1012,6 +1038,34 @@ async def auth_login(request: Request):
 
   function copyText(id) {{
     navigator.clipboard.writeText(document.getElementById(id).textContent);
+  }}
+
+  async function applyLocalConfig() {{
+    const btn = document.getElementById("local-setup-btn");
+    const result = document.getElementById("local-setup-result");
+    btn.disabled = true;
+    btn.textContent = "Applying…";
+    try {{
+      const res = await fetch("/setup/apply-local-config", {{
+        method: "POST",
+        headers: {{ Authorization: "Bearer " + currentToken }},
+      }});
+      const data = await res.json();
+      if (res.ok && data.ok) {{
+        result.innerHTML = '<span style="color:var(--ok);">&check; Done — wrote to <code>' + data.path + '</code>'
+          + (data.backed_up_to ? ' (previous version backed up to <code>' + data.backed_up_to + '</code>)' : '')
+          + '. Restart any running Claude Code sessions to pick it up.</span>';
+        btn.textContent = "Applied";
+      }} else {{
+        result.innerHTML = '<span style="color:var(--err);">' + (data.error || "Something went wrong.") + '</span>';
+        btn.disabled = false;
+        btn.textContent = "Apply to my Claude Code config";
+      }}
+    }} catch (err) {{
+      result.innerHTML = '<span style="color:var(--err);">' + err.message + '</span>';
+      btn.disabled = false;
+      btn.textContent = "Apply to my Claude Code config";
+    }}
   }}
 
   // --- Live dashboard ------------------------------------------------
@@ -1587,6 +1641,10 @@ async def auth_login(request: Request):
           <p>Signed in as ` + email + ` — everything below is scoped to your account only.</p>
         </div>
       </div>
+      <p class="card-hint" style="text-align:center; margin: -0.6rem 0 1.4rem;">
+        Your token, your sessions, your local Claude Code config — all of it stays on this
+        computer. Nothing you set up below is ever sent anywhere except this server.
+      </p>
     `;
   }}
 
@@ -1712,6 +1770,90 @@ async def auth_verify(request: Request):
 
     token = auth_store.get_or_create_token(identity["sub"], identity["email"])
     return JSONResponse({"mcp_token": token, "email": identity["email"]})
+
+
+# One-click local setup: writes this account's MCP config + OTLP telemetry
+# env vars directly into the caller's own ~/.claude/settings.json, instead
+# of the manual copy-paste-into-the-right-file steps in connectPage(). Only
+# meaningful — and only allowed — when this server and the browser calling
+# it are the same machine: this is a real local filesystem write, and a
+# request that merely LOOKS local (spoofed Host header, a proxied deployed
+# instance) must not be able to trigger it. Loopback-address gating below
+# is the actual boundary; MultiTokenAuthMiddleware (see protected_prefixes)
+# still requires a valid bearer token on top of that, so a second local
+# process/page without the real token can't call this either.
+_CLAUDE_SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
+
+
+def _is_loopback_request(request):
+    host = request.client.host if request.client else None
+    return host in ("127.0.0.1", "::1")
+
+
+@server.custom_route("/setup/apply-local-config", methods=["POST"])
+async def apply_local_config(request: Request):
+    """Merges this session's MCP server entry + OTLP telemetry env vars
+    into the caller's own ~/.claude/settings.json — the same shape the
+    connect page's copy-paste snippets already produce, applied for them
+    instead of by them. Backs up the existing file first (never a plain
+    overwrite); merges into (never replaces) existing mcpServers/env keys,
+    so an existing entry for a different MCP server (or a different env
+    var) survives untouched."""
+    if not _is_loopback_request(request):
+        return JSONResponse(
+            {"error": "only available when this server and your browser are on the same machine"},
+            status_code=403,
+        )
+
+    auth_header = request.headers.get("authorization", "")
+    bearer_token = auth_header.removeprefix("Bearer ") if auth_header.startswith("Bearer ") else None
+    if not bearer_token:
+        return JSONResponse({"error": "missing bearer token"}, status_code=401)
+
+    base = str(request.base_url).rstrip("/")
+    settings_path = _CLAUDE_SETTINGS_PATH
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+
+    existing = {}
+    backed_up_to = None
+    if settings_path.exists():
+        try:
+            existing = json.loads(settings_path.read_text())
+        except ValueError:
+            return JSONResponse(
+                {"error": f"{settings_path} exists but isn't valid JSON — not touching it. Fix or back it up manually first."},
+                status_code=409,
+            )
+        if not isinstance(existing, dict):
+            return JSONResponse({"error": f"{settings_path} isn't a JSON object — not touching it."}, status_code=409)
+        backup_path = settings_path.with_name(settings_path.name + f".bak-{int(time.time())}")
+        backup_path.write_text(json.dumps(existing, indent=2))
+        backed_up_to = str(backup_path)
+
+    existing.setdefault("mcpServers", {})
+    existing["mcpServers"]["context-inspector"] = {
+        "url": base + "/mcp",
+        "headers": {"Authorization": "Bearer " + bearer_token},
+    }
+    existing.setdefault("env", {})
+    existing["env"].update({
+        "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+        "OTEL_LOGS_EXPORTER": "otlp",
+        "OTEL_METRICS_EXPORTER": "otlp",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "http/json",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": base + "/otlp",
+        "OTEL_EXPORTER_OTLP_HEADERS": "Authorization=Bearer " + bearer_token,
+        "OTEL_LOG_RAW_API_BODIES": "1",
+        "CLAUDE_CODE_OTEL_CONTENT_MAX_LENGTH": "1048576",
+    })
+
+    settings_path.write_text(json.dumps(existing, indent=2) + "\n")
+
+    return JSONResponse({
+        "ok": True,
+        "path": str(settings_path),
+        "backed_up_to": backed_up_to,
+    })
 
 
 if __name__ == "__main__":
