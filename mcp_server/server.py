@@ -241,7 +241,7 @@ async def api_record_session(request: Request):
 
 # OTLP telemetry ingestion — Claude Code's and GitHub Copilot's own
 # native OpenTelemetry export, sent here instead of through the MCP
-# connection (see docs/OTLP_INTEGRATION_PLAN.md's "Why" section: MCP
+# connection (see docs/internal/OTLP_INTEGRATION_PLAN.md's "Why" section: MCP
 # only ever sees calls made to our own tools, never a client's own
 # token usage). Gated by MultiTokenAuthMiddleware exactly like /api/ —
 # "/otlp" is added to protected_prefixes below, same bearer-token-to-
@@ -965,7 +965,7 @@ async def auth_login(request: Request):
 
   function renderQuotaStrip() {{
     // Neither window is wired to a real data source yet — see
-    // docs/OTLP_INTEGRATION_PLAN.md's "5-hour / 7-day usage-window
+    // docs/internal/OTLP_INTEGRATION_PLAN.md's "5-hour / 7-day usage-window
     // percentage" verdict (not achievable via any supported path right
     // now). Kept visually complete per that doc's framing, with the
     // pending-source badge baked into .quota-card.pending and no

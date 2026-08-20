@@ -1,14 +1,14 @@
 """Tests for mcp_server/otlp/claude_code.py.
 
-IMPORTANT — these are SELF-CONSISTENCY tests, not validation against a
-real captured Claude Code payload. There is no real capture available yet
-(explicitly called out as an accepted limitation in
-docs/OTLP_INTEGRATION_PLAN.md's "Unverified" note and build_order step 1,
-"Empirical capture"). These fixtures hand-construct OTLP JSON matching
-this module's own documented/assumed wire-shape assumptions, so they
-verify the mapper does what it says it does, not that it matches Claude
-Code's actual export. Real validation against a live local capture is a
-follow-up, per the plan.
+Fixtures match the real wire shape confirmed via a live local capture
+(CLAUDE_CODE_ENABLE_TELEMETRY=1, OTEL_LOG_RAW_API_BODIES=1, claude-code
+2.1.233, 2026-08-20) — see claude_code.py's module docstring "Verified"
+section. Notably: the raw body lives in the log record's `body`
+ATTRIBUTE (`attrs["body"]`), not the LogRecord's own top-level `body`
+field (which instead carries the dotted event name as its stringValue,
+e.g. `"claude_code.api_request_body"` — reproduced here too, since a
+fixture that only sets the attribute wouldn't catch a regression back to
+reading the wrong field).
 """
 
 import json
@@ -17,9 +17,11 @@ from mcp_server.otlp import claude_code
 
 
 def _log_record(event_name, body, session_id="sess-1", **extra_attrs):
+    body_str = json.dumps(body) if not isinstance(body, str) else body
     attrs = [
         {"key": "event.name", "value": {"stringValue": event_name}},
         {"key": "session.id", "value": {"stringValue": session_id}},
+        {"key": "body", "value": {"stringValue": body_str}},
     ]
     for k, v in extra_attrs.items():
         if isinstance(v, bool):
@@ -31,7 +33,10 @@ def _log_record(event_name, body, session_id="sess-1", **extra_attrs):
     return {
         "timeUnixNano": "1000000000",
         "attributes": attrs,
-        "body": {"stringValue": json.dumps(body) if not isinstance(body, str) else body},
+        # Real Claude Code stamps the dotted event name here, NOT the
+        # payload — confirmed via live capture. Kept realistic so a
+        # regression back to reading this field would fail these tests.
+        "body": {"stringValue": f"claude_code.{event_name}"},
     }
 
 
@@ -236,3 +241,34 @@ def test_tool_result_message_does_not_inflate_turn_number(isolated_sqlite_db):
     timeline = store.get_context_timeline("sess-turns")
     turn_numbers = {b["turn_n"] for b in timeline}
     assert turn_numbers == {0}
+
+
+def test_body_is_read_from_attribute_not_log_record_body_field(isolated_sqlite_db):
+    """Regression test for a bug found via a real local capture
+    (CLAUDE_CODE_ENABLE_TELEMETRY=1, OTEL_LOG_RAW_API_BODIES=1): the raw
+    Messages API JSON is in the log record's `body` ATTRIBUTE, not the
+    LogRecord's own top-level `body` field — that field instead carries
+    the dotted event name (`"claude_code.api_request_body"`) as its
+    stringValue. Reading the wrong field silently no-ops every
+    request/response body (caught by _SKIP_EXCEPTIONS), so no exception
+    is raised and no test failure appears without an explicit check like
+    this one. Hand-built here (not via the shared _log_record helper) so
+    this test still catches a regression even if the helper changes."""
+    store = isolated_sqlite_db
+    request_body = {"messages": [{"role": "user", "content": "hello from a real capture shape"}]}
+    record = {
+        "timeUnixNano": "1000000000",
+        "attributes": [
+            {"key": "event.name", "value": {"stringValue": "api_request_body"}},
+            {"key": "session.id", "value": {"stringValue": "sess-real-shape"}},
+            {"key": "body", "value": {"stringValue": json.dumps(request_body)}},
+        ],
+        # The LogRecord's own body — a real capture puts the dotted
+        # event name here, NOT the payload.
+        "body": {"stringValue": "claude_code.api_request_body"},
+    }
+
+    claude_code.handle_logs(RESOURCE_ATTRS, [record], owner=None)
+
+    timeline = store.get_context_timeline("sess-real-shape")
+    assert any(b["category"] == "user" for b in timeline)

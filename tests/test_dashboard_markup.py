@@ -40,7 +40,7 @@ def test_dashboard_markup_has_new_structural_markers(monkeypatch):
 
 def test_dashboard_omits_fabricated_insight_list(monkeypatch):
     """The 30-type insight-card backlog is explicitly deferred past v1
-    (docs/OTLP_INTEGRATION_PLAN.md) — the rebuild must not render an
+    (docs/internal/OTLP_INTEGRATION_PLAN.md) — the rebuild must not render an
     .insight-list section or fabricated example insights."""
     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
     app = server_module.server.streamable_http_app()

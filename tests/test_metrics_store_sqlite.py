@@ -352,7 +352,7 @@ def test_recent_sessions_carries_source_and_status(isolated_sqlite_db):
 
 def test_pre_latency_tool_calls_table_migrates(isolated_sqlite_db):
     """A tool_calls table created before the Tool calls tab needed
-    latency_ms/timestamp (see docs/OTLP_INTEGRATION_PLAN.md's dashboard
+    latency_ms/timestamp (see docs/internal/OTLP_INTEGRATION_PLAN.md's dashboard
     spec) has neither column — must migrate instead of crashing reads."""
     store = isolated_sqlite_db
     conn = sqlite3.connect(store.DB_PATH)

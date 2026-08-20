@@ -2,7 +2,7 @@
 Copilot's native OpenTelemetry export (JSON protocol, `http/json`) and
 maps it onto the same session/turn/tool_call/context_block schema
 metrics/store.py already uses for our own Bedrock agent's
-record_session(). See docs/OTLP_INTEGRATION_PLAN.md for the full
+record_session(). See docs/internal/OTLP_INTEGRATION_PLAN.md for the full
 research this is built against.
 
 Dispatch is by OTLP resource attributes (`service.name` and friends) —

@@ -357,6 +357,35 @@ def _next_index(session_id, sk_prefix):
     return resp["Count"]
 
 
+# Two concurrent OTLP batches for the same session can both call
+# _next_index and get the same count back, then both put_item the same
+# sk — a plain put_item would let the second silently overwrite the
+# first. attribute_not_exists(sk) rejects the second writer instead;
+# _put_next_indexed retries with a freshly recomputed index until a
+# write succeeds. A cap bounds retries against a determined write storm
+# on one session rather than spinning forever.
+_MAX_INDEX_RETRIES = 10
+
+
+def _put_next_indexed(session_id, sk_prefix, build_item):
+    """build_item(index) -> the full Item dict to put, sk included.
+    Returns the index that was actually written."""
+    for _ in range(_MAX_INDEX_RETRIES):
+        index = _next_index(session_id, sk_prefix)
+        try:
+            _table.put_item(
+                Item=build_item(index),
+                ConditionExpression="attribute_not_exists(sk)",
+            )
+            return index
+        except _table.meta.client.exceptions.ConditionalCheckFailedException:
+            continue
+    raise RuntimeError(
+        f"could not allocate a unique {sk_prefix!r} index for session_id {session_id!r} "
+        f"after {_MAX_INDEX_RETRIES} attempts"
+    )
+
+
 def _check_ownership_or_raise(session_id, owner):
     """Same reasoning as store_sqlite.py's version — every append_*/
     close_session call must not be able to write into a session_id
@@ -387,9 +416,10 @@ def append_turn(session_id, turn_data, owner=None):
     cache_read_input_tokens=0, cache_write_input_tokens=0}. Same
     contract as store_sqlite.py's version, including the owner check."""
     _check_ownership_or_raise(session_id, owner)
-    turn_n = _next_index(session_id, "TURN#")
-    _table.put_item(
-        Item={
+    _put_next_indexed(
+        session_id,
+        "TURN#",
+        lambda turn_n: {
             "session_id": session_id,
             "sk": f"TURN#{turn_n:04d}",
             "turn_n": turn_n,
@@ -398,7 +428,7 @@ def append_turn(session_id, turn_data, owner=None):
             "latency_ms": turn_data["latency_ms"],
             "cache_read_input_tokens": turn_data.get("cache_read_input_tokens", 0),
             "cache_write_input_tokens": turn_data.get("cache_write_input_tokens", 0),
-        }
+        },
     )
     _table.update_item(
         Key={"session_id": session_id, "sk": "SESSION"},
@@ -420,9 +450,10 @@ def append_tool_call(session_id, tool_call, owner=None):
     """tool_call: {tool, args, status, latency_ms=0, timestamp=None
     (defaults to now)}. owner must match the session's own owner."""
     _check_ownership_or_raise(session_id, owner)
-    seq = _next_index(session_id, "TOOLCALL#")
-    _table.put_item(
-        Item={
+    _put_next_indexed(
+        session_id,
+        "TOOLCALL#",
+        lambda seq: {
             "session_id": session_id,
             "sk": f"TOOLCALL#{seq:04d}",
             "tool_name": tool_call["tool"],
@@ -430,7 +461,7 @@ def append_tool_call(session_id, tool_call, owner=None):
             "status": tool_call["status"],
             "latency_ms": tool_call.get("latency_ms", 0),
             "timestamp": Decimal(str(tool_call.get("timestamp") or time.time())),
-        }
+        },
     )
     _table.update_item(
         Key={"session_id": session_id, "sk": "SESSION"},
@@ -444,19 +475,22 @@ def append_context_block(session_id, block, owner=None):
     status=None} — same shape record_session's context_blocks rows use.
     owner must match the session's own owner."""
     _check_ownership_or_raise(session_id, owner)
-    seq = _next_index(session_id, "CTXBLOCK#")
-    item = {
-        "session_id": session_id,
-        "sk": f"CTXBLOCK#{seq:04d}",
-        "category": block["category"],
-        "label": block["label"],
-        "char_count": block["char_count"],
-        "token_estimate": block["token_estimate"],
-        "turn_n": block["turn_n"],
-    }
-    if block.get("status") is not None:
-        item["status"] = block["status"]
-    _table.put_item(Item=item)
+
+    def build_item(seq):
+        item = {
+            "session_id": session_id,
+            "sk": f"CTXBLOCK#{seq:04d}",
+            "category": block["category"],
+            "label": block["label"],
+            "char_count": block["char_count"],
+            "token_estimate": block["token_estimate"],
+            "turn_n": block["turn_n"],
+        }
+        if block.get("status") is not None:
+            item["status"] = block["status"]
+        return item
+
+    _put_next_indexed(session_id, "CTXBLOCK#", build_item)
 
 
 def close_session(session_id, final_totals=None, owner=None):

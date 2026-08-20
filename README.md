@@ -83,6 +83,36 @@ Anthropic Messages API (MCP connector, beta):
 Plain REST equivalents are also exposed under `/api/*` — see
 `docs/ARCHITECTURE.md`.
 
+## Claude Code / Copilot live telemetry
+
+Point Claude Code's or GitHub Copilot's own OpenTelemetry export at this
+server and sessions show up in the dashboard as they happen — no
+wrapping your agent loop, no `record_session` calls, just env vars.
+The connect page generates both snippets pre-filled with your endpoint
+and bearer token:
+
+```sh
+# Claude Code
+export CLAUDE_CODE_ENABLE_TELEMETRY=1
+export OTEL_LOGS_EXPORTER=otlp
+export OTEL_EXPORTER_OTLP_PROTOCOL=http/json
+export OTEL_EXPORTER_OTLP_ENDPOINT=https://mcp-inspector.sohaibsohail.workers.dev
+export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <your-token>"
+export OTEL_LOG_RAW_API_BODIES=1   # opt-in: needed for the Context Explorer
+
+# GitHub Copilot
+export COPILOT_OTEL_ENABLED=true
+export OTEL_EXPORTER_OTLP_ENDPOINT=https://mcp-inspector.sohaibsohail.workers.dev
+export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <your-token>"
+export COPILOT_OTEL_CAPTURE_CONTENT=true   # opt-in: needed for the Context Explorer
+```
+
+Sessions appear in the dashboard within the ~5s log export interval.
+The two `_RAW_API_BODIES`/`_CAPTURE_CONTENT` flags are separate opt-ins
+because they carry full prompt/response content, not just metrics — the
+connect page keeps them behind their own explicit toggle rather than
+bundling them into the base snippet.
+
 ## Deploy your own
 
 Cloud Run, cost-capped, demo-data or DynamoDB-backed — see

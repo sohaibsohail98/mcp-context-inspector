@@ -2,7 +2,7 @@
 
 Maps GitHub Copilot's native OTLP export onto this repo's session/turn/
 tool_call/context_block schema (metrics/store.py). See
-docs/OTLP_INTEGRATION_PLAN.md, "### GitHub Copilot" section, for the
+docs/internal/OTLP_INTEGRATION_PLAN.md, "### GitHub Copilot" section, for the
 research this is built against (code.visualstudio.com/docs/agents/*,
 docs.github.com/copilot/*, fetched live — NOT verified against a real
 captured payload, see that section's framing).
