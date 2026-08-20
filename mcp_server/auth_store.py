@@ -203,6 +203,15 @@ def register_oauth_client(redirect_uris, client_name=None, token_endpoint_auth_m
         parsed = urlparse(uri)
         if parsed.scheme not in ("https", "http") or not parsed.netloc:
             raise ValueError("redirect_uris must be absolute URLs")
+        # A plain-http redirect_uri would let the one-time authorization
+        # code — and transitively, via /oauth/token, the resulting access
+        # token — travel in cleartext to anyone on-path between the
+        # browser and that redirect target. Only allow it for a client
+        # redirecting back to itself on the same machine (a CLI tool
+        # completing its own loopback flow), the standard OAuth carve-out
+        # for public clients that can't get a real TLS cert for localhost.
+        if parsed.scheme == "http" and parsed.hostname not in ("localhost", "127.0.0.1", "::1"):
+            raise ValueError("http redirect_uris are only allowed for localhost/127.0.0.1")
 
     client_id = secrets.token_urlsafe(24)
     conn = _connect()
@@ -280,7 +289,23 @@ def redeem_oauth_code(code, client_id, redirect_uri, code_verifier, resource):
         conn.close()
         raise ValueError("PKCE verification failed")
 
-    conn.execute("UPDATE oauth_codes SET consumed_at=? WHERE code_hash=?", (now, code_hash))
+    # The consume step is the single atomic gate against double-redemption
+    # — not the earlier `consumed_at is not None` check above, which is
+    # only a fast-path rejection for the common case. This UPDATE's
+    # `WHERE consumed_at IS NULL` clause is what actually enforces
+    # single-use: two concurrent redemptions of the same code both pass
+    # the read above (neither has consumed it yet), but only one UPDATE
+    # can win the row — the loser's rowcount is 0, caught below. Without
+    # this, the current safety would depend entirely on this server
+    # running as a single-threaded asyncio event loop with no `await`
+    # between the read and the write — true today, but incidental, not
+    # guaranteed by anything that would fail loudly if it changed.
+    cursor = conn.execute(
+        "UPDATE oauth_codes SET consumed_at=? WHERE code_hash=? AND consumed_at IS NULL", (now, code_hash)
+    )
+    if cursor.rowcount != 1:
+        conn.close()
+        raise ValueError("authorization code already used")
     conn.commit()
     conn.close()
     return row["google_sub"], row["email"]

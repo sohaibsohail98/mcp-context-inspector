@@ -20,7 +20,7 @@ import json
 import os
 import shutil
 from html import escape
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
@@ -1989,17 +1989,33 @@ def _mcp_resource_url(request):
     return _public_origin(request) + "/mcp"
 
 
-def _validate_oauth_request(client_id, redirect_uri, code_challenge, code_challenge_method, resource, request):
+def _validate_oauth_request(client_id, redirect_uri, code_challenge, code_challenge_method, resource, request, state=None):
     """Shared validation for both the GET (initial request) and POST
     (post-Google-sign-in completion) halves of /oauth/authorize. Raises
     ValueError with a message safe to show the caller; returns
-    (client_dict, resource_to_record)."""
-    if code_challenge_method and code_challenge_method != "S256":
+    (client_dict, resource_to_record).
+
+    code_challenge_method: strictly `== "S256"`, not the previous
+    `if code_challenge_method and ... != "S256"` — that guard was falsy
+    for an empty string, so `code_challenge_method=` (present but blank)
+    sailed straight through and only failed much later, confusingly, at
+    redemption. There's no legitimate caller for whom "" or "plain"
+    should be accepted; the GET route already defaults a fully-absent
+    param to "S256" before this function ever sees it.
+
+    state length cap: defense in depth alongside the escaping in
+    oauth_authorize_page below — state is attacker-reachable (a phishing
+    link can set it to anything) and free-form per spec, so there's no
+    charset to validate, but an unbounded value has no legitimate use and
+    a length cap costs nothing."""
+    if code_challenge_method != "S256":
         raise ValueError("code_challenge_method must be S256")
     if not code_challenge:
         raise ValueError("code_challenge is required")
     if not redirect_uri:
         raise ValueError("redirect_uri is required")
+    if state is not None and len(state) > 2048:
+        raise ValueError("state is too long")
     client = auth_store.get_oauth_client(client_id) if client_id else None
     if client is None:
         raise ValueError("unknown client_id — register via /oauth/register first")
@@ -2009,6 +2025,25 @@ def _validate_oauth_request(client_id, redirect_uri, code_challenge, code_challe
     if resource and resource.rstrip("/") != expected_resource.rstrip("/"):
         raise ValueError("resource does not match this server")
     return client, (resource or expected_resource)
+
+
+def _json_for_script(obj):
+    """json.dumps(), but safe to interpolate directly into an HTML
+    <script> block. Plain json.dumps() does NOT escape "<" or "/", so a
+    value containing the literal substring "</script>" closes the
+    enclosing script tag at the HTML-parser level — before the browser
+    ever gets to JS string-escaping rules, which don't apply yet at that
+    point. Escaping "<", ">", and "&" as \\u-sequences (valid inside any
+    JSON/JS string, invisible to JSON.parse) neutralizes that regardless
+    of where in the object the attacker-controlled value sits. This
+    matters here specifically because /oauth/authorize embeds the
+    caller-supplied `state` (and redirect_uri, code_challenge) query
+    params, which are otherwise unvalidated free-form strings per the
+    OAuth spec — an attacker who registers a client (open, unauthenticated
+    registration) can put an XSS payload directly in `state` and send the
+    resulting /oauth/authorize link to a victim who's already signed in,
+    whose token then sits reachable in localStorage on this exact page."""
+    return json.dumps(obj).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
 
 
 @server.custom_route("/.well-known/oauth-protected-resource", methods=["GET", "OPTIONS"])
@@ -2106,6 +2141,7 @@ async def oauth_authorize_page(request: Request):
             q.get("code_challenge_method", "S256"),
             q.get("resource"),
             request,
+            state=q.get("state"),
         )
     except ValueError as e:
         return PlainTextResponse(str(e), status_code=400)
@@ -2115,7 +2151,14 @@ async def oauth_authorize_page(request: Request):
         return PlainTextResponse("Google sign-in isn't configured on this server", status_code=503)
 
     client_name = client["client_name"] or "This application"
-    oauth_params_json = json.dumps({
+    # Shown on the consent screen alongside client_name below: client_name
+    # is free-text set at registration time and proves nothing (anyone can
+    # register a client named "Claude") — the redirect host is the one
+    # thing here that's actually bound to the registration and can't be
+    # spoofed without also controlling that domain, so it's the signal
+    # worth a user's attention, not the name.
+    redirect_host = urlparse(q.get("redirect_uri")).netloc
+    oauth_params_json = _json_for_script({
         "client_id": client["client_id"],
         "redirect_uri": q.get("redirect_uri"),
         "code_challenge": q.get("code_challenge"),
@@ -2130,9 +2173,11 @@ async def oauth_authorize_page(request: Request):
 <div class="narrow-page">
 <div class="card accent">
   <h3>Authorize {escape(client_name)}</h3>
-  <p class="card-hint">Sign in with Google to let <strong>{escape(client_name)}</strong> connect to
-  mcp-context-inspector as you. It gets the same access your own signed-in session already has —
-  your own data only, scoped to your account.</p>
+  <p class="card-hint">Sign in with Google to let <strong>{escape(client_name)}</strong>
+  (<code>{escape(redirect_host)}</code>) connect to mcp-context-inspector as you. It gets the
+  same access your own signed-in session already has — your own data only, scoped to your
+  account. <strong>Check the domain in parentheses</strong> — a display name alone can say
+  anything; that domain is where your data actually goes.</p>
   <div id="g_id_onload" data-client_id="{google_client_id}" data-callback="onOAuthSignIn"></div>
   <div class="g_id_signin" data-type="standard" data-theme="filled_black"></div>
   <div id="oauth-result" style="margin-top:0.7rem; font-size:0.85rem;"></div>
@@ -2193,6 +2238,7 @@ async def oauth_authorize_complete(request: Request):
             "S256",
             body.get("resource"),
             request,
+            state=body.get("state"),
         )
     except ValueError as e:
         return JSONResponse({"error": "invalid_request", "error_description": str(e)}, status_code=400)

