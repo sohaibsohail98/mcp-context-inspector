@@ -235,6 +235,28 @@ def test_get_recent_sessions_correct_across_pages(fake_table):
     assert recent[0]["session_id"] == "s2"
 
 
+def test_get_recent_sessions_carries_cache_and_tool_error_aggregates(fake_table):
+    """KPI strip needs cache-hit-rate/tool-error-rate inputs in the same
+    bulk fetch as everything else, matching store_sqlite.py's contract."""
+    fake_table.items.append(_session_item("s1", timestamp=Decimal("1000")))
+    fake_table.items.append(
+        {"session_id": "s1", "sk": "TURN#0000", "cache_read_input_tokens": 300, "input_tokens": 100}
+    )
+    fake_table.items.append(
+        {"session_id": "s1", "sk": "TURN#0001", "cache_read_input_tokens": 0, "input_tokens": 50}
+    )
+    fake_table.items.append({"session_id": "s1", "sk": "TOOLCALL#0000", "tool_name": "a", "status": "success"})
+    fake_table.items.append({"session_id": "s1", "sk": "TOOLCALL#0001", "tool_name": "b", "status": "error"})
+    fake_table.items.append({"session_id": "s1", "sk": "TOOLCALL#0002", "tool_name": "c", "status": "error"})
+
+    recent = store_dynamodb.get_recent_sessions(limit=10)
+    row = recent[0]
+    assert row["cache_read_tokens"] == 300
+    assert row["fresh_input_tokens"] == 150
+    assert row["tool_call_total"] == 3
+    assert row["tool_call_errors"] == 2
+
+
 def test_get_tool_metrics_aggregate_across_pages(fake_table):
     fake_table.page_size = 1
     for i in range(4):
@@ -585,3 +607,22 @@ def test_recent_sessions_carries_source_and_status(fake_table):
     sources = {s["source"] for s in recent.values()}
     assert sources == {"bedrock_agent", "copilot"}
     assert all("status" in s for s in recent.values())
+
+
+def test_recent_sessions_carries_turn_count(fake_table):
+    """The session-list row needs "N turns" without a per-row follow-up
+    fetch — get_recent_sessions must return the count directly (a
+    bounded per-session Query, not a full-table Scan)."""
+    three_turns = _basic_loop_result(
+        turns=[
+            {"input_tokens": 10, "output_tokens": 5, "latency_ms": 100},
+            {"input_tokens": 20, "output_tokens": 5, "latency_ms": 100},
+            {"input_tokens": 30, "output_tokens": 5, "latency_ms": 100},
+        ]
+    )
+    three_turn_id = store_dynamodb.record_session("q", "m", three_turns)
+    one_turn_id = store_dynamodb.record_session("q2", "m", _basic_loop_result())
+
+    recent = {s["session_id"]: s for s in store_dynamodb.get_recent_sessions()}
+    assert recent[three_turn_id]["turn_count"] == 3
+    assert recent[one_turn_id]["turn_count"] == 1

@@ -301,19 +301,42 @@ def get_recent_sessions(limit=10, owner=None):
         )
 
     items.sort(key=lambda i: i["timestamp"], reverse=True)
-    return [
-        {
-            "session_id": i["session_id"],
-            "prompt": i["prompt"],
-            "model": i["model"],
-            "total_tokens": i["total_tokens"],
-            "estimated_cost": i["estimated_cost"],
-            "timestamp": i["timestamp"],
-            "source": i.get("source", "bedrock_agent"),
-            "status": i.get("status", "closed"),
-        }
-        for i in items[:limit]
-    ]
+    # Turn/tool-call aggregates via bounded Queries per already-sliced-to-
+    # `limit` session (partition-key lookup, same pattern
+    # get_token_breakdown uses) — not a full-table Scan per row, and
+    # bounded by `limit` (the dashboard's page size), not the whole table.
+    result = []
+    for i in items[:limit]:
+        turns = _clean(
+            _table.query(
+                KeyConditionExpression="session_id = :sid AND begins_with(sk, :prefix)",
+                ExpressionAttributeValues={":sid": i["session_id"], ":prefix": "TURN#"},
+            )["Items"]
+        )
+        tool_calls = _clean(
+            _table.query(
+                KeyConditionExpression="session_id = :sid AND begins_with(sk, :prefix)",
+                ExpressionAttributeValues={":sid": i["session_id"], ":prefix": "TOOLCALL#"},
+            )["Items"]
+        )
+        result.append(
+            {
+                "session_id": i["session_id"],
+                "prompt": i["prompt"],
+                "model": i["model"],
+                "total_tokens": i["total_tokens"],
+                "estimated_cost": i["estimated_cost"],
+                "timestamp": i["timestamp"],
+                "source": i.get("source", "bedrock_agent"),
+                "status": i.get("status", "closed"),
+                "turn_count": len(turns),
+                "cache_read_tokens": sum(t.get("cache_read_input_tokens", 0) for t in turns),
+                "fresh_input_tokens": sum(t.get("input_tokens", 0) for t in turns),
+                "tool_call_total": len(tool_calls),
+                "tool_call_errors": sum(1 for c in tool_calls if c.get("status") == "error"),
+            }
+        )
+    return result
 
 
 def start_or_get_session(session_id, owner=None, source="claude_code", model=None):

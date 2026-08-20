@@ -9,10 +9,10 @@ Bodies are the literal Anthropic Messages API JSON. The Messages API is
 stateless: every api_request_body event's `messages[]` is the FULL
 cumulative conversation history up to that point, not just new content.
 To avoid duplicating every prior turn's context_blocks on every request,
-we diff the freshly-walked block list against store.get_context_timeline()
-(the already-persisted blocks for this session) and only append the tail
-beyond what's already stored. This also makes reprocessing a retried/
-duplicate batch safe.
+the freshly-walked block list is diffed against
+store.get_context_timeline() (the already-persisted blocks for this
+session) and only the tail beyond what's already stored gets appended.
+This also makes reprocessing a retried/duplicate batch safe.
 
 api_response_body content, by contrast, is genuinely new every time (the
 assistant's fresh reply) and is always appended directly, no diffing.
@@ -342,11 +342,10 @@ def _handle_log_record(resource_attrs, record, owner):
         _handle_response_body(session_id, attrs, owner)
     elif event_name == "tool_result":
         _handle_tool_result(session_id, attrs, owner)
-    # user_prompt / assistant_response / mcp_server_connection: not
-    # required for v1 correctness (request/response bodies already carry
-    # this content); mcp_server_connection health surfacing is deferred
-    # per the plan's "Maximizing telemetry" section. Skipped here on
-    # purpose, not an oversight.
+    # user_prompt / assistant_response / mcp_server_connection: skipped
+    # on purpose, not an oversight. Request/response bodies already
+    # carry this content; mcp_server_connection health surfacing is
+    # deferred.
 
 
 def handle_logs(resource_attrs, log_records, owner):
@@ -365,9 +364,7 @@ def handle_logs(resource_attrs, log_records, owner):
 def _handle_metric(resource_attrs, metric, owner):
     if metric.get("name") != "claude_code.token.usage":
         # claude_code.cost.usage, .lines_of_code.count, .commit.count, etc.
-        # are real and confirmed per the plan's "Maximizing telemetry"
-        # section but deferred past this v1 pass — not wired to a store
-        # call yet.
+        # are real and confirmed but not yet wired to a store call.
         return
     datapoints = (metric.get("sum") or metric.get("gauge") or {}).get("dataPoints", [])
     for dp in datapoints:
@@ -376,15 +373,13 @@ def _handle_metric(resource_attrs, metric, owner):
         if not session_id:
             continue
         model = dp_attrs.get("model") or resource_attrs.get("model")
-        # Judgment call (documented per the task instructions): metrics
-        # are treated as a supplementary/cross-check signal only, not fed
-        # into append_turn. The body-walking path in handle_logs already
+        # Metrics are a supplementary/cross-check signal only, not fed
+        # into append_turn: the body-walking path in handle_logs already
         # gets exact token counts from each api_response_body's usage
-        # block, which carries the same numbers this metric does
-        # (input/output/cacheRead/cacheCreation) plus real content.
-        # Calling append_turn from here too would double-count every
-        # turn's tokens. handle_metrics's only job for v1 is to make sure
-        # a session/model exists (backfilling model if a session hasn't
+        # block (same numbers this metric carries, plus real content).
+        # Calling append_turn here too would double-count every turn's
+        # tokens. handle_metrics's only job is to make sure a
+        # session/model exists (backfilling model if a session hasn't
         # been seen via logs yet, e.g. metrics batch arrives first).
         store.start_or_get_session(session_id, owner=owner, source="claude_code", model=model)
 

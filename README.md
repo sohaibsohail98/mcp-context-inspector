@@ -4,8 +4,7 @@ A drop-in MCP server + execution-metrics recorder for Bedrock-based
 agents and Claude Code: real per-session cost/token/tool metrics, and
 a full Context Window Explorer, over a real MCP handshake.
 
-<!-- Context Window Explorer GIF (capturing it is separate, later work). -->
-<img src="docs/screenshots/context-window-explorer.gif" width="640" alt="Context Window Explorer">
+<!-- TODO: capture and add a Context Window Explorer GIF here. -->
 
 [![CI](https://github.com/sohaibsohail98/mcp-context-inspector/actions/workflows/tests.yml/badge.svg)](https://github.com/sohaibsohail98/mcp-context-inspector/actions/workflows/tests.yml)
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
@@ -143,13 +142,13 @@ and bearer token:
 export CLAUDE_CODE_ENABLE_TELEMETRY=1
 export OTEL_LOGS_EXPORTER=otlp
 export OTEL_EXPORTER_OTLP_PROTOCOL=http/json
-export OTEL_EXPORTER_OTLP_ENDPOINT=https://mcp-inspector.sohaibsohail.workers.dev
+export OTEL_EXPORTER_OTLP_ENDPOINT=https://mcp-inspector.sohaibsohail.workers.dev/otlp
 export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <your-token>"
 export OTEL_LOG_RAW_API_BODIES=1   # opt-in: needed for the Context Explorer
 
 # GitHub Copilot
 export COPILOT_OTEL_ENABLED=true
-export OTEL_EXPORTER_OTLP_ENDPOINT=https://mcp-inspector.sohaibsohail.workers.dev
+export OTEL_EXPORTER_OTLP_ENDPOINT=https://mcp-inspector.sohaibsohail.workers.dev/otlp
 export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <your-token>"
 export COPILOT_OTEL_CAPTURE_CONTENT=true   # opt-in: needed for the Context Explorer
 ```

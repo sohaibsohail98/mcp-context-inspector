@@ -10,12 +10,12 @@ flowchart LR
 
     subgraph Package["mcp-context-inspector"]
         R -->|"direct Python import\n(local, owner=None)"| S[metrics/store.py]
-        MCP["mcp_server/server.py\n(MCP + REST routes)"] --> S
+        MCP["mcp_server/routes/, tools.py\n(MCP + REST routes)"] --> S
         S --> SQ["store_sqlite.py\n(local dev)"]
         S --> DY["store_dynamodb.py\n(deployed)"]
     end
 
-    subgraph Remote["A friend's own agent"]
+    subgraph Remote["Another user's own agent"]
         FR[Their run_agent_loop] -->|"record_session MCP tool /\nPOST /api/record-session\n(bearer token, owner=their sub)"| MCP
     end
 

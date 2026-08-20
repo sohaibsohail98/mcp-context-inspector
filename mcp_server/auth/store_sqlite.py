@@ -1,12 +1,14 @@
-"""Per-user MCP token store — separate from metrics/ (session-execution
-data) since this is identity/credential data with a different lifecycle
-and sensitivity. SQLite only for now, same "local dev" starting point
-as metrics/store_sqlite.py — needs the same kind of swap to a
-persistent backend before this server runs somewhere with an ephemeral
-filesystem (e.g. Cloud Run without a mounted volume). This is a known,
-pre-existing, documented tradeoff (see docs/DEPLOYMENT.md's note on
-sign-in writes resetting on cold start) — the OAuth tables added below
-inherit the same limitation, not a new one.
+"""SQLite backend for the per-user MCP token store — the local-dev /
+default backend, same role as metrics/store_sqlite.py. Reached only
+through auth/store.py's dispatcher (STORAGE_BACKEND env var); import
+this module directly only for the DB_PATH test hook (see
+tests/conftest.py's isolated_auth_store fixture) or in local dev where
+STORAGE_BACKEND is unset. See auth/store_dynamodb.py for the persistent
+backend meant for Cloud Run's ephemeral filesystem — this module's
+writes are lost on cold start / reset across concurrent instances.
+
+Separate from metrics/ (session-execution data) since this is
+identity/credential data with a different lifecycle and sensitivity.
 
 One row per Google account (`google_sub`, the stable, non-reassignable
 subject identifier from the verified ID token — never the email, which
@@ -17,11 +19,7 @@ client config.
 
 Also stores the OAuth 2.1 + PKCE authorization-server data (client
 registrations, one-time authorization codes, per-client access tokens)
-that backs the /oauth/* routes in server.py — see that module's
-docstring for why this exists and how the flow works. Kept in this
-module rather than a separate one since it's the same underlying
-concern ("how does a caller prove who they are"), just a second way to
-get there.
+that backs the /oauth/* routes in mcp_server/routes/oauth.py.
 """
 
 import base64
@@ -106,15 +104,14 @@ def get_or_create_token(google_sub, email):
     returns the same token, not a new one.
 
     A single atomic upsert, not a SELECT-then-INSERT — two concurrent
-    first-time sign-ins for the same brand-new google_sub (e.g. a friend
+    first-time sign-ins for the same brand-new google_sub (e.g. a user
     double-clicking "Sign in with Google," or two server worker
     processes handling near-simultaneous requests) would otherwise both
     pass the "no existing row" check before either commits, and the
     second INSERT would crash on the google_sub PRIMARY KEY constraint.
     ON CONFLICT DO UPDATE makes the loser of the race a no-op update
     instead of a crash, and the final SELECT always returns whichever
-    token actually won, so this function can't fail EVER just because it
-    was called concurrently for the same account."""
+    token actually won."""
     conn = _connect()
     conn.execute(
         "INSERT INTO mcp_users (google_sub, email, token, created_at) VALUES (?,?,?,?) "
@@ -289,17 +286,11 @@ def redeem_oauth_code(code, client_id, redirect_uri, code_verifier, resource):
         conn.close()
         raise ValueError("PKCE verification failed")
 
-    # The consume step is the single atomic gate against double-redemption
-    # — not the earlier `consumed_at is not None` check above, which is
-    # only a fast-path rejection for the common case. This UPDATE's
-    # `WHERE consumed_at IS NULL` clause is what actually enforces
-    # single-use: two concurrent redemptions of the same code both pass
-    # the read above (neither has consumed it yet), but only one UPDATE
-    # can win the row — the loser's rowcount is 0, caught below. Without
-    # this, the current safety would depend entirely on this server
-    # running as a single-threaded asyncio event loop with no `await`
-    # between the read and the write — true today, but incidental, not
-    # guaranteed by anything that would fail loudly if it changed.
+    # The earlier `consumed_at is not None` check is only a fast-path
+    # rejection. This UPDATE's `WHERE consumed_at IS NULL` is what
+    # actually enforces single-use: two concurrent redemptions both pass
+    # the read above, but only one UPDATE wins the row — the loser's
+    # rowcount is 0, caught below.
     cursor = conn.execute(
         "UPDATE oauth_codes SET consumed_at=? WHERE code_hash=? AND consumed_at IS NULL", (now, code_hash)
     )
@@ -309,6 +300,65 @@ def redeem_oauth_code(code, client_id, redirect_uri, code_verifier, resource):
     conn.commit()
     conn.close()
     return row["google_sub"], row["email"]
+
+
+def list_oauth_clients():
+    """Admin visibility — every OAuth client that's ever completed Dynamic
+    Client Registration. No client secret to redact (token_endpoint_auth_method
+    is always "none" — these are public clients, PKCE is the actual
+    protection), so this is safe to return in full."""
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT client_id, client_name, redirect_uris, token_endpoint_auth_method, created_at "
+        "FROM oauth_clients ORDER BY created_at"
+    ).fetchall()
+    conn.close()
+    clients = [dict(r) for r in rows]
+    for c in clients:
+        c["redirect_uris"] = json.loads(c["redirect_uris"])
+    return clients
+
+
+def revoke_oauth_client(client_id):
+    """Deletes a client's registration and any of its outstanding
+    (unconsumed) authorization codes, so it can no longer complete a new
+    /oauth/authorize -> /oauth/token exchange. Does NOT retroactively
+    invalidate access tokens this client already obtained — oauth_tokens
+    only records client_name (a caller-supplied display string, not
+    guaranteed unique per client_id), so there's no safe way to map a
+    token back to the exact client that requested it. Revoke those
+    individually with revoke_oauth_token() instead; see list_oauth_tokens()
+    to find them."""
+    conn = _connect()
+    conn.execute("DELETE FROM oauth_clients WHERE client_id=?", (client_id,))
+    conn.execute("DELETE FROM oauth_codes WHERE client_id=? AND consumed_at IS NULL", (client_id,))
+    conn.commit()
+    conn.close()
+
+
+def list_oauth_tokens():
+    """Admin visibility — every access token issued via the OAuth flow.
+    Never returns the token value itself, only enough to identify and
+    revoke it (see revoke_oauth_token)."""
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT google_sub, email, client_name, created_at, "
+        "substr(token, 1, 8) || '...' AS token_prefix FROM oauth_tokens ORDER BY created_at"
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def revoke_oauth_token(token):
+    """Deletes one OAuth-issued access token — the client that held it
+    needs to redo the full authorization flow to get a new one. Doesn't
+    touch mcp_users' own token (see revoke()), so this can't accidentally
+    break a user's direct Claude Code config while disconnecting one
+    Connector-style client."""
+    conn = _connect()
+    conn.execute("DELETE FROM oauth_tokens WHERE token=?", (token,))
+    conn.commit()
+    conn.close()
 
 
 def mint_oauth_token(google_sub, email, client_name):

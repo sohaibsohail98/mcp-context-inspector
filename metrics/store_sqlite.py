@@ -387,17 +387,31 @@ def get_context_timeline(session_id, owner=None):
 
 
 def get_recent_sessions(limit=10, owner=None):
+    """Aggregates (turn_count, cache tokens, tool call/error counts) are
+    correlated subqueries, not per-row follow-up fetches — one query
+    total, not the N+1 pattern the dashboard's KPI strip comment
+    explicitly calls out avoiding elsewhere."""
     conn = _connect()
+    agg_sql = (
+        "(SELECT COUNT(*) FROM turns WHERE turns.session_id = sessions.session_id) AS turn_count, "
+        "(SELECT COALESCE(SUM(cache_read_input_tokens), 0) FROM turns "
+        "WHERE turns.session_id = sessions.session_id) AS cache_read_tokens, "
+        "(SELECT COALESCE(SUM(input_tokens), 0) FROM turns "
+        "WHERE turns.session_id = sessions.session_id) AS fresh_input_tokens, "
+        "(SELECT COUNT(*) FROM tool_calls WHERE tool_calls.session_id = sessions.session_id) AS tool_call_total, "
+        "(SELECT COUNT(*) FROM tool_calls WHERE tool_calls.session_id = sessions.session_id "
+        "AND tool_calls.status = 'error') AS tool_call_errors"
+    )
     if owner is not None:
         rows = conn.execute(
-            "SELECT session_id, prompt, model, total_tokens, estimated_cost, timestamp, "
-            "source, status FROM sessions WHERE owner=? ORDER BY timestamp DESC LIMIT ?",
+            f"SELECT session_id, prompt, model, total_tokens, estimated_cost, timestamp, "
+            f"source, status, {agg_sql} FROM sessions WHERE owner=? ORDER BY timestamp DESC LIMIT ?",
             (owner, limit),
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT session_id, prompt, model, total_tokens, estimated_cost, timestamp, "
-            "source, status FROM sessions ORDER BY timestamp DESC LIMIT ?",
+            f"SELECT session_id, prompt, model, total_tokens, estimated_cost, timestamp, "
+            f"source, status, {agg_sql} FROM sessions ORDER BY timestamp DESC LIMIT ?",
             (limit,),
         ).fetchall()
     conn.close()

@@ -7,10 +7,9 @@ than duplicating this parsing.
 from mci_common.config import CHARS_PER_TOKEN_ESTIMATE
 
 # The five context_blocks categories the dashboard's CATEGORY_COLORS map
-# and mci_common/timeline.py both already expect (see the recon note in
-# docs/internal/OTLP_INTEGRATION_PLAN.md) — every mapper must emit one of these,
-# never an invented category string, or the block silently fails to
-# render/color in the existing dashboard.
+# and mci_common/timeline.py both expect — every mapper must emit one of
+# these, never an invented category string, or the block silently fails
+# to render/color in the dashboard.
 CATEGORY_SYSTEM = "system"
 CATEGORY_TOOLS = "tools"
 CATEGORY_USER = "user"

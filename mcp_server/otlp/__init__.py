@@ -1,28 +1,24 @@
 """OTLP telemetry ingestion — receives Claude Code's and GitHub
 Copilot's native OpenTelemetry export (JSON protocol, `http/json`) and
 maps it onto the same session/turn/tool_call/context_block schema
-metrics/store.py already uses for our own Bedrock agent's
-record_session(). See docs/internal/OTLP_INTEGRATION_PLAN.md for the full
-research this is built against.
+metrics/store.py uses for the Bedrock agent's record_session(). See
+docs/internal/OTLP_INTEGRATION_PLAN.md for the underlying research.
 
-Dispatch is by OTLP resource attributes (`service.name` and friends) —
-the exact attribute value each vendor stamps is asserted here per the
-plan's docs research, but was NOT verified against a real captured
-payload before this was written (see the plan's "Unverified" note).
-If real payloads don't match, extend _detect_vendor's checks rather
-than assuming the receiver route itself is wrong.
+Dispatch is by OTLP resource attributes (`service.name` and friends).
+The exact attribute value each vendor stamps has not been verified
+against a real captured payload — if real payloads don't match, extend
+_detect_vendor's checks rather than assuming the receiver route itself
+is wrong.
 """
 
 from mcp_server.otlp import claude_code, copilot
 from mcp_server.otlp.common import resource_attrs_dict
 
 # Candidate service.name values for each vendor. Claude Code's telemetry
-# docs don't spell out the exact resource attribute value anywhere in
-# the pages this plan was researched against; "claude-code" is the
-# reasonable default given every other Claude Code env var/metric is
-# namespaced `claude_code.*` / `claude-code`. Verify and extend this set
-# once a real payload has been captured locally (see build_order step 1
-# in the plan).
+# docs don't spell out the exact resource attribute value; "claude-code"
+# is the reasonable default given every other Claude Code env var/metric
+# is namespaced `claude_code.*` / `claude-code`. Verify and extend this
+# set once a real payload has been captured locally.
 _CLAUDE_CODE_SERVICE_NAMES = {"claude-code", "claude_code"}
 _COPILOT_SERVICE_NAMES = {"github-copilot", "copilot", "github.copilot"}
 

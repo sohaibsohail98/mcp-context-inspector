@@ -23,7 +23,7 @@ is covered further down):
    Set `GOOGLE_OAUTH_CLIENT_ID` (see setup below) and point them at
    `http://<your-host>:8787/auth/login`. They sign in with their own
    Google account, get a personal token minted for them
-   (`mcp_server/auth_store.py`), and use that as their bearer token.
+   (`mcp_server/auth/store.py`), and use that as their bearer token.
    Signing in again returns the *same* token, so pasting it into an MCP
    client config once doesn't get invalidated by a second sign-in.
 
@@ -35,7 +35,7 @@ flow. This server implements that too, as a third way in.
 
 ## OAuth 2.1 + PKCE (for clients that only speak OAuth)
 
-`mcp_server/server.py`'s `/oauth/*` and `/.well-known/*` routes make
+`mcp_server/routes/oauth.py`'s `/oauth/*` and `/.well-known/*` routes make
 this server act as its own OAuth 2.1 authorization server, per the MCP
 spec: RFC 9728 protected resource metadata, RFC 8414 authorization
 server metadata, RFC 7591 dynamic client registration, and a standard
@@ -46,7 +46,7 @@ manual setup on either side.
 The consent step reuses the same Google sign-in already described
 above rather than building a separate login system: signing in *is*
 the authorization. Each OAuth client gets its own freshly-minted token
-(`mcp_server/auth_store.py`'s `mint_oauth_token`), kept separate from
+(`mcp_server/auth/store.py`'s `mint_oauth_token`), kept separate from
 the plain sign-in token — so disconnecting a Connector later can't
 also break a paste-in-config client using the other token. Client
 registrations, one-time authorization codes, and OAuth-issued tokens
