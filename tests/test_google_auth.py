@@ -11,10 +11,27 @@ def test_verify_credential_returns_sub_and_email(monkeypatch):
     monkeypatch.setattr(
         google_auth.id_token,
         "verify_oauth2_token",
-        lambda credential, request, client_id: {"sub": "12345", "email": "a@example.com", "aud": client_id},
+        lambda credential, request, client_id: {
+            "sub": "12345", "email": "a@example.com", "email_verified": True, "aud": client_id,
+        },
     )
     identity = google_auth.verify_credential("fake-jwt", "my-client-id")
     assert identity == {"sub": "12345", "email": "a@example.com"}
+
+
+def test_verify_credential_rejects_unverified_email(monkeypatch):
+    """An email claim google itself marks unverified shouldn't be trusted
+    as someone's real identity — it's used for display/attribution
+    throughout (dashboard identity, OAuth-issued token records)."""
+    monkeypatch.setattr(
+        google_auth.id_token,
+        "verify_oauth2_token",
+        lambda credential, request, client_id: {
+            "sub": "12345", "email": "a@example.com", "email_verified": False,
+        },
+    )
+    with pytest.raises(google_auth.InvalidGoogleToken):
+        google_auth.verify_credential("fake-jwt", "my-client-id")
 
 
 def test_verify_credential_missing_email_does_not_crash(monkeypatch):
@@ -50,7 +67,7 @@ def test_verify_credential_passes_our_client_id_as_the_expected_audience(monkeyp
         seen["client_id"] = client_id
         if client_id != "the-real-client-id":
             raise ValueError("Wrong audience")
-        return {"sub": "12345", "email": "a@example.com"}
+        return {"sub": "12345", "email": "a@example.com", "email_verified": True}
 
     monkeypatch.setattr(google_auth.id_token, "verify_oauth2_token", _fake_verify)
 

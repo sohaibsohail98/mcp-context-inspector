@@ -33,4 +33,16 @@ def verify_credential(credential, client_id):
     except ValueError as e:
         raise InvalidGoogleToken(str(e)) from e
 
+    # verify_oauth2_token only checks signature/audience/issuer/expiry —
+    # it deliberately leaves email-verification enforcement to the
+    # caller, since not every use of a Google ID token cares about email
+    # at all. This one does when an email IS present: it's used as a
+    # display/attribution value throughout (dashboard identity,
+    # OAuth-issued token records), so an unverified address shouldn't be
+    # trusted as someone's real identity here. A token with no `email`
+    # claim at all (the `email` scope wasn't granted) is a separate,
+    # already-supported case — nothing to verify, so it isn't rejected.
+    if payload.get("email") and not payload.get("email_verified"):
+        raise InvalidGoogleToken("Google account email is not verified")
+
     return {"sub": payload["sub"], "email": payload.get("email")}
