@@ -82,9 +82,13 @@ def test_record_then_read_round_trip(isolated_sqlite_db):
             "cache_write_input_tokens": 0,
         }
     ]
-    assert store.get_agent_trace(session_id) == [
-        {"tool": "list_services", "args": {}, "status": "ok"}
-    ]
+    trace = store.get_agent_trace(session_id)
+    assert len(trace) == 1
+    assert trace[0]["tool"] == "list_services"
+    assert trace[0]["args"] == {}
+    assert trace[0]["status"] == "ok"
+    assert trace[0]["latency_ms"] == 0
+    assert trace[0]["timestamp"] > 0
     recent = store.get_recent_sessions(limit=5)
     assert len(recent) == 1
     assert recent[0]["session_id"] == session_id
@@ -98,7 +102,7 @@ def test_get_session_metrics_shape_has_no_backend_internals(isolated_sqlite_db):
     session_id = store.record_session("q", "us.anthropic.claude-sonnet-4-6", _fake_loop_result())
     metrics = store.get_session_metrics(session_id)
     assert set(metrics.keys()) == {"session", "prompt_metrics"}
-    assert set(metrics["session"].keys()) == {"session_id", "model", "timestamp"}
+    assert set(metrics["session"].keys()) == {"session_id", "model", "timestamp", "source", "status"}
     assert set(metrics["prompt_metrics"].keys()) == {
         "prompt", "input_tokens", "output_tokens",
         "total_tokens", "latency_ms", "tool_call_count", "estimated_cost",
@@ -241,3 +245,135 @@ def test_metrics_db_path_env_override(tmp_path, monkeypatch):
     finally:
         monkeypatch.delenv("METRICS_DB_PATH", raising=False)
         importlib.reload(store_sqlite)
+
+
+def test_start_or_get_session_is_idempotent(isolated_sqlite_db):
+    """OTLP payloads can arrive out of order or get retried by the
+    client — calling start_or_get_session twice for the same session_id
+    must not create a second row or reset any totals already appended."""
+    store = isolated_sqlite_db
+    sid = store.start_or_get_session("otel-1", owner="u1", source="claude_code", model="claude-sonnet-4-5")
+    store.append_turn(sid, {"input_tokens": 100, "output_tokens": 20, "latency_ms": 500})
+    store.start_or_get_session("otel-1", owner="u1", source="claude_code", model="claude-sonnet-4-5")
+
+    assert len(store.get_recent_sessions(owner="u1")) == 1
+    metrics = store.get_session_metrics("otel-1", owner="u1")
+    assert metrics["prompt_metrics"]["input_tokens"] == 100
+
+
+def test_append_turn_accumulates_session_totals(isolated_sqlite_db):
+    """A live Claude Code session reports turns one at a time — the
+    parent session row's totals must reflect the running sum, not just
+    the most recently appended turn."""
+    store = isolated_sqlite_db
+    sid = store.start_or_get_session("otel-2", source="claude_code", model="us.anthropic.claude-sonnet-4-6")
+    store.append_turn(sid, {"input_tokens": 100, "output_tokens": 20, "latency_ms": 500})
+    store.append_turn(sid, {"input_tokens": 50, "output_tokens": 10, "latency_ms": 300})
+
+    metrics = store.get_session_metrics(sid)["prompt_metrics"]
+    assert metrics["input_tokens"] == 150
+    assert metrics["output_tokens"] == 30
+    assert metrics["total_tokens"] == 180
+    assert metrics["latency_ms"] == 800
+    assert metrics["estimated_cost"] > 0
+
+    breakdown = store.get_token_breakdown(sid)
+    assert [t["turn_n"] for t in breakdown] == [0, 1]
+
+
+def test_append_tool_call_increments_count(isolated_sqlite_db):
+    store = isolated_sqlite_db
+    sid = store.start_or_get_session("otel-3", source="claude_code")
+    store.append_tool_call(sid, {"tool": "Read", "args": {"path": "x"}, "status": "success"})
+    store.append_tool_call(sid, {"tool": "Edit", "args": {}, "status": "success"})
+
+    assert store.get_session_metrics(sid)["prompt_metrics"]["tool_call_count"] == 2
+    trace = store.get_agent_trace(sid)
+    assert [t["tool"] for t in trace] == ["Read", "Edit"]
+
+
+def test_append_context_block_orders_by_arrival(isolated_sqlite_db):
+    store = isolated_sqlite_db
+    sid = store.start_or_get_session("otel-4", source="claude_code")
+    store.append_context_block(
+        sid, {"category": "system", "label": "system prompt", "char_count": 400, "token_estimate": 100, "turn_n": 0}
+    )
+    store.append_context_block(
+        sid, {"category": "user", "label": "user turn", "char_count": 40, "token_estimate": 10, "turn_n": 0}
+    )
+
+    timeline = store.get_context_timeline(sid)
+    assert [b["category"] for b in timeline] == ["system", "user"]
+    assert timeline[-1]["cumulative_tokens"] == 110
+
+
+def test_close_session_marks_status_and_applies_final_totals(isolated_sqlite_db):
+    """close_session's final_totals overwrite the incrementally-summed
+    values with the client's own exact final report, when given."""
+    store = isolated_sqlite_db
+    sid = store.start_or_get_session("otel-5", source="claude_code", model="us.anthropic.claude-sonnet-4-6")
+    store.append_turn(sid, {"input_tokens": 10, "output_tokens": 5, "latency_ms": 50})
+    assert store.get_session_metrics(sid)["session"]["status"] == "open"
+
+    store.close_session(sid, final_totals={
+        "input_tokens": 999, "output_tokens": 111, "total_tokens": 1110, "latency_ms": 5000,
+    })
+
+    metrics = store.get_session_metrics(sid)
+    assert metrics["session"]["status"] == "closed"
+    assert metrics["prompt_metrics"]["input_tokens"] == 999
+    assert metrics["prompt_metrics"]["total_tokens"] == 1110
+
+
+def test_close_session_without_final_totals_just_closes(isolated_sqlite_db):
+    store = isolated_sqlite_db
+    sid = store.start_or_get_session("otel-6", source="claude_code")
+    store.append_turn(sid, {"input_tokens": 10, "output_tokens": 5, "latency_ms": 50})
+    store.close_session(sid)
+
+    metrics = store.get_session_metrics(sid)
+    assert metrics["session"]["status"] == "closed"
+    assert metrics["prompt_metrics"]["input_tokens"] == 10
+
+
+def test_recent_sessions_carries_source_and_status(isolated_sqlite_db):
+    """Dashboard session list needs a per-row source badge and pressure
+    signal — both bedrock_agent (legacy) and OTLP-sourced sessions must
+    carry these fields the same way."""
+    store = isolated_sqlite_db
+    store.record_session("q", "m", _fake_loop_result())
+    store.start_or_get_session("otel-7", source="copilot")
+
+    recent = {s["session_id"]: s for s in store.get_recent_sessions()}
+    sources = {s["source"] for s in recent.values()}
+    assert sources == {"bedrock_agent", "copilot"}
+    assert all("status" in s for s in recent.values())
+
+
+def test_pre_latency_tool_calls_table_migrates(isolated_sqlite_db):
+    """A tool_calls table created before the Tool calls tab needed
+    latency_ms/timestamp (see docs/OTLP_INTEGRATION_PLAN.md's dashboard
+    spec) has neither column — must migrate instead of crashing reads."""
+    store = isolated_sqlite_db
+    conn = sqlite3.connect(store.DB_PATH)
+    conn.execute(
+        "CREATE TABLE tool_calls (session_id TEXT, seq INTEGER, tool_name TEXT, args TEXT, status TEXT)"
+    )
+    conn.execute("INSERT INTO tool_calls VALUES ('s1', 0, 'list_services', '{}', 'ok')")
+    conn.commit()
+    conn.close()
+
+    trace = store.get_agent_trace("s1")
+    assert trace == [
+        {"tool": "list_services", "args": {}, "status": "ok", "latency_ms": 0, "timestamp": 0}
+    ]
+
+
+def test_append_tool_call_carries_latency_and_timestamp(isolated_sqlite_db):
+    store = isolated_sqlite_db
+    sid = store.start_or_get_session("otel-8", source="claude_code")
+    store.append_tool_call(sid, {"tool": "Read", "args": {}, "status": "success", "latency_ms": 340})
+
+    trace = store.get_agent_trace(sid)
+    assert trace[0]["latency_ms"] == 340
+    assert trace[0]["timestamp"] > 0

@@ -16,6 +16,7 @@ Run from repo root:
 """
 
 import contextvars
+import json
 import os
 import shutil
 
@@ -26,7 +27,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from mcp_server import auth_store
+from mcp_server import auth_store, otlp
 from mcp_server.google_auth import InvalidGoogleToken, verify_credential
 from metrics import store
 
@@ -58,7 +59,7 @@ class MultiTokenAuthMiddleware(BaseHTTPMiddleware):
     read/write below can filter to the caller's own data. See
     metrics/store.py's owner param and the README's Auth section."""
 
-    def __init__(self, app, owner_token, protected_prefixes=("/mcp", "/api/")):
+    def __init__(self, app, owner_token, protected_prefixes=("/mcp", "/api/", "/otlp")):
         super().__init__(app)
         self.owner_token = owner_token
         self.protected_prefixes = protected_prefixes
@@ -238,19 +239,96 @@ async def api_record_session(request: Request):
     return JSONResponse({"session_id": session_id})
 
 
+# OTLP telemetry ingestion — Claude Code's and GitHub Copilot's own
+# native OpenTelemetry export, sent here instead of through the MCP
+# connection (see docs/OTLP_INTEGRATION_PLAN.md's "Why" section: MCP
+# only ever sees calls made to our own tools, never a client's own
+# token usage). Gated by MultiTokenAuthMiddleware exactly like /api/ —
+# "/otlp" is added to protected_prefixes below, same bearer-token-to-
+# owner mapping, set via OTEL_EXPORTER_OTLP_HEADERS on the client side.
+# Body parsing and per-vendor mapping lives in mcp_server/otlp/.
+
+
+# Raw request/response bodies can legitimately be large (full source
+# files, long conversations), but with no cap at all a single POST can
+# force the server to buffer an unbounded amount of memory before any
+# per-item processing/limiting happens — found in review. 25MB is well
+# above any single real OTLP batch (Claude Code's own inline-body mode
+# truncates far below this) and still a hard ceiling against abuse.
+_MAX_OTLP_BODY_BYTES = 25 * 1024 * 1024
+
+
+async def _otlp_body(request: Request):
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            if int(content_length) > _MAX_OTLP_BODY_BYTES:
+                return "too_large"
+        except ValueError:
+            pass
+    raw = await request.body()
+    if len(raw) > _MAX_OTLP_BODY_BYTES:
+        return "too_large"
+    try:
+        body = json.loads(raw)
+    except ValueError:
+        return None
+    return body if isinstance(body, dict) else None
+
+
+@server.custom_route("/otlp/v1/logs", methods=["POST"])
+async def otlp_logs(request: Request):
+    body = await _otlp_body(request)
+    if body == "too_large":
+        return JSONResponse({"error": "request body too large"}, status_code=413)
+    if body is None:
+        return JSONResponse({"error": "malformed JSON body"}, status_code=400)
+    counts = otlp.handle_logs_payload(body, owner=current_owner.get())
+    return JSONResponse({"accepted": counts})
+
+
+@server.custom_route("/otlp/v1/metrics", methods=["POST"])
+async def otlp_metrics(request: Request):
+    body = await _otlp_body(request)
+    if body == "too_large":
+        return JSONResponse({"error": "request body too large"}, status_code=413)
+    if body is None:
+        return JSONResponse({"error": "malformed JSON body"}, status_code=400)
+    counts = otlp.handle_metrics_payload(body, owner=current_owner.get())
+    return JSONResponse({"accepted": counts})
+
+
+@server.custom_route("/otlp/v1/traces", methods=["POST"])
+async def otlp_traces(request: Request):
+    body = await _otlp_body(request)
+    if body == "too_large":
+        return JSONResponse({"error": "request body too large"}, status_code=413)
+    if body is None:
+        return JSONResponse({"error": "malformed JSON body"}, status_code=400)
+    counts = otlp.handle_traces_payload(body, owner=current_owner.get())
+    return JSONResponse({"accepted": counts})
+
+
 # Google sign-in: the pre-auth flow that mints a per-user MCP token; not
-# gated by MultiTokenAuthMiddleware, which only checks /mcp and /api/.
+# gated by MultiTokenAuthMiddleware, which only checks /mcp, /api/, and
+# now /otlp.
 
 
 _PAGE_STYLE = """
   :root {
-    --bg: #0a0d13; --bg-raised: #12161f; --bg-raised-2: #161b26;
+    --bg: #0a0d13; --bg-raised: #12161f; --bg-raised-2: #161b26; --bg-sunken: #060a0f;
     --border: #232a38; --border-soft: #1b212d;
     --text: #e4eaf3; --text-dim: #8b96a8; --text-dimmer: #5f6b7d;
     --accent: #35e0c8; --accent-2: #6c8dff; --accent-dim: #163832;
     --warn: #f5b955; --warn-dim: #3a2c14; --warn-border: #4a3a1a;
+    --ok: #4ade80; --ok-dim: #13301f;
+    --err: #f2657a; --err-dim: #3a1620;
+    --thinking: #c084fc; --thinking-dim: #2c1c42;
+    --cat-system: #6b7280; --cat-tools: #8b98ac; --cat-user: #e4eaf3;
+    --cat-reasoning: #35e0c8; --cat-thinking: #c084fc; --cat-toolcall: #f5b955;
+    --cat-toolresult: #4ade80; --cat-answer: #6c8dff;
     --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 12px 32px -12px rgba(0,0,0,0.55);
-    --radius: 16px;
+    --radius: 16px; --radius-sm: 10px;
   }
   * { box-sizing: border-box; }
   html { background: var(--bg); }
@@ -393,6 +471,7 @@ _PAGE_STYLE = """
   .tab-btn.active { background: var(--accent-dim); border-color: rgba(53,224,200,0.35); color: var(--accent); }
   .tab-panel { display: none; margin-top: 1rem; }
   .tab-panel.active { display: block; }
+  .otel-optin { margin-top: 0.9rem; padding: 0.8rem; border: 1px solid var(--warn-border); background: var(--warn-dim); border-radius: 8px; }
 
   /* Landing/home page hero */
   .hero { text-align: center; padding: 1rem 0 0.5rem; }
@@ -431,28 +510,138 @@ _PAGE_STYLE = """
   .byline { text-align: center; font-size: 0.82rem; color: var(--text-dimmer); margin: -1rem 0 2rem; }
   .byline a { color: var(--text-dim); }
 
-  /* Live dashboard — sessions list + Context Window Explorer, shown to
-     every authenticated user for their own data right after Authorize.
-     Reuses .preview-bar/.preview-legend/.preview-block from the landing
-     hero preview above — same visual language, real data instead of a
-     static mock. */
-  .dash-sessions { display: grid; gap: 0.4rem; margin-top: 0.9rem; max-height: 15rem; overflow-y: auto; }
-  .session-row {
-    display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
-    padding: 0.6rem 0.75rem; border-radius: 10px; border: 1px solid var(--border);
-    background: var(--bg-raised-2); cursor: pointer; font-size: 0.82rem; transition: border-color 0.15s ease;
-  }
-  .session-row:hover { border-color: #3a4459; }
-  .session-row.active { border-color: rgba(53,224,200,0.4); background: var(--accent-dim); }
-  .session-row .s-prompt { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
-  .session-row .s-meta { color: var(--text-dimmer); font-size: 0.72rem; font-family: ui-monospace, monospace; flex-shrink: 0; margin-left: 0.75rem; }
-  .dash-detail { margin-top: 1.1rem; }
-  .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 0.6rem; margin: 0.9rem 0 1.2rem; }
-  .metric-tile { border: 1px solid var(--border-soft); border-radius: 10px; padding: 0.6rem 0.7rem; background: var(--bg-raised-2); }
-  .metric-tile .m-label { font-size: 0.68rem; color: var(--text-dimmer); text-transform: uppercase; letter-spacing: 0.04em; }
-  .metric-tile .m-value { font-size: 1.05rem; font-weight: 650; color: var(--text); margin-top: 0.15rem; font-family: ui-monospace, monospace; }
-  .dash-empty, .dash-error { color: var(--text-dim); font-size: 0.85rem; }
+  /* Live dashboard — full session-list + tabbed session-detail rebuild,
+     matching the approved mockup (see PR description). Shown to every
+     authenticated user for their own data right after Authorize.
+     dash-empty/dash-error are the two loading/error states, reused
+     across the KPI strip, session list, and detail panel. */
+  .dash-empty, .dash-error { color: var(--text-dim); font-size: 0.85rem; padding: 0.6rem 0.85rem; }
   .dash-error { color: var(--warn); }
+
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-variant-numeric: tabular-nums; }
+  .layout { display: grid; grid-template-columns: 1fr; gap: 1rem; padding: 0; max-width: none; margin: 0; }
+  .kpi-strip { display: grid; grid-template-columns: repeat(6, 1fr); gap: 0.7rem; }
+  @media (max-width: 1100px) { .kpi-strip { grid-template-columns: repeat(3, 1fr); } }
+  .kpi { background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.85rem 1rem; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 0.35rem; min-width: 0; }
+  .kpi-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dimmer); font-weight: 650; }
+  .kpi-value { font-size: 20px; font-weight: 650; letter-spacing: -0.01em; color: var(--text); }
+  .kpi-value small { font-size: 12px; color: var(--text-dimmer); font-weight: 500; }
+  .kpi-delta { font-size: 11px; font-weight: 550; }
+  .kpi-delta.up { color: var(--ok); } .kpi-delta.down { color: var(--err); } .kpi-delta.flat { color: var(--text-dimmer); }
+  .body-grid { display: grid; grid-template-columns: 340px 1fr; gap: 1rem; align-items: start; }
+  @media (max-width: 1000px) { .body-grid { grid-template-columns: 1fr; } }
+  .panel { background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+  .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; padding: 0.85rem 1rem; border-bottom: 1px solid var(--border-soft); }
+  .panel-title { font-size: 13px; font-weight: 650; color: var(--text); }
+  .panel-body { padding: 0.6rem; }
+  .filter-row { display: flex; gap: 0.35rem; padding: 0.6rem 0.85rem 0; flex-wrap: wrap; }
+  .chip { font-size: 11px; font-weight: 550; padding: 0.28rem 0.6rem; border-radius: 999px; border: 1px solid var(--border); background: var(--bg-raised-2); color: var(--text-dim); cursor: pointer; }
+  .chip.active { background: var(--accent-dim); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+  .session-list { display: flex; flex-direction: column; gap: 0.4rem; padding: 0.7rem; max-height: 640px; overflow-y: auto; }
+  .session-row { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.65rem 0.75rem; cursor: pointer; background: var(--bg-raised); transition: border-color .12s ease, background .12s ease; }
+  .session-row:hover { border-color: var(--text-dimmer); }
+  .session-row.active { border-color: var(--accent); background: var(--accent-dim); }
+  .session-row-top { display: flex; align-items: center; gap: 0.45rem; margin-bottom: 0.3rem; }
+  .src-badge { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; padding: 0.12rem 0.4rem; border-radius: 5px; flex-shrink: 0; }
+  .src-badge.cc { background: var(--thinking-dim); color: var(--thinking); }
+  .src-badge.gh { background: var(--accent-dim); color: var(--accent); }
+  .src-badge.bd { background: var(--warn-dim); color: var(--warn); }
+  .session-prompt { font-size: 12px; font-weight: 550; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+  .session-row-meta { display: flex; align-items: center; justify-content: space-between; font-size: 10.5px; color: var(--text-dimmer); }
+  .ctx-badge { display: inline-flex; align-items: center; gap: 0.25rem; font-weight: 650; }
+  .ctx-badge.warn-level { color: var(--warn); }
+  .ctx-badge.err-level { color: var(--err); }
+  .tabs { display: flex; gap: 0.2rem; padding: 0 1rem; border-bottom: 1px solid var(--border-soft); }
+  .tab { padding: 0.7rem 0.15rem; margin-right: 1.2rem; font-size: 12.5px; font-weight: 600; color: var(--text-dimmer); border-bottom: 2px solid transparent; cursor: pointer; background: none; border-left: none; border-right: none; border-top: none; }
+  .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+  .tool-table { display: flex; flex-direction: column; padding: 0 1.1rem 1.1rem; overflow-x: auto; }
+  .tool-row { display: grid; grid-template-columns: 1.6rem 6.5rem 4.2rem 3.6rem 1fr 5rem; gap: 0.6rem; align-items: center; padding: 0.5rem 0.3rem; border-bottom: 1px solid var(--border-soft); font-size: 11.5px; min-width: 560px; }
+  .tool-row:last-child { border-bottom: none; }
+  .tool-row.tool-head { color: var(--text-dimmer); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; }
+  .tool-row .args { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .detail-head { padding: 1rem 1.1rem 0.2rem; }
+  .detail-title { font-size: 15px; font-weight: 650; margin-bottom: 0.3rem; color: var(--text); }
+  .detail-meta { display: flex; flex-wrap: wrap; gap: 0.9rem; font-size: 11.5px; color: var(--text-dim); margin-bottom: 0.9rem; }
+  .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 0.6rem; padding: 0 1.1rem 1rem; }
+  .metric-tile { border: 1px solid var(--border-soft); border-radius: var(--radius-sm); padding: 0.6rem 0.7rem; background: var(--bg-raised-2); }
+  .metric-tile .m-label { font-size: 10px; color: var(--text-dimmer); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 650; }
+  .metric-tile .m-value { font-size: 16px; font-weight: 650; margin-top: 0.15rem; color: var(--text); }
+  .metric-tile .m-sub { font-size: 10.5px; color: var(--text-dimmer); margin-top: 0.1rem; }
+  .metric-tile.accent-ok .m-value { color: var(--ok); }
+  .metric-tile.accent-warn .m-value { color: var(--warn); }
+  .section-heading { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.055em; color: var(--text-dimmer); padding: 0 1.1rem; margin: 0.4rem 0 0.55rem; }
+  .ctx-bar { display: flex; height: 10px; width: calc(100% - 2.2rem); margin: 0 1.1rem; border-radius: 999px; overflow: hidden; border: 1px solid var(--border-soft); }
+  .ctx-bar > div { height: 100%; }
+  .ctx-legend { display: flex; flex-wrap: wrap; gap: 0.75rem; font-size: 10.5px; color: var(--text-dim); padding: 0.55rem 1.1rem 0.9rem; }
+  .ctx-legend span { display: inline-flex; align-items: center; gap: 0.32rem; }
+  .ctx-legend i { width: 7px; height: 7px; border-radius: 999px; display: inline-block; }
+  .block-list { display: flex; flex-direction: column; gap: 0.25rem; padding: 0 0.6rem 0.9rem; }
+  .block-row { display: flex; align-items: center; gap: 0.55rem; padding: 0.45rem 0.55rem; border-radius: 8px; font-size: 12px; cursor: default; }
+  .block-row:hover { background: var(--bg-raised-2); }
+  .block-dot { width: 7px; height: 7px; border-radius: 999px; flex-shrink: 0; }
+  .block-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+  .block-label .redacted { color: var(--text-dimmer); font-style: italic; }
+  .block-tok { color: var(--text-dimmer); font-size: 11px; flex-shrink: 0; }
+  .block-pct { font-size: 10.5px; color: var(--text-dimmer); width: 3.4rem; text-align: right; flex-shrink: 0; }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; padding: 0 1.1rem 1.1rem; }
+  @media (max-width: 760px) { .two-col { grid-template-columns: 1fr; } }
+  .subpanel { border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--bg-raised-2); padding: 0.75rem 0.85rem; }
+  .subpanel h4 { font-size: 11.5px; font-weight: 650; margin-bottom: 0.6rem; color: var(--text); }
+  .bar-row { display: flex; align-items: center; gap: 0.5rem; font-size: 11px; margin-bottom: 0.45rem; }
+  .bar-row .b-name { width: 108px; flex-shrink: 0; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar-track { flex: 1; height: 7px; background: var(--bg-sunken); border-radius: 999px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 999px; background: var(--accent); }
+  .bar-fill.err { background: var(--err); }
+  .b-val { width: 3.8rem; text-align: right; color: var(--text-dimmer); flex-shrink: 0; }
+  .kv-list { display: flex; flex-direction: column; }
+  .kv-line { display: flex; justify-content: space-between; padding: 0.4rem 0; border-bottom: 1px solid var(--border-soft); font-size: 11.5px; }
+  .kv-line .k { color: var(--text-dim); } .kv-line .v { color: var(--text); font-weight: 550; }
+  .status-dot { width: 7px; height: 7px; border-radius: 999px; display: inline-block; margin-right: 0.35rem; }
+  .status-dot.ok { background: var(--ok); } .status-dot.err { background: var(--err); } .status-dot.warn { background: var(--warn); }
+  .badge-pill { font-size: 10px; font-weight: 650; padding: 0.15rem 0.5rem; border-radius: 999px; display: inline-flex; align-items: center; gap: 0.3rem; }
+  .badge-pill.ok { background: var(--ok-dim); color: var(--ok); }
+  .badge-pill.warn { background: var(--warn-dim); color: var(--warn); }
+  .badge-pill.err { background: var(--err-dim); color: var(--err); }
+  .badge-pill.dim { background: var(--bg-sunken); color: var(--text-dimmer); }
+  .settings-wrap { max-width: 880px; margin: 0 auto; padding: 0; display: flex; flex-direction: column; gap: 1rem; }
+  .settings-head p { color: var(--text-dim); font-size: 12.5px; margin: 0.3rem 0 0; max-width: 46rem; }
+  .config-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 1.2rem; padding: 0.95rem 0; border-bottom: 1px solid var(--border-soft); }
+  .config-row:last-child { border-bottom: none; }
+  .config-copy { max-width: 30rem; }
+  .config-copy .c-title { font-size: 13px; font-weight: 600; margin-bottom: 0.2rem; color: var(--text); }
+  .config-copy .c-desc { font-size: 11.5px; color: var(--text-dim); line-height: 1.55; }
+  .config-control { flex-shrink: 0; display: flex; align-items: center; gap: 0.6rem; padding-top: 0.15rem; }
+  .switch { position: relative; width: 2.3rem; height: 1.3rem; flex-shrink: 0; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch-track { position: absolute; inset: 0; background: var(--bg-sunken); border: 1px solid var(--border); border-radius: 999px; cursor: pointer; transition: background .15s ease; }
+  .switch-track::before { content: ""; position: absolute; width: 0.95rem; height: 0.95rem; border-radius: 999px; background: var(--text-dimmer); top: 50%; left: 0.16rem; transform: translateY(-50%); transition: transform .15s ease, background .15s ease; }
+  .switch input:checked + .switch-track { background: var(--accent-dim); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+  .switch input:checked + .switch-track::before { transform: translate(1rem, -50%); background: var(--accent); }
+  select.cfg-select { background: var(--bg-raised); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 0.35rem 0.6rem; font-size: 12px; font-family: inherit; }
+  input.cfg-input { background: var(--bg-raised); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 0.35rem 0.6rem; font-size: 12px; font-family: inherit; width: 5.5rem; }
+  .tag-input-row { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+  .tag { font-size: 11px; padding: 0.22rem 0.55rem; border-radius: 999px; background: var(--bg-sunken); color: var(--text-dim); border: 1px solid var(--border); }
+  .disclosure-note { display: flex; gap: 0.6rem; align-items: flex-start; padding: 0.85rem 1rem; border-radius: var(--radius-sm); background: var(--warn-dim); border: 1px solid var(--warn-border); font-size: 11.5px; color: var(--text); }
+  .disclosure-note strong { color: var(--warn); }
+  .range-row { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.2rem; }
+  .quota-strip { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem; }
+  .quota-card { background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.85rem 1rem; box-shadow: var(--shadow); position: relative; }
+  .quota-card.pending::after { content: "pending data source"; position: absolute; top: 0.7rem; right: 0.8rem; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dimmer); background: var(--bg-sunken); border: 1px dashed var(--border); padding: 0.15rem 0.4rem; border-radius: 5px; }
+  .quota-top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.5rem; }
+  .quota-top .q-label { font-size: 11px; font-weight: 650; color: var(--text-dim); }
+  .quota-top .q-pct { font-size: 17px; font-weight: 650; color: var(--text); }
+  .quota-track { height: 8px; border-radius: 999px; background: var(--bg-sunken); overflow: hidden; margin-bottom: 0.4rem; }
+  .quota-fill { height: 100%; border-radius: 999px; background: var(--accent); }
+  .quota-fill.hot { background: var(--warn); }
+  .quota-sub { font-size: 10.5px; color: var(--text-dimmer); }
+  .agent-tabs { display: flex; gap: 0.4rem; padding: 0 1.1rem 0.7rem; flex-wrap: wrap; }
+  .agent-tab { display: flex; align-items: center; gap: 0.4rem; font-size: 11px; font-weight: 600; padding: 0.32rem 0.7rem; border-radius: 999px; border: 1px solid var(--border); background: var(--bg-raised); color: var(--text-dim); cursor: default; }
+  .agent-tab.active { background: var(--thinking-dim); color: var(--thinking); border-color: color-mix(in srgb, var(--thinking) 40%, transparent); }
+  .agent-tab .a-tok { font-family: ui-monospace, "SF Mono", Menlo, monospace; color: var(--text-dimmer); font-weight: 500; }
+  .icon-btn { font-size: 0.8rem; font-weight: 500; padding: 0.4rem 0.75rem; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-raised-2); color: var(--text-dim); cursor: pointer; }
+  .icon-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
 """
 
 
@@ -562,6 +751,22 @@ async def auth_login(request: Request):
     }}, null, 2);
     const rawHeader = "Authorization: Bearer " + token;
     const curlCmd = 'curl -H "Authorization: Bearer ' + token + '" ' + window.location.origin + '/api/sessions';
+    const otlpUrl = window.location.origin + "/otlp";
+    const claudeOtelSnippet = [
+      "export CLAUDE_CODE_ENABLE_TELEMETRY=1",
+      "export OTEL_LOGS_EXPORTER=otlp",
+      "export OTEL_METRICS_EXPORTER=otlp",
+      "export OTEL_EXPORTER_OTLP_PROTOCOL=http/json",
+      "export OTEL_EXPORTER_OTLP_ENDPOINT=" + otlpUrl,
+      'export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer ' + token + '"',
+    ].join("\\n");
+    const claudeOtelOptin = "export OTEL_LOG_RAW_API_BODIES=1";
+    const copilotOtelSnippet = [
+      "export COPILOT_OTEL_ENABLED=true",
+      "export OTEL_EXPORTER_OTLP_ENDPOINT=" + otlpUrl,
+      'export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer ' + token + '"',
+    ].join("\\n");
+    const copilotOtelOptin = "export COPILOT_OTEL_CAPTURE_CONTENT=true";
 
     return `
       <div class="card accent">
@@ -585,6 +790,8 @@ async def auth_login(request: Request):
         <div class="tab-row" style="margin-top: 0.9rem;">
           <button class="tab-btn active" data-tab="claude" onclick="showConnectTab('claude')">Claude Code</button>
           <button class="tab-btn" data-tab="api" onclick="showConnectTab('api')">API / curl</button>
+          <button class="tab-btn" data-tab="claude-otel" onclick="showConnectTab('claude-otel')">Claude Code (live telemetry)</button>
+          <button class="tab-btn" data-tab="copilot-otel" onclick="showConnectTab('copilot-otel')">Copilot (live telemetry)</button>
         </div>
 
         <div class="tab-panel active" data-panel="claude">
@@ -600,15 +807,47 @@ async def auth_login(request: Request):
           <pre id="curl-cmd">` + curlCmd + `</pre>
           <button class="copy" onclick="copyText('curl-cmd')">Copy curl</button>
         </div>
+        <div class="tab-panel" data-panel="claude-otel">
+          <p class="card-hint">Claude Code exports its own OpenTelemetry data natively — point it at this server instead of
+          (or alongside) the MCP connection to get live token/cost/tool-call telemetry with no extra tool calls needed:</p>
+          <pre id="claude-otel-snippet">` + claudeOtelSnippet + `</pre>
+          <button class="copy" onclick="copyText('claude-otel-snippet')">Copy snippet</button>
+          <div class="otel-optin">
+            <p class="card-hint"><strong>Optional — powers the per-session Context Window Explorer.</strong> Without this,
+            you still get token counts, cost, and tool-call telemetry from the snippet above. With it, Claude Code's own
+            raw request/response bodies are captured, giving you the full block-by-block context breakdown — but per
+            Claude Code's own docs, this is a materially bigger disclosure: "bodies include the entire conversation
+            history." Add it only if you want that level of detail:</p>
+            <pre id="claude-otel-optin">` + claudeOtelOptin + `</pre>
+            <button class="copy" onclick="copyText('claude-otel-optin')">Copy opt-in line</button>
+          </div>
+        </div>
+        <div class="tab-panel" data-panel="copilot-otel">
+          <p class="card-hint">GitHub Copilot (VS Code) also exports OpenTelemetry natively — this covers Copilot Chat,
+          which is VS Code's native AI surface, so no separate VS Code integration is needed:</p>
+          <pre id="copilot-otel-snippet">` + copilotOtelSnippet + `</pre>
+          <button class="copy" onclick="copyText('copilot-otel-snippet')">Copy snippet</button>
+          <div class="otel-optin">
+            <p class="card-hint"><strong>Optional — powers the per-session Context Window Explorer.</strong> Without this,
+            you still get token counts and tool-call telemetry from the snippet above. With it, Copilot exposes its own
+            structured prompt/response content (` + "`gen_ai.input.messages`/`gen_ai.output.messages`" + `) for the full
+            context breakdown — a bigger disclosure than token counts alone. Add it only if you want that level of detail:</p>
+            <pre id="copilot-otel-optin">` + copilotOtelOptin + `</pre>
+            <button class="copy" onclick="copyText('copilot-otel-optin')">Copy opt-in line</button>
+          </div>
+        </div>
       </div>
 
-      <div class="card accent">
-        <h3>Live dashboard <span class="badge">auto-refreshes</span></h3>
+      <div class="card accent" style="max-width: none;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:0.6rem; flex-wrap:wrap;">
+          <h3>Live dashboard <span class="badge">auto-refreshes</span></h3>
+          <button class="icon-btn" onclick="toggleSettings()">&#9881; Project settings</button>
+        </div>
         <p class="card-hint">Your own sessions only — every ` + "`record_session`" + ` call from your LLM/agent
         (recorded through the token above) shows up here within a few seconds, including the full
         Context Window Explorer breakdown. No separate app needed.</p>
-        <div id="dash-sessions" class="dash-sessions"><p class="dash-empty">Loading…</p></div>
-        <div id="dash-detail" class="dash-detail"></div>
+        <div id="dash-root"><p class="dash-empty">Loading…</p></div>
+        <div id="settings-root" class="hidden"></div>
       </div>
 
       <details>
@@ -641,10 +880,27 @@ async def auth_login(request: Request):
   // read here is already owner-scoped server-side (see
   // MultiTokenAuthMiddleware + metrics/store.py's owner filtering), so
   // this page can never show another user's data even if it tried to.
+  //
+  // KPI strip / range filter: fetches /api/sessions?limit=500 ONCE and
+  // aggregates client-side (same "personal-project scale" assumption
+  // already used elsewhere in this codebase) instead of adding new
+  // backend aggregate endpoints. Cache-hit-rate / tool-error-rate /
+  // context-alert-count would each need a per-session detail fetch
+  // (N+1 — 500 sequential requests just to draw a KPI tile), so those
+  // three render "—" with a note rather than doing that; sessions/
+  // tokens/spend come straight from the bulk list response and are
+  // real.
 
   const CATEGORY_COLORS = {{
-    system: "#6b7280", tools: "#8b98ac", user: "#e4eaf3", reasoning: "var(--accent)",
-    thinking: "#c084fc", tool_call: "var(--warn)", tool_result: "#4ade80", answer: "var(--accent-2)",
+    system: "var(--cat-system)", tools: "var(--cat-tools)", user: "var(--cat-user)",
+    reasoning: "var(--cat-reasoning)", thinking: "var(--cat-thinking)",
+    tool_call: "var(--cat-toolcall)", tool_result: "var(--cat-toolresult)", answer: "var(--cat-answer)",
+  }};
+
+  const SRC_BADGE = {{
+    claude_code: {{cls: "cc", label: "CC"}},
+    copilot: {{cls: "gh", label: "GH"}},
+    bedrock_agent: {{cls: "bd", label: "BD"}},
   }};
 
   async function apiGet(token, path) {{
@@ -654,110 +910,443 @@ async def auth_login(request: Request):
   }}
 
   function fmtCost(v) {{ return "$" + (v || 0).toFixed(4); }}
+  function fmtTokens(n) {{
+    n = n || 0;
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
+    if (n >= 1000) return (n / 1000).toFixed(1) + "k";
+    return String(n);
+  }}
+  function timeAgo(ts) {{
+    if (!ts) return "—";
+    const secs = Math.max(0, Date.now() / 1000 - ts);
+    if (secs < 60) return "just now";
+    if (secs < 3600) return Math.floor(secs / 60) + "m ago";
+    if (secs < 86400) return Math.floor(secs / 3600) + "h ago";
+    return Math.floor(secs / 86400) + "d ago";
+  }}
 
   let dashboardTimer = null;
   let dashboardSelected = null;
+  let dashboardRange = "7d"; // "today" | "7d" | "30d" | "all"
+  let dashboardSessions = []; // full bulk list (up to 500), unfiltered
+
+  const RANGE_SECONDS = {{today: 86400, "7d": 7 * 86400, "30d": 30 * 86400, all: null}};
+
+  function sessionsInRange() {{
+    const secs = RANGE_SECONDS[dashboardRange];
+    if (secs === null) return dashboardSessions;
+    const cutoff = Date.now() / 1000 - secs;
+    return dashboardSessions.filter((s) => (s.timestamp || 0) >= cutoff);
+  }}
+
+  function renderKpiStrip() {{
+    const inRange = sessionsInRange();
+    const tokens = inRange.reduce((sum, s) => sum + (s.total_tokens || 0), 0);
+    const spend = inRange.reduce((sum, s) => sum + (s.estimated_cost || 0), 0);
+    return `
+      <div class="kpi"><span class="kpi-label">Sessions</span><span class="kpi-value">` + inRange.length + `</span></div>
+      <div class="kpi"><span class="kpi-label">Tokens</span><span class="kpi-value">` + fmtTokens(tokens) + `</span></div>
+      <div class="kpi"><span class="kpi-label">Spend</span><span class="kpi-value">` + fmtCost(spend) + `</span></div>
+      <div class="kpi"><span class="kpi-label">Cache hit rate</span><span class="kpi-value">&mdash;<small> per-session only</small></span></div>
+      <div class="kpi"><span class="kpi-label">Tool error rate</span><span class="kpi-value">&mdash;<small> per-session only</small></span></div>
+      <div class="kpi"><span class="kpi-label">Context alerts</span><span class="kpi-value">&mdash;<small> per-session only</small></span></div>
+    `;
+  }}
+
+  function renderRangeRow() {{
+    const opts = [["today", "Today"], ["7d", "7d"], ["30d", "30d"], ["all", "All time"]];
+    return `
+      <div class="filter-row" style="padding: 0;">
+        ` + opts.map(([key, label]) =>
+          '<span class="chip' + (dashboardRange === key ? ' active' : '') + '" onclick="setDashboardRange(\\'' + key + '\\')">' + label + '</span>'
+        ).join("") + `
+      </div>`;
+  }}
+
+  function renderQuotaStrip() {{
+    // Neither window is wired to a real data source yet — see
+    // docs/OTLP_INTEGRATION_PLAN.md's "5-hour / 7-day usage-window
+    // percentage" verdict (not achievable via any supported path right
+    // now). Kept visually complete per that doc's framing, with the
+    // pending-source badge baked into .quota-card.pending and no
+    // fabricated percentage or fill width.
+    const card = (label) => `
+      <div class="quota-card pending">
+        <div class="quota-top"><span class="q-label">` + label + `</span><span class="q-pct">&mdash;</span></div>
+        <div class="quota-track"><div class="quota-fill" style="width:0%;"></div></div>
+        <div class="quota-sub">Not yet wired to a data source — see project plan.</div>
+      </div>`;
+    return card("5h usage window") + card("7d usage window");
+  }}
 
   function renderSessionRow(s) {{
     const prompt = (s.prompt || "(no prompt)").slice(0, 60);
     const active = s.session_id === dashboardSelected ? " active" : "";
+    const badge = SRC_BADGE[s.source] || {{cls: "bd", label: "?"}};
     return `
       <div class="session-row` + active + `" data-id="` + s.session_id + `" onclick="selectSession(event)">
-        <span class="s-prompt">` + prompt + `</span>
-        <span class="s-meta">` + s.total_tokens + ` tok &middot; ` + fmtCost(s.estimated_cost) + `</span>
+        <div class="session-row-top">
+          <span class="src-badge ` + badge.cls + `">` + badge.label + `</span>
+          <span class="session-prompt">` + prompt + `</span>
+        </div>
+        <div class="session-row-meta">
+          <span>` + timeAgo(s.timestamp) + `</span>
+          <span class="ctx-badge">` + fmtTokens(s.total_tokens) + ` tok &middot; ` + fmtCost(s.estimated_cost) + `</span>
+        </div>
       </div>`;
   }}
 
-  function renderContextBlock(b) {{
-    const color = CATEGORY_COLORS[b.category] || "#6b7280";
+  function renderSessionListPanel() {{
+    const inRange = sessionsInRange();
+    const body = !inRange.length
+      ? '<p class="dash-empty">No sessions recorded yet — call the record_session tool (or run your agent) and this list fills in automatically, no page refresh needed.</p>'
+      : inRange.map(renderSessionRow).join("");
     return `
-      <div class="preview-block">
-        <span class="label"><i style="background:` + color + `;"></i>` + (b.label || b.category) + `</span>
-        <span class="tok">` + b.token_estimate + ` tok &middot; ` + b.cumulative_pct + `%</span>
+      <div class="panel">
+        <div class="panel-head"><span class="panel-title">Sessions</span></div>
+        <div class="session-list" id="session-list">` + body + `</div>
       </div>`;
   }}
 
-  function renderSessionDetail(detail, timeline) {{
-    const m = detail.metrics.prompt_metrics;
+  function renderContextBar(timeline) {{
     const total = timeline.length ? timeline[timeline.length - 1].cumulative_tokens : 0;
-    const bar = timeline.map((b) => {{
-      const color = CATEGORY_COLORS[b.category] || "#6b7280";
+    return timeline.map((b) => {{
+      const color = CATEGORY_COLORS[b.category] || "var(--cat-system)";
       const pct = total ? (b.token_estimate / total * 100) : 0;
       return '<div style="width:' + pct + '%; background:' + color + ';"></div>';
     }}).join("");
-    const blocks = timeline.length
-      ? timeline.map(renderContextBlock).join("")
-      : '<p class="dash-empty">No context_blocks for this session — record_session was called without the optional field.</p>';
+  }}
+
+  function renderContextBlockRow(b) {{
+    const color = CATEGORY_COLORS[b.category] || "var(--cat-system)";
+    const label = b.status === "redacted"
+      ? '<span class="redacted">' + (b.label || b.category) + ' (redacted)</span>'
+      : (b.label || b.category);
     return `
+      <div class="block-row">
+        <span class="block-dot" style="background:` + color + `;"></span>
+        <span class="block-label">` + label + `</span>
+        <span class="block-tok">` + b.token_estimate + ` tok</span>
+        <span class="block-pct">` + b.cumulative_pct + `%</span>
+      </div>`;
+  }}
+
+  function renderContextTab(timeline) {{
+    if (!timeline.length) {{
+      return '<p class="dash-empty">No context_blocks for this session — record_session was called without the optional field.</p>';
+    }}
+    return `
+      <div class="agent-tabs">
+        <span class="agent-tab active">main<span class="a-tok">` + fmtTokens(timeline[timeline.length - 1].cumulative_tokens) + ` tok</span></span>
+      </div>
+      <div class="ctx-bar">` + renderContextBar(timeline) + `</div>
+      <div class="ctx-legend">
+        <span><i style="background:var(--cat-system);"></i>system</span>
+        <span><i style="background:var(--cat-tools);"></i>tools</span>
+        <span><i style="background:var(--cat-user);"></i>user</span>
+        <span><i style="background:var(--cat-reasoning);"></i>reasoning</span>
+        <span><i style="background:var(--cat-thinking);"></i>thinking</span>
+        <span><i style="background:var(--cat-toolcall);"></i>tool call</span>
+        <span><i style="background:var(--cat-toolresult);"></i>tool result</span>
+        <span><i style="background:var(--cat-answer);"></i>answer</span>
+      </div>
+      <div class="section-heading">Context blocks</div>
+      <div class="block-list">` + timeline.map(renderContextBlockRow).join("") + `</div>
+    `;
+  }}
+
+  function renderOverviewTab(detail) {{
+    const m = detail.metrics.prompt_metrics;
+    // "Lines changed" / "Active time" from the mockup have no backing
+    // schema field — omitted rather than shown as fake zeros.
+    return `
+      <div class="agent-tabs">
+        <span class="agent-tab active">main</span>
+      </div>
       <div class="metric-grid">
-        <div class="metric-tile"><div class="m-label">Tokens</div><div class="m-value">` + m.total_tokens + `</div></div>
+        <div class="metric-tile"><div class="m-label">Tokens</div><div class="m-value">` + fmtTokens(m.total_tokens) + `</div></div>
+        <div class="metric-tile accent-ok"><div class="m-label">Cache hit</div><div class="m-value">` + cacheHitPct(detail.turns) + `</div></div>
         <div class="metric-tile"><div class="m-label">Cost</div><div class="m-value">` + fmtCost(m.estimated_cost) + `</div></div>
-        <div class="metric-tile"><div class="m-label">Latency</div><div class="m-value">` + m.latency_ms + `ms</div></div>
         <div class="metric-tile"><div class="m-label">Tool calls</div><div class="m-value">` + m.tool_call_count + `</div></div>
       </div>
-      <h3 style="font-size:0.85rem; color: var(--text-dim); margin-bottom:0.5rem;">Context Window Explorer</h3>
-      <div class="preview-bar">` + bar + `</div>
-      <div class="preview-legend">
-        <span><i style="background:#6b7280;"></i>system</span>
-        <span><i style="background:#8b98ac;"></i>tools</span>
-        <span><i style="background:#e4eaf3;"></i>user</span>
-        <span><i style="background:var(--accent);"></i>reasoning</span>
-        <span><i style="background:#c084fc;"></i>thinking</span>
-        <span><i style="background:var(--warn);"></i>tool call</span>
-        <span><i style="background:#4ade80;"></i>tool result</span>
-        <span><i style="background:var(--accent-2);"></i>answer</span>
-      </div>
-      ` + blocks + `
     `;
+  }}
+
+  function cacheHitPct(turns) {{
+    if (!turns || !turns.length) return "—";
+    let read = 0, input = 0;
+    turns.forEach((t) => {{ read += t.cache_read_input_tokens || 0; input += t.input_tokens || 0; }});
+    if (!input) return "—";
+    return Math.round((read / input) * 100) + "%";
+  }}
+
+  function statusBadge(status) {{
+    const cls = status === "success" || status === "ok" ? "ok" : (status === "error" ? "err" : "dim");
+    return '<span class="badge-pill ' + cls + '"><span class="status-dot ' + cls + '"></span>' + status + '</span>';
+  }}
+
+  function renderToolsTab(trace) {{
+    if (!trace.length) {{
+      return '<p class="dash-empty">No tool calls recorded for this session.</p>';
+    }}
+    const rows = trace.map((c, i) => `
+      <div class="tool-row">
+        <span class="mono">` + (i + 1) + `</span>
+        <span>` + c.tool + `</span>
+        <span>` + statusBadge(c.status) + `</span>
+        <span class="mono">` + (c.latency_ms || 0) + `ms</span>
+        <span class="args mono">` + JSON.stringify(c.args || {{}}).slice(0, 80) + `</span>
+        <span class="mono">` + timeAgo(c.timestamp) + `</span>
+      </div>`).join("");
+    return `
+      <div class="tool-table">
+        <div class="tool-row tool-head"><span>#</span><span>Tool</span><span>Status</span><span>Latency</span><span>Args</span><span>Time</span></div>
+        ` + rows + `
+      </div>`;
+  }}
+
+  function renderReliabilitySubpanel(trace) {{
+    // Real data — computed client-side from this session's already-
+    // fetched trace (grouped by tool, ok vs. error counts). Nothing new
+    // added server-side for this.
+    if (!trace.length) {{
+      return '<div class="subpanel"><h4>Tool reliability, this session</h4><p class="dash-empty">No tool calls recorded.</p></div>';
+    }}
+    const byTool = {{}};
+    trace.forEach((c) => {{
+      const t = byTool[c.tool] || (byTool[c.tool] = {{ok: 0, err: 0}});
+      if (c.status === "success" || c.status === "ok") t.ok += 1; else t.err += 1;
+    }});
+    const rows = Object.entries(byTool).map(([tool, counts]) => {{
+      const total = counts.ok + counts.err;
+      const errPct = total ? (counts.err / total * 100) : 0;
+      return `
+        <div class="bar-row">
+          <span class="b-name">` + tool + `</span>
+          <div class="bar-track"><div class="bar-fill` + (errPct > 0 ? " err" : "") + `" style="width:` + (100 - errPct) + `%;"></div></div>
+          <span class="b-val">` + counts.ok + `/` + total + `</span>
+        </div>`;
+    }}).join("");
+    return '<div class="subpanel"><h4>Tool reliability, this session</h4>' + rows + '</div>';
+  }}
+
+  function renderBreakdownTab(trace) {{
+    const notTracked = (title) => '<div class="subpanel"><h4>' + title + '</h4><p class="dash-empty">Not tracked yet.</p></div>';
+    return `
+      <div class="two-col">
+        ` + renderReliabilitySubpanel(trace) + `
+        ` + notTracked("Spend by subagent / skill") + `
+        ` + notTracked("MCP server connections") + `
+        ` + notTracked("Reliability signals / API errors") + `
+      </div>
+    `;
+  }}
+
+  function renderSessionDetail(sessionId, detail, timeline) {{
+    const s = detail.metrics.session;
+    const m = detail.metrics.prompt_metrics;
+    return `
+      <div class="panel">
+        <div class="detail-head">
+          <div class="detail-title">` + (m.prompt || "(no prompt)").slice(0, 90) + `</div>
+          <div class="detail-meta">
+            <span>` + s.source + `</span>
+            <span>` + s.status + `</span>
+            <span>` + s.model + `</span>
+            <span>` + timeAgo(s.timestamp) + `</span>
+          </div>
+        </div>
+        <div class="tabs">
+          <div class="tab active" data-tab="overview" onclick="showDetailTab('overview', this)">Overview</div>
+          <div class="tab" data-tab="context" onclick="showDetailTab('context', this)">Context Explorer</div>
+          <div class="tab" data-tab="tools" onclick="showDetailTab('tools', this)">Tool calls</div>
+          <div class="tab" data-tab="breakdown" onclick="showDetailTab('breakdown', this)">Breakdown</div>
+        </div>
+        <div class="tab-content active" data-content="overview">` + renderOverviewTab(detail) + `</div>
+        <div class="tab-content" data-content="context">` + renderContextTab(timeline) + `</div>
+        <div class="tab-content" data-content="tools">` + renderToolsTab(detail.trace) + `</div>
+        <div class="tab-content" data-content="breakdown">` + renderBreakdownTab(detail.trace) + `</div>
+      </div>
+    `;
+  }}
+
+  function showDetailTab(name, btn) {{
+    const panel = btn.closest(".panel");
+    if (!panel) return;
+    panel.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
+    panel.querySelectorAll(".tab-content").forEach((c) => c.classList.toggle("active", c.dataset.content === name));
   }}
 
   async function selectSession(evt) {{
     const sessionId = evt.currentTarget.dataset.id;
     dashboardSelected = sessionId;
     document.querySelectorAll(".session-row").forEach((r) => r.classList.toggle("active", r.dataset.id === sessionId));
-    const detailEl = document.getElementById("dash-detail");
+    const detailEl = document.getElementById("detail-panel");
     if (!detailEl) return;
     detailEl.innerHTML = '<p class="dash-empty">Loading…</p>';
     try {{
-      const token = detailEl.dataset.token;
+      const token = document.getElementById("dash-root").dataset.token;
       const [detail, timeline] = await Promise.all([
         apiGet(token, "/api/sessions/" + sessionId),
         apiGet(token, "/api/context-timeline/" + sessionId),
       ]);
-      detailEl.innerHTML = renderSessionDetail(detail, timeline);
+      detailEl.innerHTML = renderSessionDetail(sessionId, detail, timeline);
     }} catch (err) {{
       detailEl.innerHTML = '<p class="dash-error">Failed to load session: ' + err.message + '</p>';
     }}
   }}
 
+  function renderDashboardShell() {{
+    const root = document.getElementById("dash-root");
+    if (!root) return;
+    root.innerHTML = `
+      <div class="layout">
+        <div id="range-row">` + renderRangeRow() + `</div>
+        <div class="kpi-strip" id="kpi-strip">` + renderKpiStrip() + `</div>
+        <div class="quota-strip">` + renderQuotaStrip() + `</div>
+        <div class="body-grid">
+          <div id="session-list-panel">` + renderSessionListPanel() + `</div>
+          <div id="detail-panel"><div class="panel"><p class="dash-empty">Select a session.</p></div></div>
+        </div>
+      </div>
+    `;
+  }}
+
+  function setDashboardRange(range) {{
+    dashboardRange = range;
+    document.getElementById("range-row").innerHTML = renderRangeRow();
+    document.getElementById("kpi-strip").innerHTML = renderKpiStrip();
+    document.getElementById("session-list-panel").innerHTML = renderSessionListPanel();
+  }}
+
   async function refreshDashboard(token) {{
-    const listEl = document.getElementById("dash-sessions");
-    if (!listEl) {{ clearInterval(dashboardTimer); return; }}
+    const root = document.getElementById("dash-root");
+    if (!root) {{ clearInterval(dashboardTimer); return; }}
     try {{
-      const sessions = await apiGet(token, "/api/sessions?limit=15");
-      if (!sessions.length) {{
-        listEl.innerHTML = '<p class="dash-empty">No sessions recorded yet — call the record_session tool (or run your agent) and this list fills in automatically, no page refresh needed.</p>';
-        return;
+      dashboardSessions = await apiGet(token, "/api/sessions?limit=500");
+      if (!document.getElementById("kpi-strip")) {{
+        renderDashboardShell();
+      }} else {{
+        document.getElementById("kpi-strip").innerHTML = renderKpiStrip();
+        document.getElementById("session-list-panel").innerHTML = renderSessionListPanel();
       }}
-      listEl.innerHTML = sessions.map(renderSessionRow).join("");
-      if (!sessions.some((s) => s.session_id === dashboardSelected)) {{
+      const listEl = document.getElementById("session-list");
+      if (listEl && !sessionsInRange().some((s) => s.session_id === dashboardSelected)) {{
         const row = listEl.querySelector(".session-row");
         if (row) row.click();
       }}
     }} catch (err) {{
-      listEl.innerHTML = '<p class="dash-error">Failed to load sessions: ' + err.message + '</p>';
+      root.innerHTML = '<p class="dash-error">Failed to load sessions: ' + err.message + '</p>';
     }}
   }}
 
   // One poll loop per page load; re-mounting (e.g. signing in again)
   // clears the previous timer instead of stacking a second one.
   function mountDashboard(token) {{
-    const detailEl = document.getElementById("dash-detail");
-    if (detailEl) detailEl.dataset.token = token;
+    const root = document.getElementById("dash-root");
+    if (root) root.dataset.token = token;
     dashboardSelected = null;
+    dashboardSessions = [];
     if (dashboardTimer) clearInterval(dashboardTimer);
+    renderDashboardShell();
     refreshDashboard(token);
     dashboardTimer = setInterval(() => refreshDashboard(token), 8000);
+  }}
+
+  // --- Project settings (new UI, no backend yet) ----------------------
+  // TODO: wire to a real per-project settings endpoint once one exists.
+  // Every control below is inert — this screen exists so the settings
+  // UX is visually complete and navigable via the ⚙ toggle, matching
+  // the mockup, but nothing here persists across a page reload.
+  function renderSettingsScreen() {{
+    return `
+      <div class="settings-wrap">
+        <div class="settings-head">
+          <h3>Project settings</h3>
+          <p>Alert thresholds, redaction/retention, and session labels. Nothing here is wired to a backend yet —
+          changes made here are not saved.</p>
+        </div>
+        <div class="disclosure-note">
+          <span>&#9888;</span>
+          <span><strong>Not yet persisted.</strong> This screen is UI-complete but every control below is
+          disconnected from a real settings store — reloading the page resets it.</span>
+        </div>
+        <div class="panel">
+          <div class="panel-body">
+            <div class="config-row">
+              <div class="config-copy">
+                <div class="c-title">Context window alert threshold</div>
+                <div class="c-desc">Flag a session once its context usage crosses this percentage.</div>
+              </div>
+              <div class="config-control">
+                <input class="cfg-input" type="number" value="80" disabled />
+                <span>%</span>
+              </div>
+            </div>
+            <div class="config-row">
+              <div class="config-copy">
+                <div class="c-title">Tool error rate alert</div>
+                <div class="c-desc">Flag a session once its tool error rate crosses this percentage.</div>
+              </div>
+              <div class="config-control">
+                <input class="cfg-input" type="number" value="20" disabled />
+                <span>%</span>
+              </div>
+            </div>
+            <div class="config-row">
+              <div class="config-copy">
+                <div class="c-title">Redact raw request/response bodies</div>
+                <div class="c-desc">Applies to the OTLP raw-content opt-in (Claude Code / Copilot). Off by default.</div>
+              </div>
+              <div class="config-control">
+                <label class="switch"><input type="checkbox" disabled /><span class="switch-track"></span></label>
+              </div>
+            </div>
+            <div class="config-row">
+              <div class="config-copy">
+                <div class="c-title">Session data retention</div>
+                <div class="c-desc">How long recorded sessions are kept before being eligible for deletion.</div>
+              </div>
+              <div class="config-control">
+                <select class="cfg-select" disabled>
+                  <option>30 days</option>
+                  <option>90 days</option>
+                  <option>Forever</option>
+                </select>
+              </div>
+            </div>
+            <div class="config-row">
+              <div class="config-copy">
+                <div class="c-title">Session labels</div>
+                <div class="c-desc">Tags to help you filter sessions later.</div>
+              </div>
+              <div class="config-control">
+                <div class="tag-input-row">
+                  <span class="tag">production</span>
+                  <span class="tag">staging</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }}
+
+  function toggleSettings() {{
+    const dashRoot = document.getElementById("dash-root");
+    const settingsRoot = document.getElementById("settings-root");
+    if (!dashRoot || !settingsRoot) return;
+    const showingSettings = settingsRoot.classList.contains("hidden");
+    if (showingSettings) {{
+      settingsRoot.innerHTML = renderSettingsScreen();
+      dashRoot.classList.add("hidden");
+      settingsRoot.classList.remove("hidden");
+    }} else {{
+      settingsRoot.classList.add("hidden");
+      settingsRoot.innerHTML = "";
+      dashRoot.classList.remove("hidden");
+    }}
   }}
 
   // Decodes a Google ID token's payload for DISPLAY only (email, in the

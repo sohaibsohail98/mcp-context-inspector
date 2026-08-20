@@ -21,6 +21,27 @@ import pytest
 from metrics import store_dynamodb
 
 
+class _ConditionalCheckFailedException(Exception):
+    """Stand-in for boto3's ClientError subclass DynamoDB raises when a
+    ConditionExpression fails. Real boto3 raises a dynamically-generated
+    exception class off Table.meta.client.exceptions — this fake wires up
+    just enough of that attribute chain (meta.client.exceptions.<Name>)
+    for start_or_get_session's `except ...ConditionalCheckFailedException`
+    to catch it."""
+
+
+class _FakeExceptions:
+    ConditionalCheckFailedException = _ConditionalCheckFailedException
+
+
+class _FakeClient:
+    exceptions = _FakeExceptions()
+
+
+class _FakeMeta:
+    client = _FakeClient()
+
+
 class _FakeBatchWriter:
     def __init__(self, table):
         self.table = table
@@ -43,6 +64,7 @@ class FakeTable:
     def __init__(self, items=None, page_size=1000):
         self.items = items or []
         self.page_size = page_size
+        self.meta = _FakeMeta()
 
     def _apply_filter(self, expr, values, names=None):
         if expr is None:
@@ -71,19 +93,70 @@ class FakeTable:
             resp["LastEvaluatedKey"] = next_start
         return resp
 
-    def query(self, KeyConditionExpression=None, ExpressionAttributeValues=None, **_):
+    def query(self, KeyConditionExpression=None, ExpressionAttributeValues=None, Select=None, **_):
         sid = ExpressionAttributeValues[":sid"]
         prefix = ExpressionAttributeValues.get(":prefix")
         items = [
             i for i in self.items
             if i["session_id"] == sid and (prefix is None or i["sk"].startswith(prefix))
         ]
-        return {"Items": items}
+        resp = {"Items": items}
+        if Select == "COUNT":
+            resp["Count"] = len(items)
+        return resp
 
     def get_item(self, Key):
         for i in self.items:
             if i["session_id"] == Key["session_id"] and i["sk"] == Key["sk"]:
                 return {"Item": i}
+        return {}
+
+    def put_item(self, Item, ConditionExpression=None):
+        """Handles the one ConditionExpression start_or_get_session
+        actually issues ("attribute_not_exists(session_id)") — raises the
+        fake ConditionalCheckFailedException if an item with the same
+        session_id+sk already exists, otherwise upserts."""
+        existing_idx = next(
+            (
+                idx for idx, i in enumerate(self.items)
+                if i["session_id"] == Item["session_id"] and i["sk"] == Item["sk"]
+            ),
+            None,
+        )
+        if existing_idx is not None:
+            if ConditionExpression == "attribute_not_exists(session_id)":
+                raise self.meta.client.exceptions.ConditionalCheckFailedException()
+            self.items[existing_idx] = Item
+        else:
+            self.items.append(Item)
+        return {}
+
+    def update_item(self, Key, UpdateExpression, ExpressionAttributeValues=None, ExpressionAttributeNames=None):
+        """Handles exactly the UpdateExpression shapes store_dynamodb.py
+        issues: comma-separated `field = field + :val` (increment) or
+        `field = :val` / `#alias = :val` (overwrite) clauses — not a
+        general expression parser."""
+        values = ExpressionAttributeValues or {}
+        names = ExpressionAttributeNames or {}
+        item = next(
+            (i for i in self.items if i["session_id"] == Key["session_id"] and i["sk"] == Key["sk"]),
+            None,
+        )
+        if item is None:
+            raise KeyError(f"FakeTable.update_item: no item for key {Key}")
+        expr = UpdateExpression.strip()
+        assert expr.startswith("SET "), f"unsupported UpdateExpression: {expr}"
+        for clause in expr[len("SET "):].split(","):
+            field, rhs = clause.strip().split("=", 1)
+            field = field.strip()
+            rhs = rhs.strip()
+            if field.startswith("#"):
+                field = names[field]
+            if "+" in rhs:
+                _, val_key = rhs.split("+", 1)
+                item[field] = item.get(field, 0) + values[val_key.strip()]
+            else:
+                item[field] = values[rhs.strip()]
         return {}
 
     def batch_writer(self):
@@ -123,7 +196,7 @@ def test_get_session_metrics_strips_internal_partition_field(fake_table):
     # Same session/prompt_metrics split the SQLite backend returns — this
     # is the interchangeability contract.
     assert set(metrics.keys()) == {"session", "prompt_metrics"}
-    assert set(metrics["session"].keys()) == {"session_id", "model", "timestamp"}
+    assert set(metrics["session"].keys()) == {"session_id", "model", "timestamp", "source", "status"}
     assert set(metrics["prompt_metrics"].keys()) == {
         "prompt", "input_tokens", "output_tokens",
         "total_tokens", "latency_ms", "tool_call_count", "estimated_cost",
@@ -343,3 +416,115 @@ def test_owner_filtering_survives_scan_pagination(fake_table):
     assert alice_tools[0]["calls"] == 5
     all_tools = store_dynamodb.get_tool_metrics()
     assert all_tools[0]["calls"] == 10
+
+
+def test_start_or_get_session_is_idempotent(fake_table):
+    """OTLP payloads can arrive out of order or get retried by the
+    client — calling start_or_get_session twice for the same session_id
+    must not create a second row or reset any totals already appended."""
+    sid = store_dynamodb.start_or_get_session("otel-1", owner="u1", source="claude_code", model="claude-sonnet-4-5")
+    store_dynamodb.append_turn(sid, {"input_tokens": 100, "output_tokens": 20, "latency_ms": 500})
+    store_dynamodb.start_or_get_session("otel-1", owner="u1", source="claude_code", model="claude-sonnet-4-5")
+
+    assert len(store_dynamodb.get_recent_sessions(owner="u1")) == 1
+    metrics = store_dynamodb.get_session_metrics("otel-1", owner="u1")
+    assert metrics["prompt_metrics"]["input_tokens"] == 100
+
+
+def test_start_or_get_session_conditional_put_does_not_raise(fake_table):
+    """DynamoDB-specific: the real conditional put races two callers
+    creating the same session_id at once — DynamoDB rejects the loser's
+    write with ConditionalCheckFailedException rather than letting both
+    "create" it. start_or_get_session must swallow that exception
+    silently (not propagate it, not duplicate the row) when the session
+    already exists by the time the conditional put runs."""
+    sid = store_dynamodb.start_or_get_session("otel-race", source="claude_code")
+    # Simulate a second concurrent caller for the same session_id — this
+    # must hit the ConditionExpression failure path in put_item and be
+    # caught, not raised.
+    result = store_dynamodb.start_or_get_session("otel-race", source="claude_code")
+    assert result == sid
+    assert len([i for i in fake_table.items if i["session_id"] == sid and i["sk"] == "SESSION"]) == 1
+
+
+def test_append_turn_accumulates_session_totals(fake_table):
+    """A live Claude Code session reports turns one at a time — the
+    parent session row's totals must reflect the running sum, not just
+    the most recently appended turn."""
+    sid = store_dynamodb.start_or_get_session("otel-2", source="claude_code", model="us.anthropic.claude-sonnet-4-6")
+    store_dynamodb.append_turn(sid, {"input_tokens": 100, "output_tokens": 20, "latency_ms": 500})
+    store_dynamodb.append_turn(sid, {"input_tokens": 50, "output_tokens": 10, "latency_ms": 300})
+
+    metrics = store_dynamodb.get_session_metrics(sid)["prompt_metrics"]
+    assert metrics["input_tokens"] == 150
+    assert metrics["output_tokens"] == 30
+    assert metrics["total_tokens"] == 180
+    assert metrics["latency_ms"] == 800
+    assert metrics["estimated_cost"] > 0
+
+    breakdown = store_dynamodb.get_token_breakdown(sid)
+    assert [t["turn_n"] for t in breakdown] == [0, 1]
+
+
+def test_append_tool_call_increments_count(fake_table):
+    sid = store_dynamodb.start_or_get_session("otel-3", source="claude_code")
+    store_dynamodb.append_tool_call(sid, {"tool": "Read", "args": {"path": "x"}, "status": "success"})
+    store_dynamodb.append_tool_call(sid, {"tool": "Edit", "args": {}, "status": "success"})
+
+    assert store_dynamodb.get_session_metrics(sid)["prompt_metrics"]["tool_call_count"] == 2
+    trace = store_dynamodb.get_agent_trace(sid)
+    assert [t["tool"] for t in trace] == ["Read", "Edit"]
+
+
+def test_append_context_block_orders_by_arrival(fake_table):
+    sid = store_dynamodb.start_or_get_session("otel-4", source="claude_code")
+    store_dynamodb.append_context_block(
+        sid, {"category": "system", "label": "system prompt", "char_count": 400, "token_estimate": 100, "turn_n": 0}
+    )
+    store_dynamodb.append_context_block(
+        sid, {"category": "user", "label": "user turn", "char_count": 40, "token_estimate": 10, "turn_n": 0}
+    )
+
+    timeline = store_dynamodb.get_context_timeline(sid)
+    assert [b["category"] for b in timeline] == ["system", "user"]
+    assert timeline[-1]["cumulative_tokens"] == 110
+
+
+def test_close_session_marks_status_and_applies_final_totals(fake_table):
+    """close_session's final_totals overwrite the incrementally-summed
+    values with the client's own exact final report, when given."""
+    sid = store_dynamodb.start_or_get_session("otel-5", source="claude_code", model="us.anthropic.claude-sonnet-4-6")
+    store_dynamodb.append_turn(sid, {"input_tokens": 10, "output_tokens": 5, "latency_ms": 50})
+    assert store_dynamodb.get_session_metrics(sid)["session"]["status"] == "open"
+
+    store_dynamodb.close_session(sid, final_totals={
+        "input_tokens": 999, "output_tokens": 111, "total_tokens": 1110, "latency_ms": 5000,
+    })
+
+    metrics = store_dynamodb.get_session_metrics(sid)
+    assert metrics["session"]["status"] == "closed"
+    assert metrics["prompt_metrics"]["input_tokens"] == 999
+    assert metrics["prompt_metrics"]["total_tokens"] == 1110
+
+
+def test_close_session_without_final_totals_just_closes(fake_table):
+    sid = store_dynamodb.start_or_get_session("otel-6", source="claude_code")
+    store_dynamodb.append_turn(sid, {"input_tokens": 10, "output_tokens": 5, "latency_ms": 50})
+    store_dynamodb.close_session(sid)
+
+    metrics = store_dynamodb.get_session_metrics(sid)
+    assert metrics["session"]["status"] == "closed"
+    assert metrics["prompt_metrics"]["input_tokens"] == 10
+
+
+def test_recent_sessions_carries_source_and_status(fake_table):
+    """Dashboard session list needs a per-row source badge and pressure
+    signal — both bedrock_agent (legacy) and OTLP-sourced sessions must
+    carry these fields the same way."""
+    store_dynamodb.record_session("q", "m", _basic_loop_result())
+    store_dynamodb.start_or_get_session("otel-7", source="copilot")
+
+    recent = {s["session_id"]: s for s in store_dynamodb.get_recent_sessions()}
+    sources = {s["source"] for s in recent.values()}
+    assert sources == {"bedrock_agent", "copilot"}
+    assert all("status" in s for s in recent.values())
