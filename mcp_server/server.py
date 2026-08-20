@@ -868,12 +868,25 @@ async def auth_login(request: Request):
         <div id="local-setup-result" style="margin-top: 0.7rem; font-size: 0.85rem;"></div>
       </div>
       ` : `
-      <div class="card">
-        <h3>Set up Claude Code automatically</h3>
-        <p class="card-hint">Only available when you're self-hosting and viewing this page at
-        <code>localhost</code> — this server can only write to the local Claude Code config on
-        whatever machine it's actually running on, and that isn't this one. Use the manual steps
-        below instead.</p>
+      <div class="card accent">
+        <h3>Connect once, everywhere &mdash; via claude.ai</h3>
+        <p class="card-hint">This server can't write to your local Claude Code config from here &mdash;
+        it can only do that for itself when it's the one running on your machine (self-hosted at
+        <code>localhost</code>). But claude.ai's own <strong>Connectors</strong> feature gets you the
+        same "connected in every Claude Code session automatically" result, for any client, with
+        zero local files touched:</p>
+        <ol class="card-hint" style="padding-left: 1.2rem; margin: 0.7rem 0;">
+          <li>Copy the MCP server URL and token above.</li>
+          <li>Go to <strong>claude.ai &rarr; Customize &rarr; Connectors &rarr; Add custom connector.</strong></li>
+          <li>Paste the URL. Under Advanced settings, add your token as an
+          <code>Authorization: Bearer &lt;token&gt;</code> header (exact field names may vary &mdash; look
+          for a header/token option, not just OAuth client ID/secret).</li>
+        </ol>
+        <p class="card-hint">This covers the MCP query tools (ask "what did session X cost") in
+        every session, everywhere. It does <strong>not</strong> cover automatic telemetry &mdash;
+        Connectors can't carry environment variables, so the dashboard auto-populating as you code
+        still needs the "Claude Code (live telemetry)" tab below, pasted manually once per machine.</p>
+        <a class="copy" href="https://claude.ai/settings/connectors" target="_blank" rel="noopener" style="display:inline-block; text-decoration:none;">Open claude.ai Connectors</a>
       </div>
       `) + `
 
