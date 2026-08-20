@@ -15,6 +15,7 @@ from pathlib import Path
 
 from mci_common.pricing import estimate_cost
 from mci_common.timeline import build_timeline
+from metrics.errors import SessionOwnershipError
 
 # Overridable so a deployed container can point writes at an ephemeral
 # path (e.g. /tmp, on a read-only or baked-in image layer) instead of
@@ -34,7 +35,9 @@ _SCHEMA = """
         tool_call_count INTEGER,
         estimated_cost REAL,
         timestamp REAL,
-        owner TEXT
+        owner TEXT,
+        source TEXT DEFAULT 'bedrock_agent',
+        status TEXT DEFAULT 'closed'
     );
     CREATE TABLE IF NOT EXISTS turns (
         session_id TEXT,
@@ -50,7 +53,9 @@ _SCHEMA = """
         seq INTEGER,
         tool_name TEXT,
         args TEXT,
-        status TEXT
+        status TEXT,
+        latency_ms INTEGER DEFAULT 0,
+        timestamp REAL DEFAULT 0
     );
     CREATE TABLE IF NOT EXISTS context_blocks (
         session_id TEXT,
@@ -88,10 +93,34 @@ def _migrate_sessions_table(conn):
     rows get owner=NULL, meaning "recorded before ownership existed" —
     treated the same as the server owner's own sessions (visible with
     the admin/owner token, invisible to any per-user token's filtered
-    view)."""
+    view). source/status predate OTLP ingestion the same way — ALTER
+    TABLE ... DEFAULT backfills every pre-existing row as
+    source='bedrock_agent', status='closed' (record_session's atomic
+    one-shot write was always effectively both), so existing data reads
+    correctly without a separate backfill pass."""
     existing = {row["name"] for row in conn.execute("PRAGMA table_info(sessions)")}
     if "owner" not in existing:
         conn.execute("ALTER TABLE sessions ADD COLUMN owner TEXT")
+    if "source" not in existing:
+        conn.execute("ALTER TABLE sessions ADD COLUMN source TEXT DEFAULT 'bedrock_agent'")
+    if "status" not in existing:
+        conn.execute("ALTER TABLE sessions ADD COLUMN status TEXT DEFAULT 'closed'")
+
+
+_TOOL_CALLS_MIGRATION_COLUMNS = ("latency_ms", "timestamp")
+
+
+def _migrate_tool_calls_table(conn):
+    """Same reasoning as _migrate_turns_table — the Tool calls tab
+    (docs/OTLP_INTEGRATION_PLAN.md's dashboard spec) needs a per-call
+    latency and timestamp that a pre-existing tool_calls table doesn't
+    have. Both default to 0 for rows written before this column
+    existed — "unknown," not a real zero latency."""
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(tool_calls)")}
+    for column in _TOOL_CALLS_MIGRATION_COLUMNS:
+        if column not in existing:
+            type_ = "REAL" if column == "timestamp" else "INTEGER"
+            conn.execute(f"ALTER TABLE tool_calls ADD COLUMN {column} {type_} DEFAULT 0")
 
 
 def _connect():
@@ -105,6 +134,7 @@ def _connect():
     conn.executescript(_SCHEMA)
     _migrate_turns_table(conn)
     _migrate_sessions_table(conn)
+    _migrate_tool_calls_table(conn)
     conn.commit()
     return conn
 
@@ -124,14 +154,17 @@ def record_session(prompt, model_id, loop_result, owner=None):
     """loop_result is runtime.run_agent_loop()'s return dict. owner is
     the Google account `sub` that recorded this session, or None for
     the server owner's own (e.g. the local agent calling this directly,
-    not through an authenticated MCP connection) — see _visible()."""
+    not through an authenticated MCP connection) — see _visible(). This
+    stays the one-shot atomic path (source='bedrock_agent', status
+    'closed' immediately) — OTLP ingestion uses start_or_get_session +
+    append_* below instead, since that data arrives incrementally."""
     session_id = str(uuid.uuid4())
     cost = estimate_cost(model_id, loop_result["input_tokens"], loop_result["output_tokens"])
     ts = time.time()
 
     conn = _connect()
     conn.execute(
-        "INSERT INTO sessions VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO sessions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             session_id,
             prompt,
@@ -144,6 +177,8 @@ def record_session(prompt, model_id, loop_result, owner=None):
             cost,
             ts,
             owner,
+            "bedrock_agent",
+            "closed",
         ),
     )
     for i, turn in enumerate(loop_result["turns"]):
@@ -161,8 +196,16 @@ def record_session(prompt, model_id, loop_result, owner=None):
         )
     for i, call in enumerate(loop_result["trace"]):
         conn.execute(
-            "INSERT INTO tool_calls VALUES (?,?,?,?,?)",
-            (session_id, i, call["tool"], json.dumps(call["args"]), call["status"]),
+            "INSERT INTO tool_calls VALUES (?,?,?,?,?,?,?)",
+            (
+                session_id,
+                i,
+                call["tool"],
+                json.dumps(call["args"]),
+                call["status"],
+                call.get("latency_ms", 0),
+                call.get("timestamp", ts),
+            ),
         )
     for seq, block in enumerate(loop_result.get("context_blocks", [])):
         conn.execute(
@@ -204,6 +247,8 @@ def get_session_metrics(session_id, owner=None):
             "session_id": row["session_id"],
             "model": row["model"],
             "timestamp": row["timestamp"],
+            "source": row["source"] or "bedrock_agent",
+            "status": row["status"] or "closed",
         },
         "prompt_metrics": {
             "prompt": row["prompt"],
@@ -265,12 +310,19 @@ def get_agent_trace(session_id, owner=None):
         conn.close()
         return []
     rows = conn.execute(
-        "SELECT tool_name, args, status FROM tool_calls WHERE session_id=? ORDER BY seq",
+        "SELECT tool_name, args, status, latency_ms, timestamp FROM tool_calls "
+        "WHERE session_id=? ORDER BY seq",
         (session_id,),
     ).fetchall()
     conn.close()
     return [
-        {"tool": r["tool_name"], "args": json.loads(r["args"]), "status": r["status"]}
+        {
+            "tool": r["tool_name"],
+            "args": json.loads(r["args"]),
+            "status": r["status"],
+            "latency_ms": r["latency_ms"] or 0,
+            "timestamp": r["timestamp"] or 0,
+        }
         for r in rows
     ]
 
@@ -323,15 +375,196 @@ def get_recent_sessions(limit=10, owner=None):
     conn = _connect()
     if owner is not None:
         rows = conn.execute(
-            "SELECT session_id, prompt, model, total_tokens, estimated_cost, timestamp "
-            "FROM sessions WHERE owner=? ORDER BY timestamp DESC LIMIT ?",
+            "SELECT session_id, prompt, model, total_tokens, estimated_cost, timestamp, "
+            "source, status FROM sessions WHERE owner=? ORDER BY timestamp DESC LIMIT ?",
             (owner, limit),
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT session_id, prompt, model, total_tokens, estimated_cost, timestamp "
-            "FROM sessions ORDER BY timestamp DESC LIMIT ?",
+            "SELECT session_id, prompt, model, total_tokens, estimated_cost, timestamp, "
+            "source, status FROM sessions ORDER BY timestamp DESC LIMIT ?",
             (limit,),
         ).fetchall()
     conn.close()
-    return [dict(r) for r in rows]
+    return [{**dict(r), "source": r["source"] or "bedrock_agent", "status": r["status"] or "closed"} for r in rows]
+
+
+def start_or_get_session(session_id, owner=None, source="claude_code", model=None):
+    """Entry point for OTLP ingestion — unlike record_session (one atomic
+    insert once a Bedrock agent's loop finishes), a live Claude Code/
+    Copilot session reports turns/tool-calls/context-blocks one at a
+    time as they happen. Idempotent on session_id: a client that
+    reconnects or retries a batch calls this again with the same ID and
+    gets the existing session back rather than a duplicate row. Caller-
+    supplied session_id (Claude Code's/Copilot's own ID), not a
+    server-generated uuid4 like record_session's — since it's
+    externally chosen, a caller must not be able to "adopt" another
+    owner's existing session_id just by reusing it; raises
+    SessionOwnershipError if this session_id already belongs to someone
+    else (see _visible()'s admin/owner=None semantics)."""
+    conn = _connect()
+    row = conn.execute("SELECT session_id, owner FROM sessions WHERE session_id=?", (session_id,)).fetchone()
+    if row:
+        if not _visible(row["owner"], owner):
+            conn.close()
+            raise SessionOwnershipError(f"session_id {session_id!r} belongs to a different owner")
+    else:
+        conn.execute(
+            "INSERT INTO sessions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (session_id, None, model, 0, 0, 0, 0, 0, 0.0, time.time(), owner, source, "open"),
+        )
+        conn.commit()
+    conn.close()
+    return session_id
+
+
+def _check_ownership_or_raise(conn, session_id, owner):
+    """Every append_*/close_session call must not be able to write into
+    a session_id owned by someone else — same reasoning as
+    start_or_get_session's docstring. A session_id with no matching row
+    yet (append called before start_or_get_session, shouldn't normally
+    happen) is treated as belonging to no one, i.e. deny-by-default for
+    any non-admin caller."""
+    if not _visible(_session_owner(conn, session_id), owner):
+        conn.close()
+        raise SessionOwnershipError(f"session_id {session_id!r} belongs to a different owner")
+
+
+def _next_seq(conn, table, session_id, seq_column="seq"):
+    row = conn.execute(
+        f"SELECT COALESCE(MAX({seq_column}), -1) + 1 as n FROM {table} WHERE session_id=?",
+        (session_id,),
+    ).fetchone()
+    return row["n"]
+
+
+def _recost_session(conn, session_id):
+    """Re-derive estimated_cost from the session's own model + running
+    token totals — called after every append_turn, since OTLP sessions
+    never get a single final loop_result to price in one shot the way
+    record_session does."""
+    row = conn.execute(
+        "SELECT model, input_tokens, output_tokens FROM sessions WHERE session_id=?", (session_id,)
+    ).fetchone()
+    cost = estimate_cost(row["model"], row["input_tokens"], row["output_tokens"])
+    conn.execute("UPDATE sessions SET estimated_cost=? WHERE session_id=?", (cost, session_id))
+
+
+def append_turn(session_id, turn_data, owner=None):
+    """turn_data: {input_tokens, output_tokens, latency_ms,
+    cache_read_input_tokens=0, cache_write_input_tokens=0}. Adds a turns
+    row and folds its totals into the parent session row so
+    get_session_metrics/get_recent_sessions stay accurate without a
+    separate aggregation pass. owner must match the session's own owner
+    (see _check_ownership_or_raise) — a per-user caller can't write into
+    a session_id it doesn't own."""
+    conn = _connect()
+    _check_ownership_or_raise(conn, session_id, owner)
+    turn_n = _next_seq(conn, "turns", session_id, seq_column="turn_n")
+    conn.execute(
+        "INSERT INTO turns VALUES (?,?,?,?,?,?,?)",
+        (
+            session_id,
+            turn_n,
+            turn_data["input_tokens"],
+            turn_data["output_tokens"],
+            turn_data["latency_ms"],
+            turn_data.get("cache_read_input_tokens", 0),
+            turn_data.get("cache_write_input_tokens", 0),
+        ),
+    )
+    conn.execute(
+        "UPDATE sessions SET input_tokens=input_tokens+?, output_tokens=output_tokens+?, "
+        "total_tokens=total_tokens+?, latency_ms=latency_ms+? WHERE session_id=?",
+        (
+            turn_data["input_tokens"],
+            turn_data["output_tokens"],
+            turn_data["input_tokens"] + turn_data["output_tokens"],
+            turn_data["latency_ms"],
+            session_id,
+        ),
+    )
+    _recost_session(conn, session_id)
+    conn.commit()
+    conn.close()
+
+
+def append_tool_call(session_id, tool_call, owner=None):
+    """tool_call: {tool, args, status, latency_ms=0, timestamp=None
+    (defaults to now)}. owner must match the session's own owner (see
+    _check_ownership_or_raise)."""
+    conn = _connect()
+    _check_ownership_or_raise(conn, session_id, owner)
+    seq = _next_seq(conn, "tool_calls", session_id)
+    conn.execute(
+        "INSERT INTO tool_calls VALUES (?,?,?,?,?,?,?)",
+        (
+            session_id,
+            seq,
+            tool_call["tool"],
+            json.dumps(tool_call["args"]),
+            tool_call["status"],
+            tool_call.get("latency_ms", 0),
+            tool_call.get("timestamp") or time.time(),
+        ),
+    )
+    conn.execute(
+        "UPDATE sessions SET tool_call_count=tool_call_count+1 WHERE session_id=?", (session_id,)
+    )
+    conn.commit()
+    conn.close()
+
+
+def append_context_block(session_id, block, owner=None):
+    """block: {category, label, char_count, token_estimate, turn_n,
+    status=None} — same shape record_session's context_blocks rows use.
+    owner must match the session's own owner (see
+    _check_ownership_or_raise)."""
+    conn = _connect()
+    _check_ownership_or_raise(conn, session_id, owner)
+    seq = _next_seq(conn, "context_blocks", session_id)
+    conn.execute(
+        "INSERT INTO context_blocks VALUES (?,?,?,?,?,?,?,?)",
+        (
+            session_id,
+            seq,
+            block["category"],
+            block["label"],
+            block["char_count"],
+            block["token_estimate"],
+            block["turn_n"],
+            block.get("status"),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def close_session(session_id, final_totals=None, owner=None):
+    """Marks a session complete once the client process exits or goes
+    idle past some timeout. final_totals, if given, overwrites the
+    incrementally-accumulated totals with exact values (e.g. from the
+    client's own final usage report) — {input_tokens, output_tokens,
+    total_tokens, latency_ms}. Optional: the dashboard already tolerates
+    an 'open' session showing partial data, so a session that never
+    gets explicitly closed (e.g. the client crashed) just stays 'open'
+    forever rather than blocking anything. owner must match the
+    session's own owner (see _check_ownership_or_raise)."""
+    conn = _connect()
+    _check_ownership_or_raise(conn, session_id, owner)
+    if final_totals:
+        conn.execute(
+            "UPDATE sessions SET input_tokens=?, output_tokens=?, total_tokens=?, latency_ms=? "
+            "WHERE session_id=?",
+            (
+                final_totals["input_tokens"],
+                final_totals["output_tokens"],
+                final_totals["total_tokens"],
+                final_totals["latency_ms"],
+                session_id,
+            ),
+        )
+        _recost_session(conn, session_id)
+    conn.execute("UPDATE sessions SET status='closed' WHERE session_id=?", (session_id,))
+    conn.commit()
+    conn.close()

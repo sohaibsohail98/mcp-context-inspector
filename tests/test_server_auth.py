@@ -299,3 +299,57 @@ def test_every_protected_route_rejects_garbage_token(client, method, path):
 def test_every_protected_route_rejects_missing_token(client, method, path):
     resp = client.request(method, path, json={} if method == "POST" else None)
     assert resp.status_code == 401
+
+
+def test_otlp_logs_route_rejects_missing_token(client):
+    """/otlp/* must be gated exactly like /api/* — it returns the same
+    session/token data, just via a different ingestion path."""
+    resp = client.post("/otlp/v1/logs", json={"resourceLogs": []})
+    assert resp.status_code == 401
+
+
+def test_otlp_logs_route_accepts_owner_token(client):
+    resp = client.post(
+        "/otlp/v1/logs",
+        json={"resourceLogs": []},
+        headers={"Authorization": "Bearer owner-secret"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"accepted": {"claude_code": 0, "copilot": 0, "skipped": 0}}
+
+
+def test_otlp_metrics_route_accepts_valid_per_user_token(client, isolated_auth_store):
+    token = isolated_auth_store.get_or_create_token("sub123", "a@example.com")
+    resp = client.post(
+        "/otlp/v1/metrics",
+        json={"resourceMetrics": []},
+        headers={"Authorization": "Bearer " + token},
+    )
+    assert resp.status_code == 200
+
+
+def test_otlp_traces_route_rejects_wrong_token(client):
+    resp = client.post(
+        "/otlp/v1/traces",
+        json={"resourceSpans": []},
+        headers={"Authorization": "Bearer wrong-token"},
+    )
+    assert resp.status_code == 401
+
+
+def test_otlp_route_rejects_malformed_json_body(client):
+    resp = client.post(
+        "/otlp/v1/logs",
+        content=b"not json",
+        headers={"Authorization": "Bearer owner-secret", "Content-Type": "application/json"},
+    )
+    assert resp.status_code == 400
+
+
+def test_otlp_route_rejects_non_object_body(client):
+    resp = client.post(
+        "/otlp/v1/logs",
+        json=["not", "an", "object"],
+        headers={"Authorization": "Bearer owner-secret"},
+    )
+    assert resp.status_code == 400

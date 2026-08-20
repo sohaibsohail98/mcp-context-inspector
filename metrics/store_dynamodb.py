@@ -23,6 +23,7 @@ from mci_common.config import DEFAULT_REGION
 from mci_common.dynamo import clean_decimal as _clean
 from mci_common.pricing import estimate_cost
 from mci_common.timeline import build_timeline
+from metrics.errors import SessionOwnershipError
 
 TABLE_NAME = os.environ.get("METRICS_TABLE", "sre-agent-metrics")
 REGION = os.environ.get("AWS_REGION", DEFAULT_REGION)
@@ -45,7 +46,10 @@ def _session_owner(session_id):
 
 def record_session(prompt, model_id, loop_result, owner=None):
     """owner is the Google account `sub` that recorded this session, or
-    None for the server owner's own — see _visible()."""
+    None for the server owner's own — see _visible(). This stays the
+    one-shot atomic path (source='bedrock_agent', status 'closed'
+    immediately) — OTLP ingestion uses start_or_get_session + append_*
+    below instead, since that data arrives incrementally."""
     session_id = str(uuid.uuid4())
     cost = estimate_cost(model_id, loop_result["input_tokens"], loop_result["output_tokens"])
     ts = time.time()
@@ -63,6 +67,8 @@ def record_session(prompt, model_id, loop_result, owner=None):
             "tool_call_count": len(loop_result["trace"]),
             "estimated_cost": Decimal(str(cost)),
             "timestamp": Decimal(str(ts)),
+            "source": "bedrock_agent",
+            "status": "closed",
         }
         if owner is not None:
             session_item["owner"] = owner
@@ -88,6 +94,8 @@ def record_session(prompt, model_id, loop_result, owner=None):
                     "tool_name": call["tool"],
                     "args": json.dumps(call["args"]),
                     "status": call["status"],
+                    "latency_ms": call.get("latency_ms", 0),
+                    "timestamp": Decimal(str(call.get("timestamp", ts))),
                 }
             )
         for i, block in enumerate(loop_result.get("context_blocks", [])):
@@ -136,6 +144,8 @@ def get_session_metrics(session_id, owner=None):
             "session_id": item["session_id"],
             "model": item["model"],
             "timestamp": item["timestamp"],
+            "source": item.get("source", "bedrock_agent"),
+            "status": item.get("status", "closed"),
         },
         "prompt_metrics": {
             "prompt": item["prompt"],
@@ -177,9 +187,15 @@ def get_agent_trace(session_id, owner=None):
         KeyConditionExpression="session_id = :sid AND begins_with(sk, :prefix)",
         ExpressionAttributeValues={":sid": session_id, ":prefix": "TOOLCALL#"},
     )
-    items = sorted(resp.get("Items", []), key=lambda i: i["sk"])
+    items = sorted(_clean(resp.get("Items", [])), key=lambda i: i["sk"])
     return [
-        {"tool": i["tool_name"], "args": json.loads(i["args"]), "status": i["status"]}
+        {
+            "tool": i["tool_name"],
+            "args": json.loads(i["args"]),
+            "status": i["status"],
+            "latency_ms": i.get("latency_ms", 0),
+            "timestamp": i.get("timestamp", 0),
+        }
         for i in items
     ]
 
@@ -290,6 +306,180 @@ def get_recent_sessions(limit=10, owner=None):
             "total_tokens": i["total_tokens"],
             "estimated_cost": i["estimated_cost"],
             "timestamp": i["timestamp"],
+            "source": i.get("source", "bedrock_agent"),
+            "status": i.get("status", "closed"),
         }
         for i in items[:limit]
     ]
+
+
+def start_or_get_session(session_id, owner=None, source="claude_code", model=None):
+    """Entry point for OTLP ingestion — see store_sqlite.py's docstring
+    for the full reasoning; same contract here. Conditional put (not a
+    plain get-then-put) closes the race where two OTLP batches for a
+    brand-new session_id arrive close together — DynamoDB rejects the
+    second write instead of both racing to "create" the same session."""
+    existing = _table.get_item(Key={"session_id": session_id, "sk": "SESSION"}).get("Item")
+    if existing:
+        if not _visible(existing.get("owner"), owner):
+            raise SessionOwnershipError(f"session_id {session_id!r} belongs to a different owner")
+        return session_id
+    item = {
+        "session_id": session_id,
+        "sk": "SESSION",
+        "prompt": None,
+        "model": model,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "latency_ms": 0,
+        "tool_call_count": 0,
+        "estimated_cost": Decimal("0"),
+        "timestamp": Decimal(str(time.time())),
+        "source": source,
+        "status": "open",
+    }
+    if owner is not None:
+        item["owner"] = owner
+    try:
+        _table.put_item(Item=item, ConditionExpression="attribute_not_exists(session_id)")
+    except _table.meta.client.exceptions.ConditionalCheckFailedException:
+        pass
+    return session_id
+
+
+def _next_index(session_id, sk_prefix):
+    resp = _table.query(
+        KeyConditionExpression="session_id = :sid AND begins_with(sk, :prefix)",
+        ExpressionAttributeValues={":sid": session_id, ":prefix": sk_prefix},
+        Select="COUNT",
+    )
+    return resp["Count"]
+
+
+def _check_ownership_or_raise(session_id, owner):
+    """Same reasoning as store_sqlite.py's version — every append_*/
+    close_session call must not be able to write into a session_id
+    owned by someone else. A missing session (append called before
+    start_or_get_session) is treated as belonging to no one, i.e.
+    deny-by-default for any non-admin caller."""
+    if not _visible(_session_owner(session_id), owner):
+        raise SessionOwnershipError(f"session_id {session_id!r} belongs to a different owner")
+
+
+def _recost_session(session_id):
+    """Re-derive estimated_cost from the session's own model + running
+    token totals — same reasoning as store_sqlite.py's version."""
+    item = _table.get_item(Key={"session_id": session_id, "sk": "SESSION"}).get("Item")
+    if not item:
+        return
+    item = _clean(item)
+    cost = estimate_cost(item["model"], item["input_tokens"], item["output_tokens"])
+    _table.update_item(
+        Key={"session_id": session_id, "sk": "SESSION"},
+        UpdateExpression="SET estimated_cost = :c",
+        ExpressionAttributeValues={":c": Decimal(str(cost))},
+    )
+
+
+def append_turn(session_id, turn_data, owner=None):
+    """turn_data: {input_tokens, output_tokens, latency_ms,
+    cache_read_input_tokens=0, cache_write_input_tokens=0}. Same
+    contract as store_sqlite.py's version, including the owner check."""
+    _check_ownership_or_raise(session_id, owner)
+    turn_n = _next_index(session_id, "TURN#")
+    _table.put_item(
+        Item={
+            "session_id": session_id,
+            "sk": f"TURN#{turn_n:04d}",
+            "turn_n": turn_n,
+            "input_tokens": turn_data["input_tokens"],
+            "output_tokens": turn_data["output_tokens"],
+            "latency_ms": turn_data["latency_ms"],
+            "cache_read_input_tokens": turn_data.get("cache_read_input_tokens", 0),
+            "cache_write_input_tokens": turn_data.get("cache_write_input_tokens", 0),
+        }
+    )
+    _table.update_item(
+        Key={"session_id": session_id, "sk": "SESSION"},
+        UpdateExpression=(
+            "SET input_tokens = input_tokens + :i, output_tokens = output_tokens + :o, "
+            "total_tokens = total_tokens + :t, latency_ms = latency_ms + :l"
+        ),
+        ExpressionAttributeValues={
+            ":i": turn_data["input_tokens"],
+            ":o": turn_data["output_tokens"],
+            ":t": turn_data["input_tokens"] + turn_data["output_tokens"],
+            ":l": turn_data["latency_ms"],
+        },
+    )
+    _recost_session(session_id)
+
+
+def append_tool_call(session_id, tool_call, owner=None):
+    """tool_call: {tool, args, status, latency_ms=0, timestamp=None
+    (defaults to now)}. owner must match the session's own owner."""
+    _check_ownership_or_raise(session_id, owner)
+    seq = _next_index(session_id, "TOOLCALL#")
+    _table.put_item(
+        Item={
+            "session_id": session_id,
+            "sk": f"TOOLCALL#{seq:04d}",
+            "tool_name": tool_call["tool"],
+            "args": json.dumps(tool_call["args"]),
+            "status": tool_call["status"],
+            "latency_ms": tool_call.get("latency_ms", 0),
+            "timestamp": Decimal(str(tool_call.get("timestamp") or time.time())),
+        }
+    )
+    _table.update_item(
+        Key={"session_id": session_id, "sk": "SESSION"},
+        UpdateExpression="SET tool_call_count = tool_call_count + :one",
+        ExpressionAttributeValues={":one": 1},
+    )
+
+
+def append_context_block(session_id, block, owner=None):
+    """block: {category, label, char_count, token_estimate, turn_n,
+    status=None} — same shape record_session's context_blocks rows use.
+    owner must match the session's own owner."""
+    _check_ownership_or_raise(session_id, owner)
+    seq = _next_index(session_id, "CTXBLOCK#")
+    item = {
+        "session_id": session_id,
+        "sk": f"CTXBLOCK#{seq:04d}",
+        "category": block["category"],
+        "label": block["label"],
+        "char_count": block["char_count"],
+        "token_estimate": block["token_estimate"],
+        "turn_n": block["turn_n"],
+    }
+    if block.get("status") is not None:
+        item["status"] = block["status"]
+    _table.put_item(Item=item)
+
+
+def close_session(session_id, final_totals=None, owner=None):
+    """Same contract as store_sqlite.py's version — see that docstring,
+    including the owner check."""
+    _check_ownership_or_raise(session_id, owner)
+    if final_totals:
+        _table.update_item(
+            Key={"session_id": session_id, "sk": "SESSION"},
+            UpdateExpression=(
+                "SET input_tokens = :i, output_tokens = :o, total_tokens = :t, latency_ms = :l"
+            ),
+            ExpressionAttributeValues={
+                ":i": final_totals["input_tokens"],
+                ":o": final_totals["output_tokens"],
+                ":t": final_totals["total_tokens"],
+                ":l": final_totals["latency_ms"],
+            },
+        )
+        _recost_session(session_id)
+    _table.update_item(
+        Key={"session_id": session_id, "sk": "SESSION"},
+        UpdateExpression="SET #s = :closed",
+        ExpressionAttributeNames={"#s": "status"},
+        ExpressionAttributeValues={":closed": "closed"},
+    )
