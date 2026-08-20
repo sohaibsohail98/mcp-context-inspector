@@ -48,6 +48,33 @@ server = MCPServer(name="sre-agent-metrics")
 current_owner = contextvars.ContextVar("current_owner", default=None)
 
 
+def _public_origin(request):
+    """The real, public-facing origin this server is reachable at — NOT
+    `request.base_url`, which reflects whatever THIS process actually
+    sees. Behind the Cloudflare Worker reverse proxy (see
+    cloudflare-proxy/worker.js), that's Cloud Run's own internal
+    http://<hash>.run.app origin: Cloud Run terminates TLS before the
+    container ever sees the request (so the scheme this process observes
+    is always "http", even for a real https:// caller), and the worker
+    deletes the inbound Host header and lets fetch() re-derive it from
+    env.ORIGIN, so the Host this process sees is Cloud Run's own raw
+    hostname, never the public workers.dev one a client actually talked
+    to. Same class of problem MCP_ALLOWED_HOSTS/CHAT_UI_ORIGIN already
+    solve for Host-header validation and CORS; this is the equivalent
+    fix for URLs this server generates ABOUT itself — OAuth issuer/
+    resource metadata, the downloadable local-setup script. Getting this
+    wrong doesn't 401 or crash anything, which is exactly why it went
+    unnoticed until an OAuth client tried to follow one of these URLs
+    and silently failed: a wrong-but-well-formed URL doesn't error until
+    something else tries to fetch it.
+
+    Falls back to request.base_url when PUBLIC_ORIGIN isn't set, which
+    is already correct for local dev (no proxy in between) and for the
+    loopback-only /setup/apply-local-config route."""
+    configured = os.environ.get("PUBLIC_ORIGIN", "").strip().rstrip("/")
+    return configured or str(request.base_url).rstrip("/")
+
+
 class MultiTokenAuthMiddleware(BaseHTTPMiddleware):
     """Gates /mcp and /api/ behind a bearer token that's either the
     owner's single shared token (`owner_token`, printed to stdout on
@@ -84,7 +111,7 @@ class MultiTokenAuthMiddleware(BaseHTTPMiddleware):
                 # relying on the global CORSMiddleware — since a browser-
                 # side client's discovery fetch needs the header readable
                 # cross-origin even though this response is a plain 401.
-                metadata_url = str(request.base_url).rstrip("/") + "/.well-known/oauth-protected-resource/mcp"
+                metadata_url = _public_origin(request) + "/.well-known/oauth-protected-resource/mcp"
                 return JSONResponse(
                     {"error": "unauthorized — missing or wrong bearer token"},
                     status_code=401,
@@ -93,6 +120,43 @@ class MultiTokenAuthMiddleware(BaseHTTPMiddleware):
                         "Access-Control-Allow-Origin": "*",
                     },
                 )
+        return await call_next(request)
+
+
+class OAuthCORSMiddleware(BaseHTTPMiddleware):
+    """Short-circuits CORS preflight (OPTIONS) requests to the OAuth
+    discovery/registration/token routes before the app-wide CORSMiddleware
+    ever sees them.
+
+    CORSMiddleware enforces its allow_origins allowlist against EVERY
+    OPTIONS request regardless of path — there's no per-route exclusion.
+    That allowlist is CHAT_UI_ORIGIN (this deployment's own known chat-UI
+    origins), which deliberately does NOT include arbitrary MCP clients
+    like claude.ai, Cursor, or a Copilot backend — those routes need to
+    be reachable from literally any origin, since discovery/registration
+    is the entire point of them being public. Left to the app-wide
+    middleware, a preflight from an unrecognized origin gets hard-
+    rejected with a generic 400 before ever reaching the OAuth route's
+    own permissive CORS handling (see _oauth_cors_json in the /oauth/*
+    routes below) — which is exactly what broke registration for a real
+    client in production before this middleware existed.
+
+    Only handles the preflight (OPTIONS) case; the routes themselves
+    already set Access-Control-Allow-Origin: * on their actual GET/POST
+    responses, so this doesn't need to touch those."""
+
+    OAUTH_PREFIXES = ("/oauth/", "/.well-known/oauth-")
+
+    async def dispatch(self, request, call_next):
+        if request.method == "OPTIONS" and any(request.url.path.startswith(p) for p in self.OAUTH_PREFIXES):
+            return JSONResponse(
+                {},
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Headers": "Authorization, Content-Type",
+                    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                },
+            )
         return await call_next(request)
 
 
@@ -896,7 +960,7 @@ async def auth_login(request: Request):
         <button class="copy" onclick="downloadLocalScript()" id="local-script-btn">Download setup script</button>
         <div id="local-script-result" style="margin-top: 0.7rem; font-size: 0.85rem;"></div>
         <p class="card-hint" style="margin-top: 0.6rem;">
-          Prefer not to run a script? <a href="https://claude.ai/settings/connectors" target="_blank" rel="noopener" onclick="document.querySelector('details').open=true;">Connect via claude.ai Connectors instead &rarr;</a>
+          Prefer not to run a script? <a href="https://claude.ai/new#settings/customize-connectors" target="_blank" rel="noopener" onclick="document.querySelector('details').open=true;">Connect via claude.ai Connectors instead &rarr;</a>
           — opens claude.ai's Connectors settings in a new tab. Paste just the MCP server URL from
           "Your connection" above (no token needed — you'll sign in with Google right there) under
           <strong>Add custom connector</strong>. Full steps in the "Advanced" section below, now expanded.
@@ -923,7 +987,7 @@ async def auth_login(request: Request):
             those aren't used here. claude.ai will open a Google sign-in page for this server automatically;
             once you sign in, the connector is live. No token to copy or paste anywhere.</li>
           </ol>
-          <a class="copy" href="https://claude.ai/settings/connectors" target="_blank" rel="noopener" style="display:inline-block; text-decoration:none;">Open claude.ai Connectors</a>
+          <a class="copy" href="https://claude.ai/new#settings/customize-connectors" target="_blank" rel="noopener" style="display:inline-block; text-decoration:none;">Open claude.ai Connectors</a>
         </div>
         `) + `
         <div class="tab-row" style="margin-top: 0.9rem;">
@@ -1919,8 +1983,10 @@ def _oauth_cors_json(payload, status_code=200):
 def _mcp_resource_url(request):
     """The canonical resource URI (RFC 8707) this server's tokens are
     scoped to — always the /mcp endpoint itself, never a trailing slash
-    (see the MCP spec's canonical-URI guidance)."""
-    return str(request.base_url).rstrip("/") + "/mcp"
+    (see the MCP spec's canonical-URI guidance). Built from
+    _public_origin, not request.base_url directly — see that function's
+    docstring for why."""
+    return _public_origin(request) + "/mcp"
 
 
 def _validate_oauth_request(client_id, redirect_uri, code_challenge, code_challenge_method, resource, request):
@@ -1954,7 +2020,7 @@ async def oauth_protected_resource_metadata(request: Request):
     that RFC 9728 §3.1 actually specifies for a resource at /mcp."""
     if request.method == "OPTIONS":
         return _oauth_cors_json({})
-    origin = str(request.base_url).rstrip("/")
+    origin = _public_origin(request)
     return _oauth_cors_json({
         "resource": _mcp_resource_url(request),
         "authorization_servers": [origin],
@@ -1968,7 +2034,7 @@ async def oauth_authorization_server_metadata(request: Request):
     server acting as its own authorization server."""
     if request.method == "OPTIONS":
         return _oauth_cors_json({})
-    origin = str(request.base_url).rstrip("/")
+    origin = _public_origin(request)
     return _oauth_cors_json({
         "issuer": origin,
         "authorization_endpoint": origin + "/oauth/authorize",
@@ -2266,7 +2332,10 @@ async def local_script(request: Request):
     if not bearer_token:
         return JSONResponse({"error": "missing bearer token"}, status_code=401)
 
-    base = str(request.base_url)
+    # Unlike apply_local_config above, this route is reachable from a
+    # deployed instance — request.base_url would be wrong there (see
+    # _public_origin's docstring), so this one can't just use it directly.
+    base = _public_origin(request)
     script = local_setup.render_local_script(base, bearer_token)
     return PlainTextResponse(
         script,
@@ -2374,6 +2443,11 @@ if __name__ == "__main__":
         allow_headers=["Content-Type", "Mcp-Session-Id", "Accept", "Authorization"],
         expose_headers=["Mcp-Session-Id"],
     )
+    # Added last so it ends up the OUTERMOST middleware (runs before
+    # CORSMiddleware) — see OAuthCORSMiddleware's docstring for why an
+    # OAuth client's preflight needs to bypass the app-wide CORS
+    # allowlist entirely rather than going through it.
+    http_app.add_middleware(OAuthCORSMiddleware)
     # HOST defaults to loopback-only for local dev; Cloud Run sets PORT
     # itself and requires binding 0.0.0.0, so HOST=0.0.0.0 is set in the
     # container's env there. Port overridable so tests can boot a
