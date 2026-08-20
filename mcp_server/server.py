@@ -871,13 +871,16 @@ async def auth_login(request: Request):
         <p class="card-hint">Gets you connected everywhere — MCP query tools <strong>and</strong>
         automatic telemetry — with one script you run once, locally. This server is deployed, so
         it can't write to your machine directly; the script does the exact same
-        <code>~/.claude/settings.json</code> merge <a href="#" onclick="showConnectTab('claude'); document.querySelector('details').open=true; return false;" style="color:inherit; text-decoration:underline;">the manual snippets below</a>
+        <code>~/.claude/settings.json</code> merge <a href="#advanced-setup" onclick="showConnectTab('claude'); const d = document.querySelector('details'); d.open = true; d.scrollIntoView({{behavior:'smooth'}}); return false;" style="color:inherit; text-decoration:underline;">the manual snippets below</a>
         would have you paste in by hand, but running locally, on your own machine, under your
         own inspection. Your existing settings are backed up first and merged, never overwritten.</p>
         <button class="copy" onclick="downloadLocalScript()" id="local-script-btn">Download setup script</button>
         <div id="local-script-result" style="margin-top: 0.7rem; font-size: 0.85rem;"></div>
         <p class="card-hint" style="margin-top: 0.6rem;">
-          Prefer not to run a script? <a href="#" onclick="document.querySelector('details').open=true; document.getElementById('connectors-info').scrollIntoView({{behavior:'smooth'}}); return false;">Connect via claude.ai Connectors instead &rarr;</a>
+          Prefer not to run a script? <a href="https://claude.ai/settings/connectors" target="_blank" rel="noopener" onclick="document.querySelector('details').open=true;">Connect via claude.ai Connectors instead &rarr;</a>
+          — opens claude.ai's Connectors settings in a new tab, where you can add this server's URL and token
+          (both in the "Your connection" card above) under <strong>Add custom connector</strong>. Full steps in
+          the "Advanced" section below, now expanded.
         </p>
       </div>
       `) + `
