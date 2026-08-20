@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
-from mcp_server import server as server_module
+from mcp_server import local_setup, server as server_module
 from mcp_server.google_auth import InvalidGoogleToken
 
 
@@ -390,7 +390,7 @@ def test_apply_local_config_rejects_missing_token(loopback_client):
 
 def test_apply_local_config_creates_new_file(loopback_client, tmp_path, monkeypatch):
     settings_path = tmp_path / "settings.json"
-    monkeypatch.setattr(server_module, "_CLAUDE_SETTINGS_PATH", settings_path)
+    monkeypatch.setattr(local_setup, "SETTINGS_PATH", settings_path)
 
     resp = loopback_client.post("/setup/apply-local-config", headers={"Authorization": "Bearer owner-secret"})
     assert resp.status_code == 200
@@ -413,7 +413,7 @@ def test_apply_local_config_merges_without_clobbering_existing_entries(loopback_
         "mcpServers": {"lockin": {"url": "https://lockin.example/mcp", "headers": {"Authorization": "Bearer lin_x"}}},
         "env": {"SOME_OTHER_VAR": "keep-me"},
     }))
-    monkeypatch.setattr(server_module, "_CLAUDE_SETTINGS_PATH", settings_path)
+    monkeypatch.setattr(local_setup, "SETTINGS_PATH", settings_path)
 
     resp = loopback_client.post("/setup/apply-local-config", headers={"Authorization": "Bearer owner-secret"})
     assert resp.status_code == 200
@@ -432,8 +432,75 @@ def test_apply_local_config_merges_without_clobbering_existing_entries(loopback_
 def test_apply_local_config_refuses_to_touch_invalid_json(loopback_client, tmp_path, monkeypatch):
     settings_path = tmp_path / "settings.json"
     settings_path.write_text("not valid json {{{")
-    monkeypatch.setattr(server_module, "_CLAUDE_SETTINGS_PATH", settings_path)
+    monkeypatch.setattr(local_setup, "SETTINGS_PATH", settings_path)
 
     resp = loopback_client.post("/setup/apply-local-config", headers={"Authorization": "Bearer owner-secret"})
     assert resp.status_code == 409
     assert settings_path.read_text() == "not valid json {{{"  # untouched
+
+
+# --- /setup/local-script -------------------------------------------------
+# The deployed-instance counterpart to /setup/apply-local-config: instead
+# of writing settings.json itself (no filesystem access to the caller's
+# machine), it hands back a personalized script that does the same write
+# when the user runs it locally. Available from any host, not just
+# loopback — the whole point is it works for a deployed instance.
+
+
+def test_local_script_rejects_missing_token(client):
+    resp = client.get("/setup/local-script")
+    assert resp.status_code == 401
+
+
+def test_local_script_available_on_non_loopback_host(client):
+    """Unlike /setup/apply-local-config, this route must NOT be gated to
+    loopback requests — a deployed instance is exactly the case it exists
+    for."""
+    resp = client.get("/setup/local-script", headers={"Authorization": "Bearer owner-secret"})
+    assert resp.status_code == 200
+
+
+def test_local_script_is_a_downloadable_attachment(client):
+    resp = client.get("/setup/local-script", headers={"Authorization": "Bearer owner-secret"})
+    assert "attachment" in resp.headers["content-disposition"]
+    assert resp.headers["content-type"].startswith("text/plain")
+
+
+def test_local_script_embeds_token_and_base_url(client):
+    resp = client.get("/setup/local-script", headers={"Authorization": "Bearer owner-secret"})
+    body = resp.text
+    assert "owner-secret" in body
+    assert "/mcp" in body
+    assert "/otlp" in body
+
+
+def test_local_script_is_valid_python(client):
+    import ast
+
+    resp = client.get("/setup/local-script", headers={"Authorization": "Bearer owner-secret"})
+    ast.parse(resp.text)  # raises SyntaxError if the template substitution broke anything
+
+
+def test_local_script_execution_applies_same_patch_as_apply_local_config(client, tmp_path, monkeypatch):
+    """The downloaded script must perform the identical settings.json
+    merge as the in-process route — same keys, same values — since it's
+    meant to be a drop-in substitute for users who can't reach the
+    loopback-only route."""
+    resp = client.get("/setup/local-script", headers={"Authorization": "Bearer owner-secret"})
+    script_path = tmp_path / "setup.py"
+    script_path.write_text(resp.text)
+
+    settings_path = tmp_path / "settings.json"
+    monkeypatch.setenv("HOME", str(tmp_path))
+    # The script resolves ~/.claude/settings.json via Path.home(); point
+    # HOME at tmp_path and expect the write under tmp_path/.claude/.
+    import subprocess
+    import sys
+
+    result = subprocess.run([sys.executable, str(script_path)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+    written = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+    assert written["mcpServers"]["context-inspector"]["headers"]["Authorization"] == "Bearer owner-secret"
+    assert written["env"]["CLAUDE_CODE_ENABLE_TELEMETRY"] == "1"
+    assert written["env"]["CLAUDE_CODE_OTEL_CONTENT_MAX_LENGTH"] == "1048576"
