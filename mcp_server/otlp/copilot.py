@@ -2,12 +2,12 @@
 
 Maps GitHub Copilot's native OTLP export onto this repo's session/turn/
 tool_call/context_block schema (metrics/store.py). See
-docs/internal/OTLP_INTEGRATION_PLAN.md, "### GitHub Copilot" section, for the
-research this is built against (code.visualstudio.com/docs/agents/*,
-docs.github.com/copilot/*, fetched live — NOT verified against a real
-captured payload, see that section's framing).
+docs/internal/OTLP_INTEGRATION_PLAN.md, "### GitHub Copilot" section, for
+the underlying research (code.visualstudio.com/docs/agents/*,
+docs.github.com/copilot/*) — NOT verified against a real captured
+payload.
 
-Structural summary from the plan (cited, not re-derived here):
+Structural summary:
   - Enable via COPILOT_OTEL_ENABLED=true + COPILOT_OTEL_CAPTURE_CONTENT=true
     (opt-in structured content capture) -> exposes gen_ai.input.messages,
     gen_ai.output.messages, gen_ai.tool.definitions,
@@ -26,31 +26,29 @@ Structural summary from the plan (cited, not re-derived here):
     handle_logs and handle_metrics are secondary/defensive paths only
     (see their docstrings for the specific judgment call on each).
 
-JUDGMENT CALLS made here that the plan didn't fully pin down (flag for
-follow-up verification once a real captured payload exists):
+UNVERIFIED ASSUMPTIONS (flag for follow-up once a real captured payload
+exists):
   1. Exact attribute key names for token usage on a `chat` span are
      assumed to follow OTel gen_ai semconv naming
      (gen_ai.usage.input_tokens/output_tokens), with
      prompt_tokens/completion_tokens tried as a fallback pair since
-     other gen_ai-adjacent exporters use that naming too. Unverified.
+     other gen_ai-adjacent exporters use that naming too.
   2. Session identity: prefers an explicit `session.id` /
      `gen_ai.conversation.id` / `conversation.id` attribute (checked on
      both the span and the resource) over the invoke_agent span's raw
-     traceId, per the plan's instruction that one VS Code session likely
-     spans multiple invoke_agent traces. Whether Copilot's real exporter
-     stamps any such attribute at all is unverified -- if none is
-     present, this mapper falls back to traceId per trace, meaning each
-     invoke_agent trace becomes its own "session" until proven otherwise.
+     traceId, since one VS Code session likely spans multiple
+     invoke_agent traces. Whether Copilot's real exporter stamps any
+     such attribute at all is unverified -- if none is present, this
+     mapper falls back to traceId per trace, meaning each invoke_agent
+     trace becomes its own "session" until proven otherwise.
   3. gen_ai.input.messages/output.messages content-part shape (role,
      type: text/tool_call/tool_call_response/reasoning) is inferred from
-     the general OTel gen_ai semantic conventions the plan cites, not
-     from a Copilot-specific captured example. Parsing is defensive
-     (try/except per part) precisely because of this.
+     the general OTel gen_ai semantic conventions, not from a
+     Copilot-specific captured example. Parsing is defensive (try/except
+     per part) precisely because of this.
   4. `chat` span token usage is treated as authoritative and
      gen_ai.client.token.usage metrics are ignored entirely (see
-     handle_metrics docstring) to avoid double-counting -- this trades
-     off metrics as a cross-check, which the plan explicitly allowed as
-     a "your call" v1 choice.
+     handle_metrics docstring) to avoid double-counting.
   5. Tool-call error/status detection uses the span's own OTLP `status`
      object (code 2 == ERROR) and an `exception`/`error`-named event as
      a fallback signal -- Copilot's docs don't spell out the exact
@@ -104,17 +102,16 @@ def handle_metrics(resource_attrs, metrics, owner):
 
     gen_ai.client.token.usage / gen_ai.client.operation.duration
     datapoints would double-count against the per-`chat`-span usage
-    attributes handle_traces already reads (see _handle_chat_span)
-    if both paths fed append_turn for the same turn -- the plan treats
-    the chat span's own usage attributes as primary, metrics as a
-    secondary cross-check at best. Using metrics to backfill `model` for
-    a session not yet seen via traces was considered (the plan floats it
-    as a "your call" option) but skipped: OTel's gen_ai metrics semconv
-    gives datapoints no session/conversation-scoped correlation
-    attribute, only per-request/model dimensions, so there's no safe way
-    to attach a backfilled model to the right session_id without risking
-    attaching it to the wrong one. Revisit if a captured payload shows a
-    usable correlation attribute on these datapoints.
+    attributes handle_traces already reads (see _handle_chat_span) if
+    both paths fed append_turn for the same turn -- the chat span's own
+    usage attributes are treated as primary, metrics as a secondary
+    cross-check at best. Using metrics to backfill `model` for a session
+    not yet seen via traces was considered but skipped: OTel's gen_ai
+    metrics semconv gives datapoints no session/conversation-scoped
+    correlation attribute, only per-request/model dimensions, so there's
+    no safe way to attach a backfilled model to the right session_id
+    without risking attaching it to the wrong one. Revisit if a captured
+    payload shows a usable correlation attribute on these datapoints.
     """
     return
 
@@ -178,8 +175,8 @@ def handle_traces(resource_attrs, spans, owner):
             elif name == "execute_tool":
                 session_id = _ensure_session(span_attrs, trace_id)
                 _handle_tool_span(span, span_attrs, session_id, owner)
-            # execute_hook: skipped for v1 per the plan -- not required,
-            # OTel path already covers everything needed.
+            # execute_hook: skipped for v1 -- not required, OTel path
+            # already covers everything needed.
         except (KeyError, TypeError, ValueError, json.JSONDecodeError, SessionOwnershipError):
             # One malformed span, or a span whose resolved session_id
             # collides with a different owner's existing session, must

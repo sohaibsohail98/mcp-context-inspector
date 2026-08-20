@@ -16,14 +16,16 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 from starlette.testclient import TestClient
 
-from mcp_server import auth_store, server as server_module
+from mcp_server import server as server_module
+from mcp_server.auth import store as auth_store
+from mcp_server.routes import oauth as routes_oauth
 
 
 @pytest.fixture
 def client(isolated_auth_store, isolated_sqlite_db, monkeypatch):
     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
     monkeypatch.setattr(
-        server_module, "verify_credential", lambda credential, client_id: {"sub": "sub123", "email": "a@example.com"}
+        routes_oauth, "verify_credential", lambda credential, client_id: {"sub": "sub123", "email": "a@example.com"}
     )
     app = server_module.server.streamable_http_app()
     app.add_middleware(server_module.MultiTokenAuthMiddleware, owner_token="owner-secret")
@@ -467,3 +469,119 @@ def test_redeem_oauth_code_is_atomic_against_concurrent_redemption(isolated_auth
 
     with pytest.raises(ValueError, match="already used"):
         auth_store.redeem_oauth_code(code, client_id, "https://example.com/cb", verifier, "https://host/mcp")
+
+
+# --- Rate limiting on /oauth/register ---------------------------------------
+
+
+def test_register_allows_up_to_the_limit(client):
+    for i in range(routes_oauth._REGISTER_MAX_PER_WINDOW):
+        resp = client.post("/oauth/register", json={"redirect_uris": [f"https://example.com/cb{i}"]})
+        assert resp.status_code == 201
+
+
+def test_register_rate_limits_after_the_limit(client):
+    for i in range(routes_oauth._REGISTER_MAX_PER_WINDOW):
+        client.post("/oauth/register", json={"redirect_uris": [f"https://example.com/cb{i}"]})
+    resp = client.post("/oauth/register", json={"redirect_uris": ["https://example.com/one-too-many"]})
+    assert resp.status_code == 429
+
+
+def test_register_rate_limit_is_per_ip(client):
+    """A rejected attempt from IP A must not count against IP B's own
+    window — each caller's CF-Connecting-IP is tracked independently."""
+    for i in range(routes_oauth._REGISTER_MAX_PER_WINDOW):
+        resp = client.post(
+            "/oauth/register",
+            json={"redirect_uris": [f"https://example.com/cb{i}"]},
+            headers={"CF-Connecting-IP": "1.1.1.1"},
+        )
+        assert resp.status_code == 201
+    # 1.1.1.1 is now exhausted...
+    resp = client.post(
+        "/oauth/register", json={"redirect_uris": ["https://example.com/blocked"]}, headers={"CF-Connecting-IP": "1.1.1.1"}
+    )
+    assert resp.status_code == 429
+    # ...but a different IP is unaffected.
+    resp = client.post(
+        "/oauth/register", json={"redirect_uris": ["https://example.com/fine"]}, headers={"CF-Connecting-IP": "2.2.2.2"}
+    )
+    assert resp.status_code == 201
+
+
+def test_register_rate_limit_also_counts_malformed_requests(client):
+    """The limiter checks BEFORE parsing the body, deliberately — an
+    attacker flooding with garbage payloads to dodge the counter must
+    not get unlimited attempts."""
+    for _ in range(routes_oauth._REGISTER_MAX_PER_WINDOW):
+        resp = client.post("/oauth/register", content=b"not json", headers={"Content-Type": "application/json"})
+        assert resp.status_code == 400
+    resp = client.post("/oauth/register", json={"redirect_uris": ["https://example.com/blocked"]})
+    assert resp.status_code == 429
+
+
+# --- Admin visibility into OAuth clients/tokens -----------------------------
+
+
+def test_admin_oauth_client_routes_require_the_owner_token(client):
+    client_id = _register(client)
+    resp = client.get("/api/oauth-clients", headers={"Authorization": "Bearer owner-secret"})
+    assert resp.status_code == 200
+    assert any(c["client_id"] == client_id for c in resp.json())
+
+
+def test_admin_oauth_client_routes_reject_a_per_user_token(client):
+    client_id = _register(client)
+    verifier, challenge = _pkce_pair()
+    code, _ = _authorize_and_get_code(client, client_id, "https://example.com/callback", challenge)
+    token_resp = client.post(
+        "/oauth/token",
+        data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": "https://example.com/callback",
+            "client_id": client_id,
+            "code_verifier": verifier,
+        },
+    )
+    access_token = token_resp.json()["access_token"]
+
+    resp = client.get("/api/oauth-clients", headers={"Authorization": "Bearer " + access_token})
+    assert resp.status_code == 403
+
+
+def test_admin_can_revoke_an_oauth_client(client):
+    client_id = _register(client)
+    resp = client.delete(f"/api/oauth-clients/{client_id}", headers={"Authorization": "Bearer owner-secret"})
+    assert resp.status_code == 200
+    resp = client.get("/api/oauth-clients", headers={"Authorization": "Bearer owner-secret"})
+    assert all(c["client_id"] != client_id for c in resp.json())
+
+
+def test_admin_can_list_and_revoke_oauth_tokens(client):
+    client_id = _register(client)
+    verifier, challenge = _pkce_pair()
+    code, _ = _authorize_and_get_code(client, client_id, "https://example.com/callback", challenge)
+    token_resp = client.post(
+        "/oauth/token",
+        data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": "https://example.com/callback",
+            "client_id": client_id,
+            "code_verifier": verifier,
+        },
+    )
+    access_token = token_resp.json()["access_token"]
+
+    resp = client.get("/api/oauth-tokens", headers={"Authorization": "Bearer owner-secret"})
+    assert resp.status_code == 200
+    tokens = resp.json()
+    assert len(tokens) == 1
+    assert "token" not in tokens[0]
+
+    resp = client.delete(f"/api/oauth-tokens/{access_token}", headers={"Authorization": "Bearer owner-secret"})
+    assert resp.status_code == 200
+
+    resp = client.get("/api/sessions", headers={"Authorization": "Bearer " + access_token})
+    assert resp.status_code == 401

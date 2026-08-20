@@ -373,6 +373,44 @@ def test_recent_sessions_carries_source_and_status(isolated_sqlite_db):
     assert all("status" in s for s in recent.values())
 
 
+def test_recent_sessions_carries_turn_count(isolated_sqlite_db):
+    """The session-list row needs "N turns" without a per-row follow-up
+    fetch — get_recent_sessions must return the count directly."""
+    store = isolated_sqlite_db
+    three_turns = _fake_loop_result(
+        turns=[
+            {"input_tokens": 10, "output_tokens": 5, "latency_ms": 100},
+            {"input_tokens": 20, "output_tokens": 5, "latency_ms": 100},
+            {"input_tokens": 30, "output_tokens": 5, "latency_ms": 100},
+        ]
+    )
+    three_turn_id = store.record_session("q", "m", three_turns)
+    one_turn_id = store.record_session("q2", "m", _fake_loop_result())
+
+    recent = {s["session_id"]: s for s in store.get_recent_sessions()}
+    assert recent[three_turn_id]["turn_count"] == 3
+    assert recent[one_turn_id]["turn_count"] == 1
+
+
+def test_recent_sessions_carries_cache_and_tool_error_aggregates(isolated_sqlite_db):
+    """KPI strip needs cache-hit-rate/tool-error-rate inputs in the same
+    bulk fetch as everything else, no per-session follow-up."""
+    store = isolated_sqlite_db
+    session_id = store.start_or_get_session("sess-1", source="claude_code")
+    store.append_turn(session_id, {"input_tokens": 100, "output_tokens": 20, "latency_ms": 10, "cache_read_input_tokens": 300})
+    store.append_turn(session_id, {"input_tokens": 50, "output_tokens": 10, "latency_ms": 10, "cache_read_input_tokens": 0})
+    store.append_tool_call(session_id, {"tool": "a", "args": {}, "status": "success"})
+    store.append_tool_call(session_id, {"tool": "b", "args": {}, "status": "error"})
+    store.append_tool_call(session_id, {"tool": "c", "args": {}, "status": "error"})
+
+    recent = {s["session_id"]: s for s in store.get_recent_sessions()}
+    row = recent[session_id]
+    assert row["cache_read_tokens"] == 300
+    assert row["fresh_input_tokens"] == 150
+    assert row["tool_call_total"] == 3
+    assert row["tool_call_errors"] == 2
+
+
 def test_pre_latency_tool_calls_table_migrates(isolated_sqlite_db):
     """A tool_calls table created before the Tool calls tab needed
     latency_ms/timestamp (see docs/internal/OTLP_INTEGRATION_PLAN.md's dashboard

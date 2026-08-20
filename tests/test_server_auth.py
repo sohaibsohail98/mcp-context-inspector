@@ -1,8 +1,8 @@
 """Regression tests for MultiTokenAuthMiddleware and the /auth/login,
 /auth/verify routes — in-process via Starlette's TestClient, no real
 subprocess, no real network call to Google (verify_credential is
-monkeypatched at the mcp_server.server module level, where auth_verify's
-route handler actually looks it up).
+monkeypatched at the mcp_server.routes_auth module level, where
+auth_verify's route handler actually looks it up).
 """
 
 import json
@@ -12,7 +12,8 @@ import pytest
 from starlette.testclient import TestClient
 
 from mcp_server import local_setup, server as server_module
-from mcp_server.google_auth import InvalidGoogleToken
+from mcp_server.routes import auth as routes_auth
+from mcp_server.auth.google import InvalidGoogleToken
 
 
 @pytest.fixture
@@ -131,7 +132,7 @@ def test_auth_login_with_client_id_serves_signin_page(client, monkeypatch):
 def test_auth_verify_mints_token_for_valid_credential(client, monkeypatch, isolated_auth_store):
     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
     monkeypatch.setattr(
-        server_module, "verify_credential", lambda credential, client_id: {"sub": "sub123", "email": "a@example.com"}
+        routes_auth, "verify_credential", lambda credential, client_id: {"sub": "sub123", "email": "a@example.com"}
     )
     resp = client.post("/auth/verify", json={"credential": "fake-jwt"})
     assert resp.status_code == 200
@@ -145,7 +146,7 @@ def test_auth_verify_is_unauthenticated_itself(client, monkeypatch):
     your FIRST token here."""
     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
     monkeypatch.setattr(
-        server_module, "verify_credential", lambda credential, client_id: {"sub": "sub123", "email": "a@example.com"}
+        routes_auth, "verify_credential", lambda credential, client_id: {"sub": "sub123", "email": "a@example.com"}
     )
     resp = client.post("/auth/verify", json={"credential": "fake-jwt"})
     assert resp.status_code != 401
@@ -157,7 +158,7 @@ def test_auth_verify_rejects_invalid_google_credential(client, monkeypatch):
     def _raise(credential, client_id):
         raise InvalidGoogleToken("bad signature")
 
-    monkeypatch.setattr(server_module, "verify_credential", _raise)
+    monkeypatch.setattr(routes_auth, "verify_credential", _raise)
     resp = client.post("/auth/verify", json={"credential": "garbage"})
     assert resp.status_code == 401
 
@@ -177,7 +178,7 @@ def test_auth_verify_missing_credential_body(client, monkeypatch):
 def test_signing_in_twice_returns_the_same_token_end_to_end(client, monkeypatch, isolated_auth_store):
     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
     monkeypatch.setattr(
-        server_module, "verify_credential", lambda credential, client_id: {"sub": "sub123", "email": "a@example.com"}
+        routes_auth, "verify_credential", lambda credential, client_id: {"sub": "sub123", "email": "a@example.com"}
     )
     first = client.post("/auth/verify", json={"credential": "fake-jwt"}).json()["mcp_token"]
     second = client.post("/auth/verify", json={"credential": "fake-jwt"}).json()["mcp_token"]

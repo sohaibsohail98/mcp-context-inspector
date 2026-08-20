@@ -1,16 +1,13 @@
 """Shared merge/backup logic for writing this account's MCP connection +
 OTLP telemetry config into a Claude Code ~/.claude/settings.json — used by
-both callers of that same write:
+both:
 
-- mcp_server.server's /setup/apply-local-config route, when the server
-  itself is running on the caller's own machine (self-hosted, loopback).
+- The /setup/apply-local-config route, when the server itself is running
+  on the caller's own machine (self-hosted, loopback).
 - The downloadable script templated by /setup/local-script (see
   LOCAL_SCRIPT_TEMPLATE below), when the server is deployed elsewhere and
   can't reach the caller's filesystem directly — the script runs this same
   logic locally instead.
-
-One implementation, so the two paths can't drift apart on what "apply my
-config" actually merges into settings.json.
 """
 
 import json
@@ -76,14 +73,12 @@ def apply_settings_patch(patch, settings_path=SETTINGS_PATH):
     return backed_up_to, str(settings_path)
 
 
-# Templated into a standalone script by /setup/local-script (see
-# mcp_server.server), with {base_url} and {bearer_token} substituted in at
-# request time. Duplicates build_settings_patch/apply_settings_patch as
-# plain code rather than importing this module, since the downloaded file
-# has to run standalone on the user's machine with no mcp_context_inspector
-# package installed — stdlib only (json, time, pathlib), matching this
-# project's own runtime requirement (Python 3, present wherever Claude Code
-# itself runs, including Windows via pathlib.Path.home()).
+# Templated into a standalone script by /setup/local-script, with
+# {base_url} and {bearer_token} substituted in at request time. Duplicates
+# build_settings_patch/apply_settings_patch as plain code rather than
+# importing this module, since the downloaded file has to run standalone
+# on the user's machine with no mcp_context_inspector package installed —
+# stdlib only (json, time, pathlib).
 LOCAL_SCRIPT_TEMPLATE = '''#!/usr/bin/env python3
 # This script contains your personal mcp-context-inspector token. Treat it
 # like a password — don't share this file, and delete it after running.

@@ -4,7 +4,7 @@ to Google; `id_token.verify_oauth2_token` is monkeypatched.
 
 import pytest
 
-from mcp_server import google_auth
+from mcp_server.auth import google as google_auth
 
 
 def test_verify_credential_returns_sub_and_email(monkeypatch):
