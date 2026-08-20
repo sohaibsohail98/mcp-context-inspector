@@ -17,9 +17,10 @@ during this same session. Nothing here is aspirational marketing copy.
 | 1 | Discover | Visit the live demo URL, or `git clone` + `uv run` to self-host | Not on PyPI; self-hosting needs a source checkout. The live demo is instant but read-only until sign-in. |
 | 2 | Land | `/auth/login` renders hero, feature pitch, three FAQ disclosures, sign-in card | None — loads instantly, explains itself. |
 | 3 | Authenticate | Click "Sign in with Google" → Google's real consent screen → this app's own Wrangler-style Authorize/Cancel screen | One click, one confirm. Genuinely easy. |
-| 4 | Land on config | "Your connection" card, a **new one-click local setup card** (§5), and a 4-tab "Connect your client" card for manual setup | Resolved for local self-hosters by §5. Still true for the deployed instance and for manual/other-client setups. |
+| 4 | Land on config | "Your connection" card, one clearly-labeled primary action card (§5: "Apply to my Claude Code config" when self-hosted at `localhost`, or **"Download setup script"** (§5a) when deployed), and an "Advanced" `<details>` disclosure — closed by default — holding Connectors steps plus the 4-tab manual card | Resolved for both self-hosters (§5) and deployed-instance users (§5a). Manual/other-client setup is still there, just no longer competing for attention by default. |
 | 5 | Wire up (automatic, local) | Click **"Apply to my Claude Code config"** | One click. Done. See §5. |
-| 5′ | Wire up (manual, deployed or other clients) | Copy a JSON block into an MCP config, *and* ~7 export lines into a shell profile or `settings.json`'s `env` block | Requires knowing which file, and the raw-content opt-in (bundled with the content-length cap in one copy button) is an easy whole step to skip (see §2). |
+| 5a | Wire up (automatic, deployed) | Click **"Download setup script"**, run `python3 mcp-context-inspector-setup.py` once | One download, one local command. Done. See §5a. |
+| 5′ | Wire up (manual, other clients) | Copy a JSON block into an MCP config, *and* ~7 export lines into a shell profile or `settings.json`'s `env` block — now tucked behind the "Advanced" disclosure | Requires knowing which file, and the raw-content opt-in (bundled with the content-length cap in one copy button) is an easy whole step to skip (see §2). Still there for anyone who wants a different client or doesn't want to run a script. |
 | 6 | Proceed to dashboard | Click through (first sign-in) or land automatically (returning visit) | Clean, fixed this session. |
 | 7 | Use it | Work normally in Claude Code; sessions appear within ~5–8s | Works everywhere now, for local self-hosters who used §5. |
 
@@ -30,20 +31,18 @@ hand-edit the *global* config file, which nothing in the UI said.
 
 ## 2. Friction points that remain
 
-- **The one-click path only covers local self-hosting.** The deployed
-  instance's browser can never write to a visitor's local filesystem — §5
-  is gated to exactly that case, correctly, and the manual path (§4, step 5′)
-  is what's left for everyone else.
-- **Two unrelated mechanisms still share one manual "Connect your client"
-  card**, for the deployed instance. The MCP tabs give an LLM *query* access
-  (ask "what did session X cost"); the OTLP tabs give *passive, automatic*
-  metrics with no tool calls. Nothing on the page says most people want both.
 - **The raw-content opt-in is still one bundled, skippable step** in the
-  manual snippet, for anyone not using §5 — both the opt-in line and the
+  manual snippet, for anyone not using §5/§5a — both the opt-in line and the
   content-length cap live in the same copy-button block, so it's correctly
   one decision, not two, but it's still an easy one to skip entirely. Skip
   it and you keep tokens/cost/tool-calls but lose the Context Window
   Explorer (found this session — see the E2E test report).
+- **The downloaded script (§5a) is a one-time credential-bearing file.** It
+  tells the user to delete it after running and states plainly, in a
+  comment at the top, that it contains a live token — but nothing enforces
+  that; a user who ignores the instruction has a second copy of their token
+  sitting in `~/Downloads` indefinitely. Same trust level as e.g. an SSH
+  key or a `.env` file, not a new category of risk, but worth naming.
 
 ## 3. Does it survive real-world conditions?
 
@@ -64,7 +63,7 @@ already contained a working example before this session touched anything —
 "mcpServers": {
   "lockin": {
     "url": "https://lockin.talhaakhoon.dev/mcp",
-    "headers": { "Authorization": "Bearer lin_y7RxbwboEHsPoQ00WZSIrWVPzVH_1Bf0cCDEm7A2t0s" }
+    "headers": { "Authorization": "Bearer lin_<redacted>" }
   }
 }
 ```
@@ -85,7 +84,12 @@ too, at least for this account, and confirms a **plain bearer-token header**
   any local setup step.
 - **Can't**: carry the OTLP auto-telemetry half. Connectors configure an MCP
   server connection, not arbitrary session environment variables. §5's local
-  write is the only mechanism that delivers that half automatically today.
+  write, or §5a's downloaded-script equivalent for the deployed instance,
+  are the only mechanisms that deliver that half automatically. Connectors
+  remains the right choice for someone who only wants query access, or is
+  on a machine where running a downloaded script isn't appropriate (e.g. a
+  locked-down work laptop) — presented as the explicit secondary option
+  next to "Download setup script" on the connect page (§5a).
 - **Requires** a real public HTTPS URL — the deployed Cloudflare Worker
   instance qualifies; a `localhost` self-host does not (§5 exists precisely
   to cover that case instead).
@@ -126,6 +130,51 @@ same machine's disk.
    variables — it exported telemetry anyway, and the resulting session
    appeared on the dashboard within seconds.
 
+## 5a. Delivered this session: downloadable setup script for the deployed instance
+
+Built per `docs/DEPLOYED_ONBOARDING_PLAN.md`, closing the gap §5 explicitly
+couldn't: a deployed instance has no filesystem access to a visitor's
+machine, so it can't perform §5's write itself. The fix isn't running the
+server locally — it's shipping the *same write*, as a small standalone
+script the user downloads and runs once.
+
+**What it does:**
+
+- New `GET /setup/local-script` route, authenticated the same way as every
+  other protected route (`Authorization: Bearer <token>`, never a plain
+  link — a leaked URL alone can't hand out a token, since the route
+  requires the real bearer token to respond at all).
+- Returns a personalized Python script (`text/plain`,
+  `Content-Disposition: attachment`) with this account's token and this
+  server's base URL baked in, that performs the identical
+  backup-then-merge write as `/setup/apply-local-config` — same merge
+  logic, extracted into `mcp_server/local_setup.py` and shared by both the
+  in-process route (self-host case) and the templated script (deployed
+  case), so the two can't drift apart on what "apply my config" merges in.
+- The script says plainly, in a comment at the top, that it contains a live
+  credential and should be deleted after running; it prints the exact `rm`
+  command to do so once it finishes.
+- Connect page: "Download setup script" is now the primary, obviously-
+  labeled action for a deployed-instance visitor, with "Connect via
+  claude.ai Connectors instead" underneath as a dimmer secondary link, not
+  a second full card competing for attention (§4). The whole manual/4-tab
+  card is now behind a closed-by-default "Advanced" disclosure for both
+  self-hosted and deployed visitors.
+
+**Verified this session:** a dedicated test (`test_local_script_execution_
+applies_same_patch_as_apply_local_config`) downloads the script via a real
+request, writes it to disk, runs it as an actual subprocess with `HOME`
+pointed at a temp directory, and asserts the resulting
+`~/.claude/settings.json` has the identical `mcpServers`/`env` shape §5's
+in-process route produces — not just that the template renders, that the
+generated file actually executes and writes the right thing.
+
+**Deliberately deferred** (per the plan's open questions): the short-lived,
+single-use-token handshake variant instead of embedding the long-lived
+token directly. Recommended and left as-is — "it's a file on your own
+disk" is the same trust level as an SSH key today; revisit only if this
+project's threat model changes (e.g. shared-machine use becomes common).
+
 ## 6. Mockup vs. shipped — what's visually accurate, and what isn't
 
 The approved design mockup and the shipped dashboard match closely on
@@ -159,16 +208,20 @@ and corrected above).
 
 ## 7. Bottom line
 
-For **querying your own metrics, from anywhere**: easy today via either
-path — one-click local setup (§5) for self-hosters, or claude.ai Connectors
-(§4) for the deployed instance — and durable across sleep, sign-outs, and
-every future session, tested and confirmed.
+For **querying your own metrics, from anywhere**: easy today via any of
+three paths — one-click local setup (§5) for self-hosters, a downloaded
+setup script (§5a) for the deployed instance, or claude.ai Connectors (§4)
+for anyone who'd rather not run a local script at all — and durable across
+sleep, sign-outs, and every future session, tested and confirmed.
 
 For **the dashboard auto-populating as you code, from anywhere**: solved for
-local self-hosters via §5, confirmed live from a brand-new directory with
-zero manual steps. Still manual (§4, step 5′) for the deployed instance,
-since Connectors can't carry environment variables — that gap is inherent to
-how claude.ai Connectors work, not something this project can close alone.
+local self-hosters via §5, and now solved for the deployed instance too via
+§5a's downloaded script — both verified end to end this session, including
+an actual subprocess run of the generated script. Manual export (§4, step
+5′, now behind the "Advanced" disclosure) remains for anyone who specifically
+chooses Connectors instead, since Connectors can't carry environment
+variables — that gap is inherent to how claude.ai Connectors work, not
+something this project can close alone.
 
 For **visual fidelity to the approved mockup**: strong on structure, honest
 on the deferrals that are actually agreed-and-documented as out of scope,

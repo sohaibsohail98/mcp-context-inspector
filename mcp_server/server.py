@@ -19,17 +19,15 @@ import contextvars
 import json
 import os
 import shutil
-import time
-from pathlib import Path
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
+from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 
-from mcp_server import auth_store, otlp
+from mcp_server import auth_store, local_setup, otlp
 from mcp_server.google_auth import InvalidGoogleToken, verify_credential
 from metrics import store
 
@@ -868,30 +866,44 @@ async def auth_login(request: Request):
         <div id="local-setup-result" style="margin-top: 0.7rem; font-size: 0.85rem;"></div>
       </div>
       ` : `
-      <div class="card accent">
-        <h3>Connect once, everywhere &mdash; via claude.ai</h3>
-        <p class="card-hint">This server can't write to your local Claude Code config from here &mdash;
-        it can only do that for itself when it's the one running on your machine (self-hosted at
-        <code>localhost</code>). But claude.ai's own <strong>Connectors</strong> feature gets you the
-        same "connected in every Claude Code session automatically" result, for any client, with
-        zero local files touched:</p>
-        <ol class="card-hint" style="padding-left: 1.2rem; margin: 0.7rem 0;">
-          <li>Copy the MCP server URL and token above.</li>
-          <li>Go to <strong>claude.ai &rarr; Customize &rarr; Connectors &rarr; Add custom connector.</strong></li>
-          <li>Paste the URL. Under Advanced settings, add your token as an
-          <code>Authorization: Bearer &lt;token&gt;</code> header (exact field names may vary &mdash; look
-          for a header/token option, not just OAuth client ID/secret).</li>
-        </ol>
-        <p class="card-hint">This covers the MCP query tools (ask "what did session X cost") in
-        every session, everywhere. It does <strong>not</strong> cover automatic telemetry &mdash;
-        Connectors can't carry environment variables, so the dashboard auto-populating as you code
-        still needs the "Claude Code (live telemetry)" tab below, pasted manually once per machine.</p>
-        <a class="copy" href="https://claude.ai/settings/connectors" target="_blank" rel="noopener" style="display:inline-block; text-decoration:none;">Open claude.ai Connectors</a>
+      <div id="local-script-card" class="card accent">
+        <h3>Download setup script</h3>
+        <p class="card-hint">Gets you connected everywhere — MCP query tools <strong>and</strong>
+        automatic telemetry — with one script you run once, locally. This server is deployed, so
+        it can't write to your machine directly; the script does the exact same
+        <code>~/.claude/settings.json</code> merge <a href="#" onclick="showConnectTab('claude'); document.querySelector('details').open=true; return false;" style="color:inherit; text-decoration:underline;">the manual snippets below</a>
+        would have you paste in by hand, but running locally, on your own machine, under your
+        own inspection. Your existing settings are backed up first and merged, never overwritten.</p>
+        <button class="copy" onclick="downloadLocalScript()" id="local-script-btn">Download setup script</button>
+        <div id="local-script-result" style="margin-top: 0.7rem; font-size: 0.85rem;"></div>
+        <p class="card-hint" style="margin-top: 0.6rem;">
+          Prefer not to run a script? <a href="#" onclick="document.querySelector('details').open=true; document.getElementById('connectors-info').scrollIntoView({{behavior:'smooth'}}); return false;">Connect via claude.ai Connectors instead &rarr;</a>
+        </p>
       </div>
       `) + `
 
-      <div class="card">
-        <h3>Connect your client</h3>
+      <details>
+        <summary>Advanced: manual setup, or connecting a different client</summary>
+        <div style="padding-left: 1.7rem;">
+        ` + (isLocalHost ? `` : `
+        <div id="connectors-info" style="margin-bottom: 1.1rem;">
+          <p class="card-hint"><strong>claude.ai Connectors</strong> — this server can't write to your local
+          Claude Code config from here; it can only do that for itself when it's the one running on your
+          machine (self-hosted at <code>localhost</code>). But claude.ai's own Connectors feature gets you MCP
+          query access (ask "what did session X cost") in every session, everywhere, with zero local files
+          touched — it just can't carry the OTLP env vars that power automatic telemetry, so the dashboard
+          won't auto-populate as you code unless you also paste the "Claude Code (live telemetry)" snippet
+          below once per machine.</p>
+          <ol class="card-hint" style="padding-left: 1.2rem; margin: 0.7rem 0;">
+            <li>Copy the MCP server URL and token above.</li>
+            <li>Go to <strong>claude.ai &rarr; Customize &rarr; Connectors &rarr; Add custom connector.</strong></li>
+            <li>Paste the URL. Under Advanced settings, add your token as an
+            <code>Authorization: Bearer &lt;token&gt;</code> header (exact field names may vary &mdash; look
+            for a header/token option, not just OAuth client ID/secret).</li>
+          </ol>
+          <a class="copy" href="https://claude.ai/settings/connectors" target="_blank" rel="noopener" style="display:inline-block; text-decoration:none;">Open claude.ai Connectors</a>
+        </div>
+        `) + `
         <div class="tab-row" style="margin-top: 0.9rem;">
           <button class="tab-btn active" data-tab="claude" onclick="showConnectTab('claude')">Claude Code</button>
           <button class="tab-btn" data-tab="api" onclick="showConnectTab('api')">API / curl</button>
@@ -941,7 +953,8 @@ async def auth_login(request: Request):
             <button class="copy" onclick="copyText('copilot-otel-optin')">Copy opt-in line</button>
           </div>
         </div>
-      </div>
+        </div>
+      </details>
 
       <div class="card accent">
         <h3>Live dashboard <span class="badge">ready</span></h3>
@@ -1078,6 +1091,48 @@ async def auth_login(request: Request):
       result.innerHTML = '<span style="color:var(--err);">' + err.message + '</span>';
       btn.disabled = false;
       btn.textContent = "Apply to my Claude Code config";
+    }}
+  }}
+
+  // Fetches a personalized setup script (see /setup/local-script — same
+  // bearer-token auth as every other protected route, never a plain link,
+  // so the token-bearing file can only be produced by someone who's
+  // already authenticated) and triggers a normal browser download via a
+  // synthetic <a download> click. Nothing here talks to the local
+  // filesystem — that only happens once the user runs the downloaded
+  // script themselves.
+  async function downloadLocalScript() {{
+    const btn = document.getElementById("local-script-btn");
+    const result = document.getElementById("local-script-result");
+    const filename = "mcp-context-inspector-setup.py";
+    btn.disabled = true;
+    btn.textContent = "Preparing…";
+    try {{
+      const res = await fetch("/setup/local-script", {{
+        headers: {{ Authorization: "Bearer " + currentToken }},
+      }});
+      if (!res.ok) {{
+        const data = await res.json().catch(() => ({{}}));
+        throw new Error(data.error || ("HTTP " + res.status));
+      }}
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      result.innerHTML = '<span style="color:var(--ok);">&check; Downloaded <code>' + filename + '</code> — '
+        + 'run it with:</span><pre style="margin-top:0.4rem;">python3 ' + filename + '</pre>'
+        + '<span style="color:var(--text-dim);">It contains your token, so treat it like a password — delete it after running.</span>';
+      btn.disabled = false;
+      btn.textContent = "Download setup script";
+    }} catch (err) {{
+      result.innerHTML = '<span style="color:var(--err);">' + err.message + '</span>';
+      btn.disabled = false;
+      btn.textContent = "Download setup script";
     }}
   }}
 
@@ -1795,7 +1850,12 @@ async def auth_verify(request: Request):
 # is the actual boundary; MultiTokenAuthMiddleware (see protected_prefixes)
 # still requires a valid bearer token on top of that, so a second local
 # process/page without the real token can't call this either.
-_CLAUDE_SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
+#
+# For the deployed (non-loopback) case, see /setup/local-script below —
+# same merge/backup logic (mcp_server.local_setup), applied by a script the
+# user downloads and runs themselves instead of by this server process,
+# since a deployed instance has no filesystem access to the caller's
+# machine at all.
 
 
 def _is_loopback_request(request):
@@ -1823,50 +1883,41 @@ async def apply_local_config(request: Request):
     if not bearer_token:
         return JSONResponse({"error": "missing bearer token"}, status_code=401)
 
-    base = str(request.base_url).rstrip("/")
-    settings_path = _CLAUDE_SETTINGS_PATH
-    settings_path.parent.mkdir(parents=True, exist_ok=True)
-
-    existing = {}
-    backed_up_to = None
-    if settings_path.exists():
-        try:
-            existing = json.loads(settings_path.read_text())
-        except ValueError:
-            return JSONResponse(
-                {"error": f"{settings_path} exists but isn't valid JSON — not touching it. Fix or back it up manually first."},
-                status_code=409,
-            )
-        if not isinstance(existing, dict):
-            return JSONResponse({"error": f"{settings_path} isn't a JSON object — not touching it."}, status_code=409)
-        backup_path = settings_path.with_name(settings_path.name + f".bak-{int(time.time())}")
-        backup_path.write_text(json.dumps(existing, indent=2))
-        backed_up_to = str(backup_path)
-
-    existing.setdefault("mcpServers", {})
-    existing["mcpServers"]["context-inspector"] = {
-        "url": base + "/mcp",
-        "headers": {"Authorization": "Bearer " + bearer_token},
-    }
-    existing.setdefault("env", {})
-    existing["env"].update({
-        "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
-        "OTEL_LOGS_EXPORTER": "otlp",
-        "OTEL_METRICS_EXPORTER": "otlp",
-        "OTEL_EXPORTER_OTLP_PROTOCOL": "http/json",
-        "OTEL_EXPORTER_OTLP_ENDPOINT": base + "/otlp",
-        "OTEL_EXPORTER_OTLP_HEADERS": "Authorization=Bearer " + bearer_token,
-        "OTEL_LOG_RAW_API_BODIES": "1",
-        "CLAUDE_CODE_OTEL_CONTENT_MAX_LENGTH": "1048576",
-    })
-
-    settings_path.write_text(json.dumps(existing, indent=2) + "\n")
+    base = str(request.base_url)
+    patch = local_setup.build_settings_patch(base, bearer_token)
+    try:
+        backed_up_to, written_path = local_setup.apply_settings_patch(patch, local_setup.SETTINGS_PATH)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=409)
 
     return JSONResponse({
         "ok": True,
-        "path": str(settings_path),
+        "path": written_path,
         "backed_up_to": backed_up_to,
     })
+
+
+@server.custom_route("/setup/local-script", methods=["GET"])
+async def local_script(request: Request):
+    """Returns a personalized, standalone Python script that performs the
+    exact same settings.json merge as /setup/apply-local-config above, for
+    a caller whose browser and server aren't on the same machine (i.e. a
+    deployed instance) — see docs/DEPLOYED_ONBOARDING_PLAN.md. The script
+    is generated per-request from an authenticated call, never a static
+    link, so a leaked URL alone (browser history, a proxy log) can't hand
+    out a live token — MultiTokenAuthMiddleware already enforces the
+    bearer-token check via protected_prefixes before this handler runs."""
+    auth_header = request.headers.get("authorization", "")
+    bearer_token = auth_header.removeprefix("Bearer ") if auth_header.startswith("Bearer ") else None
+    if not bearer_token:
+        return JSONResponse({"error": "missing bearer token"}, status_code=401)
+
+    base = str(request.base_url)
+    script = local_setup.render_local_script(base, bearer_token)
+    return PlainTextResponse(
+        script,
+        headers={"Content-Disposition": 'attachment; filename="mcp-context-inspector-setup.py"'},
+    )
 
 
 if __name__ == "__main__":
