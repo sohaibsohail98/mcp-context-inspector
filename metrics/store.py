@@ -7,8 +7,14 @@ know which backend is active.
 
 import os
 
+from metrics.errors import SessionOwnershipError
+
 if os.environ.get("STORAGE_BACKEND", "sqlite") == "dynamodb":
     from metrics.store_dynamodb import (
+        append_context_block,
+        append_tool_call,
+        append_turn,
+        close_session,
         get_agent_trace,
         get_context_timeline,
         get_cost_estimate,
@@ -17,9 +23,14 @@ if os.environ.get("STORAGE_BACKEND", "sqlite") == "dynamodb":
         get_token_breakdown,
         get_tool_metrics,
         record_session,
+        start_or_get_session,
     )
 else:
     from metrics.store_sqlite import (
+        append_context_block,
+        append_tool_call,
+        append_turn,
+        close_session,
         get_agent_trace,
         get_context_timeline,
         get_cost_estimate,
@@ -28,6 +39,7 @@ else:
         get_token_breakdown,
         get_tool_metrics,
         record_session,
+        start_or_get_session,
     )
 
 __all__ = [
@@ -39,4 +51,10 @@ __all__ = [
     "get_cost_estimate",
     "get_recent_sessions",
     "get_context_timeline",
+    "start_or_get_session",
+    "append_turn",
+    "append_tool_call",
+    "append_context_block",
+    "close_session",
+    "SessionOwnershipError",
 ]
