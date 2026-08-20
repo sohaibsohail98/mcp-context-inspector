@@ -171,8 +171,10 @@ def test_tool_result_event_appends_tool_call(isolated_sqlite_db):
 
 def test_redacted_thinking_block_gets_reasoning_category(isolated_sqlite_db):
     """Extended-thinking content is unconditionally redacted even with
-    raw bodies on — must still categorize as CATEGORY_REASONING with the
-    documented label, and never a zero token_estimate."""
+    raw bodies on — must still categorize as CATEGORY_REASONING with
+    status="redacted" (so the dashboard's redacted-block styling
+    applies), never a zero token_estimate, and no stored content (the
+    placeholder text isn't real content worth showing on expand)."""
     store = isolated_sqlite_db
 
     request_body = {
@@ -197,8 +199,10 @@ def test_redacted_thinking_block_gets_reasoning_category(isolated_sqlite_db):
     timeline = store.get_context_timeline("sess-1")
     reasoning_blocks = [b for b in timeline if b["category"] == "reasoning"]
     assert len(reasoning_blocks) == 1
-    assert reasoning_blocks[0]["label"] == "reasoning (redacted)"
+    assert reasoning_blocks[0]["label"] == "reasoning"
+    assert reasoning_blocks[0]["status"] == "redacted"
     assert reasoning_blocks[0]["token_estimate"] >= 1
+    assert reasoning_blocks[0]["content"] is None
 
 
 def test_malformed_record_does_not_crash_batch(isolated_sqlite_db):

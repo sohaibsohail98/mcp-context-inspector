@@ -70,6 +70,7 @@ from mcp_server.otlp.common import (
     CATEGORY_USER,
     attrs_list_to_dict,
     estimate_tokens,
+    truncate_content,
 )
 
 _SESSION_ID_ATTR_CANDIDATES = ("session.id", "gen_ai.conversation.id", "conversation.id")
@@ -317,6 +318,7 @@ def _message_to_blocks(msg, turn_n):
                 "token_estimate": estimate_tokens(text),
                 "turn_n": turn_n,
                 "status": None,
+                "content": truncate_content(text),
             }
         )
     return blocks

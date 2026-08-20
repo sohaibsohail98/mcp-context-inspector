@@ -307,6 +307,29 @@ def test_append_context_block_orders_by_arrival(isolated_sqlite_db):
     assert timeline[-1]["cumulative_tokens"] == 110
 
 
+def test_append_context_block_round_trips_content(isolated_sqlite_db):
+    """A block's raw text (used by the Context Explorer's expand-to-view
+    feature) must round-trip through storage; a block that never sets
+    `content` reads back as None ("not captured"), not a crash or an
+    empty string — those mean different things."""
+    store = isolated_sqlite_db
+    sid = store.start_or_get_session("otel-content", source="claude_code")
+    store.append_context_block(
+        sid,
+        {
+            "category": "system", "label": "System prompt", "char_count": 20,
+            "token_estimate": 5, "turn_n": None, "content": "You are a helpful assistant.",
+        },
+    )
+    store.append_context_block(
+        sid, {"category": "user", "label": "User message", "char_count": 40, "token_estimate": 10, "turn_n": 0}
+    )
+
+    timeline = store.get_context_timeline(sid)
+    assert timeline[0]["content"] == "You are a helpful assistant."
+    assert timeline[1]["content"] is None
+
+
 def test_close_session_marks_status_and_applies_final_totals(isolated_sqlite_db):
     """close_session's final_totals overwrite the incrementally-summed
     values with the client's own exact final report, when given."""

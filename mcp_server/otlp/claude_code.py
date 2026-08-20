@@ -53,6 +53,7 @@ from mcp_server.otlp.common import (
     CATEGORY_USER,
     attrs_list_to_dict,
     estimate_tokens,
+    truncate_content,
 )
 
 # Narrow, deliberate exception set for per-record try/except in the batch
@@ -71,7 +72,12 @@ _SKIP_EXCEPTIONS = (KeyError, TypeError, json.JSONDecodeError, SessionOwnershipE
 # ---------------------------------------------------------------------------
 
 
-def _mk_block(category, label, text, turn_n, status=None):
+def _mk_block(category, label, text, turn_n, status=None, capture_content=True):
+    """capture_content=False for blocks whose `text` is a synthetic
+    placeholder/redaction marker, not real content (see
+    _mk_reasoning_block) — char_count/token_estimate still reflect the
+    real size, but nothing gets stored for the Context Explorer's
+    expand-to-view feature to show."""
     text = text or ""
     return {
         "category": category,
@@ -80,6 +86,7 @@ def _mk_block(category, label, text, turn_n, status=None):
         "token_estimate": estimate_tokens(text),
         "turn_n": turn_n,
         "status": status,
+        "content": truncate_content(text) if capture_content else None,
     }
 
 
@@ -128,11 +135,15 @@ def _mk_reasoning_block(item, turn_n):
     real thinking text to show. Use whatever placeholder/redaction-marker
     text is present for sizing; if there's truly none, force a minimal
     nonzero token_estimate (never 0 — a real reasoning block did consume
-    real tokens even though we can't see the content)."""
+    real tokens even though we can't see the content). status="redacted"
+    (not baked into the label) so the dashboard's existing redacted-block
+    styling/copy applies the same way a redacted tool_result's status
+    does; capture_content=False since the placeholder text isn't real
+    content worth storing for the expand-to-view feature."""
     text = item.get("thinking") or item.get("data") or ""
     if not isinstance(text, str):
         text = str(text)
-    block = _mk_block(CATEGORY_REASONING, "reasoning (redacted)", text, turn_n)
+    block = _mk_block(CATEGORY_REASONING, "reasoning", text, turn_n, status="redacted", capture_content=False)
     if block["token_estimate"] == 0:
         block["token_estimate"] = 1
     return block

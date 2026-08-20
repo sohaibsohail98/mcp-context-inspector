@@ -110,6 +110,8 @@ def record_session(prompt, model_id, loop_result, owner=None):
             }
             if block.get("status") is not None:
                 item["status"] = block["status"]
+            if block.get("content") is not None:
+                item["content"] = block["content"]
             batch.put_item(Item=item)
     return session_id
 
@@ -217,6 +219,7 @@ def get_context_timeline(session_id, owner=None):
             "token_estimate": i["token_estimate"],
             "turn_n": i["turn_n"],
             "status": i.get("status"),
+            "content": i.get("content"),
         }
         for i in items
     )
@@ -472,8 +475,8 @@ def append_tool_call(session_id, tool_call, owner=None):
 
 def append_context_block(session_id, block, owner=None):
     """block: {category, label, char_count, token_estimate, turn_n,
-    status=None} — same shape record_session's context_blocks rows use.
-    owner must match the session's own owner."""
+    status=None, content=None} — same shape record_session's
+    context_blocks rows use. owner must match the session's own owner."""
     _check_ownership_or_raise(session_id, owner)
 
     def build_item(seq):
@@ -488,6 +491,8 @@ def append_context_block(session_id, block, owner=None):
         }
         if block.get("status") is not None:
             item["status"] = block["status"]
+        if block.get("content") is not None:
+            item["content"] = block["content"]
         return item
 
     _put_next_indexed(session_id, "CTXBLOCK#", build_item)

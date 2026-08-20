@@ -65,7 +65,8 @@ _SCHEMA = """
         char_count INTEGER,
         token_estimate INTEGER,
         turn_n INTEGER,
-        status TEXT
+        status TEXT,
+        content TEXT
     );
 """
 
@@ -123,6 +124,18 @@ def _migrate_tool_calls_table(conn):
             conn.execute(f"ALTER TABLE tool_calls ADD COLUMN {column} {type_} DEFAULT 0")
 
 
+def _migrate_context_blocks_table(conn):
+    """Same reasoning as _migrate_turns_table — a context_blocks table
+    from before block content was captured has no `content` column.
+    Existing rows get content=NULL, meaning "not captured for this
+    block" (shown as such in the Context Explorer), not an empty
+    string — those are different things: an empty string is a
+    genuinely blank block, NULL is "we never stored it"."""
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(context_blocks)")}
+    if "content" not in existing:
+        conn.execute("ALTER TABLE context_blocks ADD COLUMN content TEXT")
+
+
 def _connect():
     # CREATE TABLE IF NOT EXISTS is cheap and idempotent, so every caller
     # (record AND every read) gets a guaranteed-initialized DB through
@@ -135,6 +148,7 @@ def _connect():
     _migrate_turns_table(conn)
     _migrate_sessions_table(conn)
     _migrate_tool_calls_table(conn)
+    _migrate_context_blocks_table(conn)
     conn.commit()
     return conn
 
@@ -209,7 +223,7 @@ def record_session(prompt, model_id, loop_result, owner=None):
         )
     for seq, block in enumerate(loop_result.get("context_blocks", [])):
         conn.execute(
-            "INSERT INTO context_blocks VALUES (?,?,?,?,?,?,?,?)",
+            "INSERT INTO context_blocks VALUES (?,?,?,?,?,?,?,?,?)",
             (
                 session_id,
                 seq,
@@ -219,6 +233,7 @@ def record_session(prompt, model_id, loop_result, owner=None):
                 block["token_estimate"],
                 block["turn_n"],
                 block.get("status"),
+                block.get("content"),
             ),
         )
     conn.commit()
@@ -363,7 +378,7 @@ def get_context_timeline(session_id, owner=None):
         conn.close()
         return []
     rows = conn.execute(
-        "SELECT category, label, char_count, token_estimate, turn_n, status FROM context_blocks "
+        "SELECT category, label, char_count, token_estimate, turn_n, status, content FROM context_blocks "
         "WHERE session_id=? ORDER BY seq",
         (session_id,),
     ).fetchall()
@@ -517,14 +532,14 @@ def append_tool_call(session_id, tool_call, owner=None):
 
 def append_context_block(session_id, block, owner=None):
     """block: {category, label, char_count, token_estimate, turn_n,
-    status=None} — same shape record_session's context_blocks rows use.
-    owner must match the session's own owner (see
-    _check_ownership_or_raise)."""
+    status=None, content=None} — same shape record_session's
+    context_blocks rows use. owner must match the session's own owner
+    (see _check_ownership_or_raise)."""
     conn = _connect()
     _check_ownership_or_raise(conn, session_id, owner)
     seq = _next_seq(conn, "context_blocks", session_id)
     conn.execute(
-        "INSERT INTO context_blocks VALUES (?,?,?,?,?,?,?,?)",
+        "INSERT INTO context_blocks VALUES (?,?,?,?,?,?,?,?,?)",
         (
             session_id,
             seq,
@@ -534,6 +549,7 @@ def append_context_block(session_id, block, owner=None):
             block["token_estimate"],
             block["turn_n"],
             block.get("status"),
+            block.get("content"),
         ),
     )
     conn.commit()
