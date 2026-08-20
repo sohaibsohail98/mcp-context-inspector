@@ -201,7 +201,7 @@ def seed(out_path: Path):
         cost = estimate_cost(s["model_id"], input_tokens, output_tokens)
 
         conn.execute(
-            "INSERT INTO sessions VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO sessions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 s["session_id"],
                 s["prompt"],
@@ -214,6 +214,8 @@ def seed(out_path: Path):
                 cost,
                 s["ts"],
                 None,
+                "bedrock_agent",
+                "closed",
             ),
         )
         for i, turn in enumerate(s["turns"]):
@@ -231,12 +233,12 @@ def seed(out_path: Path):
             )
         for i, call in enumerate(s["trace"]):
             conn.execute(
-                "INSERT INTO tool_calls VALUES (?,?,?,?,?)",
-                (s["session_id"], i, call["tool"], json.dumps(call["args"]), call["status"]),
+                "INSERT INTO tool_calls VALUES (?,?,?,?,?,?,?)",
+                (s["session_id"], i, call["tool"], json.dumps(call["args"]), call["status"], 0, s["ts"]),
             )
         for seq, block in enumerate(s["context_blocks"]):
             conn.execute(
-                "INSERT INTO context_blocks VALUES (?,?,?,?,?,?,?,?)",
+                "INSERT INTO context_blocks VALUES (?,?,?,?,?,?,?,?,?)",
                 (
                     s["session_id"],
                     seq,
@@ -246,6 +248,7 @@ def seed(out_path: Path):
                     block["token_estimate"],
                     block["turn_n"],
                     block.get("status"),
+                    block.get("content"),
                 ),
             )
     conn.commit()
