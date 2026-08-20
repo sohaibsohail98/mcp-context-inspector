@@ -1,18 +1,18 @@
 # Deployment
 
-Stub — full deploy walkthrough not written yet. What's true today:
+Stub, full deploy walkthrough not written yet. What's true today:
 
 - Deployed to Cloud Run (`us-central1`), `--min-instances 0
   --max-instances 3`, no CPU-always-allocated, an Artifact Registry
   cleanup policy keeping the 3 most recent images.
 - `STORAGE_BACKEND=sqlite`, seeded from a deterministic demo dataset
   (`scripts/seed_demo_db.py` → `demo/metrics.db`, baked into the image)
-  via `DEMO_SEED_SRC` + `METRICS_DB_PATH` env vars — writes behind
+  via `DEMO_SEED_SRC` + `METRICS_DB_PATH` env vars. Writes behind
   Google sign-in land in an ephemeral copy that resets on cold start,
   documented tradeoff, not a bug.
 - Warmed by 2 Cloud Scheduler jobs hitting `/health` every 10 minutes.
 - Fronted by a Cloudflare Worker (`cloudflare-proxy/`, deployed with
-  `npx wrangler deploy`) — a transparent fetch-and-stream reverse proxy
+  `npx wrangler deploy`), a transparent fetch-and-stream reverse proxy
   giving this service a short, permanent public URL
   (`https://mcp-inspector.sohaibsohail.workers.dev`) instead of the raw
   Cloud Run `.run.app` one. Cloud Run's `CHAT_UI_ORIGIN` env var (CORS
@@ -26,7 +26,7 @@ Stub — full deploy walkthrough not written yet. What's true today:
   from `env.ORIGIN` (`cloudflare-proxy/wrangler.toml`), so the Host
   header Cloud Run's container actually sees is that literal
   `env.ORIGIN` hostname (currently
-  `mcp-context-inspector-1097847824883.us-central1.run.app`) — not the
+  `mcp-context-inspector-1097847824883.us-central1.run.app`), not the
   `mcp-inspector.workers.dev` proxy hostname, and not necessarily the
   hash-based `*.a.run.app` hostname `gcloud run services describe`
   reports (Cloud Run services can have both a project-number and a
@@ -38,10 +38,22 @@ Stub — full deploy walkthrough not written yet. What's true today:
   commas) if the Cloud Run URL or `cloudflare-proxy/wrangler.toml`'s
   `ORIGIN` ever changes. Getting this wrong manifests as every
   authenticated production request to `/mcp` failing with `421 Invalid
-  Host header` — CORS/preflight and unauthenticated (401) requests look
+  Host header`. CORS/preflight and unauthenticated (401) requests look
   fine, so a plain unauthenticated curl smoke test won't catch it; test
   with a real bearer token.
 
-GitHub Actions deploy workflow (Workload Identity Federation) is live —
-pushes to `main` touching `mcp_server/**` (or other deploy-relevant
+GitHub Actions deploy workflow (Workload Identity Federation) is live.
+Pushes to `main` touching `mcp_server/**` (or other deploy-relevant
 paths) auto-deploy to the Cloud Run service and Cloudflare Worker above.
+
+## Running it locally
+
+For local development and testing before pushing (see the README's
+"Run it locally" section for the exact commands): set
+`STORAGE_BACKEND=sqlite`, point `METRICS_DB_PATH` at a scratch file so
+you don't touch `data/metrics.db`, set a fixed `MCP_AUTH_TOKEN` so it
+doesn't rotate on every restart, and optionally set
+`GOOGLE_OAUTH_CLIENT_ID` (with `http://localhost:8787` as an authorized
+JavaScript origin on that client) to test the real Google sign-in
+button. Without it, `/auth/login` still renders and works with the
+owner token alone.

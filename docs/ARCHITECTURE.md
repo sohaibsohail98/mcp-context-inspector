@@ -33,11 +33,11 @@ direct Python import for your own local agent (owner defaults to
 `None`, the server owner), the authenticated MCP tool / REST route for
 anyone else's remote agent (owner resolved from their bearer token),
 and the `/otlp/v1/{logs,metrics,traces}` routes that accept Claude
-Code's/Copilot's own native OpenTelemetry export directly — no
+Code's/Copilot's own native OpenTelemetry export directly. No
 `record_session` call needed, just OTLP env vars pointed at this
 server (see the README's "Claude Code / Copilot live telemetry"
-section). Every read goes through the same layer, filtered by `owner`
-— see `docs/AUTH.md` for the isolation guarantee.
+section). Every read goes through the same layer, filtered by `owner`;
+see `docs/AUTH.md` for the isolation guarantee.
 
 Unlike `record_session`'s one-shot "here's the whole finished session"
 write, OTLP ingestion is incremental: each batch calls
@@ -46,7 +46,7 @@ write, OTLP ingestion is incremental: each batch calls
 against what's already stored so a retried/duplicate batch is safe to
 reprocess. `mcp_server/otlp/claude_code.py` and `copilot.py` hold the
 per-vendor mapping from each client's native OTLP attribute shape to
-that append call sequence — see their module docstrings for the wire
+that append call sequence; see their module docstrings for the wire
 format each is written against.
 
 ## The `record_session` contract
@@ -59,7 +59,7 @@ format each is written against.
     "trace": [{"tool": "...", "args": {...}, "status": "ok"}, ...],
     "turns": [{"input_tokens": int, "output_tokens": int, "latency_ms": int}, ...],
     "input_tokens": int, "output_tokens": int, "total_tokens": int, "latency_ms": int,
-    "context_blocks": [   # optional — omit and you just lose the Explorer, nothing crashes
+    "context_blocks": [   # optional: omit and you just lose the Explorer, nothing crashes
         {"category": "system", "label": "...", "char_count": int, "token_estimate": int, "turn_n": int | None},
         ...
     ],
@@ -72,9 +72,9 @@ key for color-coding failures), `answer`.
 
 ## Storage backends
 
-`STORAGE_BACKEND=sqlite` (default, local dev — `data/metrics.db`, or
+`STORAGE_BACKEND=sqlite` (default, local dev; `data/metrics.db`, or
 `METRICS_DB_PATH` to point elsewhere) or `STORAGE_BACKEND=dynamodb`
-(set `METRICS_TABLE`/`AWS_REGION`) — same function signatures either
+(set `METRICS_TABLE`/`AWS_REGION`); same function signatures either
 way, callers in `metrics/store.py` never know which backend is active.
 DynamoDB exists because a deployed container's local filesystem doesn't
 persist across invocations; SQLite is enough for local dev and for a

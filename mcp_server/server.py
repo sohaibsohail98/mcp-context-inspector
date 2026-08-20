@@ -334,12 +334,16 @@ _PAGE_STYLE = """
   html { background: var(--bg); }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
-    max-width: 640px; margin: 0 auto; padding: 4.5rem 1.5rem 5rem;
+    min-height: 100vh;
     background:
       radial-gradient(1200px 480px at 50% -10%, rgba(53,224,200,0.10), transparent 60%),
       var(--bg);
     color: var(--text); line-height: 1.6; -webkit-font-smoothing: antialiased;
   }
+  /* Sign-in / connect-config content stays a narrow reading column;
+     the post-auth dashboard screen (#dashboard-screen below) is a
+     separate full-width sibling, not nested inside this. */
+  .narrow-page { max-width: 640px; margin: 0 auto; padding: 4.5rem 1.5rem 5rem; }
   .brand { display: flex; align-items: center; gap: 0.65rem; margin-bottom: 1.1rem; }
   .brand-mark {
     display: flex; align-items: center; justify-content: center;
@@ -519,7 +523,22 @@ _PAGE_STYLE = """
   .dash-error { color: var(--warn); }
 
   .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-variant-numeric: tabular-nums; }
-  .layout { display: grid; grid-template-columns: 1fr; gap: 1rem; padding: 0; max-width: none; margin: 0; }
+  #dashboard-screen { background: var(--bg); }
+  .topbar {
+    display: flex; align-items: center; gap: 1rem; padding: 0.85rem 1.5rem;
+    border-bottom: 1px solid var(--border); background: var(--bg-raised); position: sticky; top: 0; z-index: 5;
+  }
+  .topbar .brand { margin-bottom: 0; }
+  .topbar-spacer { flex: 1; }
+  .live-pill {
+    display: inline-flex; align-items: center; gap: 0.4rem; font-size: 11.5px; color: var(--ok);
+    background: var(--ok-dim); border: 1px solid color-mix(in srgb, var(--ok) 35%, transparent);
+    padding: 0.28rem 0.65rem; border-radius: 999px; font-weight: 550;
+  }
+  .live-dot { width: 6px; height: 6px; border-radius: 999px; background: var(--ok); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+  @media (prefers-reduced-motion: reduce) { .live-dot { animation: none; } }
+  .layout { display: grid; grid-template-columns: 1fr; gap: 1rem; padding: 1.4rem 1.5rem 4rem; max-width: 1320px; margin: 0 auto; }
   .kpi-strip { display: grid; grid-template-columns: repeat(6, 1fr); gap: 0.7rem; }
   @media (max-width: 1100px) { .kpi-strip { grid-template-columns: repeat(3, 1fr); } }
   .kpi { background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.85rem 1rem; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 0.35rem; min-width: 0; }
@@ -728,6 +747,7 @@ async def auth_login(request: Request):
 <style>{_PAGE_STYLE}</style>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head><body>
+<div class="narrow-page">
 <div id="intro">{intro}
 <div class="card">
   <h3>Sign in to get your token</h3>
@@ -737,6 +757,8 @@ async def auth_login(request: Request):
 </div>
 </div>
 <div id="landing" class="hidden"></div>
+</div>
+<div id="dashboard-screen" class="hidden"></div>
 <script>
   const mcpUrl = window.location.origin + "/mcp";
 
@@ -838,16 +860,12 @@ async def auth_login(request: Request):
         </div>
       </div>
 
-      <div class="card accent" style="max-width: none;">
-        <div style="display:flex; align-items:center; justify-content:space-between; gap:0.6rem; flex-wrap:wrap;">
-          <h3>Live dashboard <span class="badge">auto-refreshes</span></h3>
-          <button class="icon-btn" onclick="toggleSettings()">&#9881; Project settings</button>
-        </div>
+      <div class="card accent">
+        <h3>Live dashboard <span class="badge">ready</span></h3>
         <p class="card-hint">Your own sessions only — every ` + "`record_session`" + ` call from your LLM/agent
         (recorded through the token above) shows up here within a few seconds, including the full
         Context Window Explorer breakdown. No separate app needed.</p>
-        <div id="dash-root"><p class="dash-empty">Loading…</p></div>
-        <div id="settings-root" class="hidden"></div>
+        <button class="copy" onclick="goToDashboard()">Proceed to dashboard &rarr;</button>
       </div>
 
       <details>
@@ -867,6 +885,51 @@ async def auth_login(request: Request):
   function showConnectTab(name) {{
     document.querySelectorAll(".tab-btn").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
     document.querySelectorAll(".tab-panel").forEach((p) => p.classList.toggle("active", p.dataset.panel === name));
+  }}
+
+  // --- Post-auth dashboard screen -------------------------------------
+  // A separate full-width screen (not nested in the narrow sign-in/
+  // config column) reached via "Proceed to dashboard" after a fresh
+  // sign-in, or automatically on a returning visit with a stored token
+  // (see rehydrateFromStorage) — matches the approved dashboard mockup's
+  // own topbar + wide layout rather than squeezing it into a card.
+  function avatarInitial(email) {{
+    return (email || "?").trim()[0]?.toUpperCase() || "?";
+  }}
+
+  function dashboardScreen(email, avatarLetter) {{
+    return `
+      <div class="topbar">
+        <div class="brand">
+          <span class="brand-mark">&#9670;</span>
+          <span style="font-weight:650; font-size:0.95rem;">mcp-context-inspector</span>
+        </div>
+        <div class="topbar-spacer"></div>
+        <span class="live-pill"><span class="live-dot"></span> live</span>
+        <button class="icon-btn" onclick="toggleSettings()">&#9881; Project settings</button>
+        <button class="icon-btn" onclick="backToConnect()">&larr; Token &amp; config</button>
+        <div class="identity-row" style="margin-bottom:0;">
+          <span class="avatar">` + avatarLetter + `</span>
+          ` + email + `
+        </div>
+      </div>
+      <div id="dash-root"><p class="dash-empty">Loading…</p></div>
+      <div id="settings-root" class="hidden"></div>
+    `;
+  }}
+
+  function goToDashboard() {{
+    document.querySelector(".narrow-page").classList.add("hidden");
+    const screen = document.getElementById("dashboard-screen");
+    screen.innerHTML = dashboardScreen(currentEmail, avatarInitial(currentEmail));
+    screen.classList.remove("hidden");
+    mountDashboard(currentToken);
+  }}
+
+  function backToConnect() {{
+    if (dashboardTimer) clearInterval(dashboardTimer);
+    document.getElementById("dashboard-screen").classList.add("hidden");
+    document.querySelector(".narrow-page").classList.remove("hidden");
   }}
 
   function copyText(id) {{
@@ -1371,9 +1434,11 @@ async def auth_login(request: Request):
   }}
 
   let pendingCredential = null;
+  let currentEmail = null;
+  let currentToken = null;
 
   function consentPage(email) {{
-    const initial = (email || "?").trim()[0]?.toUpperCase() || "?";
+    const initial = avatarInitial(email);
     return `
       <div class="handshake">
         <div class="icon-circle">◈</div>
@@ -1442,8 +1507,9 @@ async def auth_login(request: Request):
       pendingCredential = null;
       if (res.ok) {{
         persistSession(data.mcp_token, data.email);
+        currentEmail = data.email;
+        currentToken = data.mcp_token;
         landing.innerHTML = successBanner(data.email) + connectPage(data.email, data.mcp_token);
-        mountDashboard(data.mcp_token);
       }} else {{
         landing.innerHTML = "<div class='card security'>Sign-in failed: " + (data.error || "unknown error") + "</div>";
       }}
@@ -1474,27 +1540,35 @@ async def auth_login(request: Request):
     localStorage.removeItem(SS_TOKEN);
     localStorage.removeItem(SS_EMAIL);
     pendingCredential = null;
+    currentEmail = null;
+    currentToken = null;
     dashboardSelected = null;
-    if (dashboardTimer) clearInterval(dashboardTimer);
+    backToConnect();
+    document.getElementById("dashboard-screen").innerHTML = "";
     document.getElementById("landing").classList.add("hidden");
     document.getElementById("landing").innerHTML = "";
     document.getElementById("intro").classList.remove("hidden");
   }}
 
-  // Runs once on load. A stored token is trusted enough to render the
-  // dashboard immediately (no flash of the sign-in screen), but then
-  // verified with a real request — a token revoked server-side since
-  // the last visit signs this browser back out instead of showing a
-  // dashboard that just 401s on every fetch.
+  // Runs once on load. A stored token is trusted enough to go straight
+  // to the dashboard screen (no flash of the sign-in screen for a
+  // returning visitor), but then verified with a real request — a
+  // token revoked server-side since the last visit signs this browser
+  // back out instead of showing a dashboard that just 401s on every
+  // fetch. The connect/config cards render into #landing too (kept
+  // hidden) so "Token & config" on the dashboard topbar has content
+  // ready without a page reload.
   function rehydrateFromStorage() {{
     const token = localStorage.getItem(SS_TOKEN);
     const email = localStorage.getItem(SS_EMAIL);
     if (!token || !email) return;
+    currentEmail = email;
+    currentToken = token;
     document.getElementById("intro").classList.add("hidden");
     const landing = document.getElementById("landing");
     landing.classList.remove("hidden");
     landing.innerHTML = successBanner(email) + connectPage(email, token);
-    mountDashboard(token);
+    goToDashboard();
     apiGet(token, "/api/sessions?limit=1").catch(() => signOut());
   }}
 
