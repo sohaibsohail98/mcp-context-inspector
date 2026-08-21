@@ -9,6 +9,7 @@ on:
       - "mci_common/**"
       - "scripts/**"
       - "demo/**"
+      - "webapp/**"
       - "Dockerfile"
       - "pyproject.toml"
       - "cloudflare-proxy/**"
