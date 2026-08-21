@@ -11,6 +11,11 @@ COPY metrics/ ./metrics/
 COPY mci_common/ ./mci_common/
 RUN pip install --no-cache-dir .
 
+# Static files for the mobile webapp (mcp_server/routes/webapp.py resolves
+# these relative to the repo root at runtime, not through the Python
+# package install above).
+COPY webapp/ ./webapp/
+
 # Deterministic demo dataset (scripts/seed_demo_db.py) — only used when
 # the deploy sets DEMO_SEED_SRC + METRICS_DB_PATH (see README/docs); a
 # local dev run of this image ignores both and behaves as before.
