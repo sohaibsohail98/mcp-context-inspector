@@ -17,6 +17,23 @@ def isolated_sqlite_db(tmp_path, monkeypatch):
 
 
 @pytest.fixture
+def isolated_firestore_db(monkeypatch):
+    """Point store_firestore at a fresh, unique top-level collection per
+    test — same reasoning as isolated_sqlite_db, but Firestore (even the
+    emulator) has no per-test DB-file-reset primitive like SQLite's
+    tmp_path, so isolation instead comes from a unique collection name
+    per test rather than a unique database. Requires the emulator (see
+    FIRESTORE_EMULATOR_HOST) — callers are responsible for skipping when
+    it isn't reachable."""
+    import uuid
+
+    from metrics import store_firestore
+
+    monkeypatch.setattr(store_firestore, "SESSIONS_COLLECTION", f"test_sessions_{uuid.uuid4().hex}")
+    return store_firestore
+
+
+@pytest.fixture
 def isolated_auth_store(tmp_path, monkeypatch):
     """Point the SQLite auth backend at a fresh, empty DB file per test —
     same reasoning as isolated_sqlite_db, never the developer's real
@@ -31,6 +48,44 @@ def isolated_auth_store(tmp_path, monkeypatch):
 
     monkeypatch.setattr(auth_store_sqlite, "DB_PATH", tmp_path / "test_mcp_auth.db")
     return auth_store_sqlite
+
+
+@pytest.fixture
+def isolated_firestore_auth_store():
+    """Point the Firestore auth backend at a fresh set of collections per
+    test, via a unique collection-name prefix — same isolation goal as
+    isolated_auth_store, but Firestore (even the emulator) has no
+    per-test "fresh DB file" equivalent, so prefixing collection names
+    is the practical substitute: each test gets its own
+    mcp_users/oauth_clients/oauth_codes/oauth_tokens namespace and tests
+    can't see each other's data. Requires FIRESTORE_EMULATOR_HOST to be
+    set — callers are expected to skip when it isn't (see
+    tests/test_auth_store_firestore.py's module-level skipif)."""
+    import uuid
+
+    from mcp_server.auth import store_firestore as auth_store_firestore
+
+    prefix = f"test{uuid.uuid4().hex[:8]}_"
+    original_collections = {
+        name: getattr(auth_store_firestore, name)
+        for name in ("_users", "_clients", "_codes", "_tokens")
+    }
+
+    def _mk(collection_name):
+        def _accessor():
+            return auth_store_firestore._db().collection(prefix + collection_name)
+
+        return _accessor
+
+    auth_store_firestore._users = _mk("mcp_users")
+    auth_store_firestore._clients = _mk("oauth_clients")
+    auth_store_firestore._codes = _mk("oauth_codes")
+    auth_store_firestore._tokens = _mk("oauth_tokens")
+    try:
+        yield auth_store_firestore
+    finally:
+        for name, fn in original_collections.items():
+            setattr(auth_store_firestore, name, fn)
 
 
 @pytest.fixture(autouse=True)

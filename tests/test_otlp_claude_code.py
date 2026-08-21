@@ -247,6 +247,240 @@ def test_tool_result_message_does_not_inflate_turn_number(isolated_sqlite_db):
     assert turn_numbers == {0}
 
 
+def test_first_user_message_backfills_session_prompt(isolated_sqlite_db):
+    """OTLP sessions are created via start_or_get_session with
+    prompt=None (unlike record_session's one-shot Bedrock path, which
+    gets its prompt as a direct argument) — nothing else ever populates
+    it, so the dashboard showed "(no prompt)" for every OTLP session even
+    though the real conversation content was captured correctly.
+    append_context_block must backfill sessions.prompt from the first
+    real user-message context block."""
+    store = isolated_sqlite_db
+
+    request_body = {
+        "messages": [{"role": "user", "content": "What services are degraded right now?"}],
+    }
+    claude_code.handle_logs(
+        RESOURCE_ATTRS,
+        [_log_record("api_request_body", request_body, session_id="sess-prompt")],
+        owner=None,
+    )
+
+    metrics = store.get_session_metrics("sess-prompt")
+    assert metrics["prompt_metrics"]["prompt"] == "What services are degraded right now?"
+
+
+def test_later_user_message_does_not_overwrite_first_prompt(isolated_sqlite_db):
+    """Turn 0's user message sets sessions.prompt; a second/later turn's
+    user message must never clobber it — the prompt column is meant to
+    reflect how the session started, not its most recent turn."""
+    store = isolated_sqlite_db
+
+    first_request = {
+        "messages": [{"role": "user", "content": "first question"}],
+    }
+    first_response = {
+        "content": [{"type": "text", "text": "first answer"}],
+        "usage": {"input_tokens": 10, "output_tokens": 5},
+    }
+    second_request = {
+        "messages": [
+            {"role": "user", "content": "first question"},
+            {"role": "assistant", "content": [{"type": "text", "text": "first answer"}]},
+            {"role": "user", "content": "second question, totally different"},
+        ],
+    }
+
+    claude_code.handle_logs(
+        RESOURCE_ATTRS,
+        [
+            _log_record("api_request_body", first_request, session_id="sess-prompt-2"),
+            _log_record("api_response_body", first_response, session_id="sess-prompt-2"),
+        ],
+        owner=None,
+    )
+    claude_code.handle_logs(
+        RESOURCE_ATTRS,
+        [_log_record("api_request_body", second_request, session_id="sess-prompt-2")],
+        owner=None,
+    )
+
+    metrics = store.get_session_metrics("sess-prompt-2")
+    assert metrics["prompt_metrics"]["prompt"] == "first question"
+
+
+def test_shape_shift_does_not_triple_user_message_blocks(isolated_sqlite_db):
+    """Regression test for the reported bug: real Claude Code sessions
+    inject content (e.g. a <system-reminder> block carrying environment
+    context) AHEAD of already-seen text in a later request, changing the
+    SHAPE of messages[] between requests in a way that isn't a strict
+    tail-append. The old length-based slice (fresh_blocks[len(existing):])
+    would then misalign and re-append already-stored blocks as
+    duplicates. The occurrence-indexed identity dedup must handle this
+    correctly.
+
+    Request 1 sends a single <session>-wrapped user message. Request 2
+    sends the SAME cumulative history reshaped: a new
+    <system-reminder>-wrapped message is placed BEFORE the original
+    <session>-wrapped message (chosen over "after" because that's the
+    ordering that actually breaks a length-slice diff here — a suffix
+    slice starting at len(existing)==1 would, with "after" placement,
+    still land on genuinely new content; with "before" placement it
+    instead lands on the tail of the ALREADY-SEEN <session> message,
+    which is exactly the duplication bug being reproduced)."""
+    store = isolated_sqlite_db
+
+    first_request = {
+        "messages": [
+            {"role": "user", "content": "<session>\nWhat's the deploy process?\n</session>"},
+        ],
+    }
+    second_request = {
+        "messages": [
+            {
+                "role": "user",
+                "content": (
+                    "<system-reminder>\nSome injected context here.\n</system-reminder>\n\n"
+                    "What's the deploy process?"
+                ),
+            },
+            {"role": "user", "content": "<session>\nWhat's the deploy process?\n</session>"},
+        ],
+    }
+
+    claude_code.handle_logs(
+        RESOURCE_ATTRS,
+        [_log_record("api_request_body", first_request, session_id="sess-shape")],
+        owner=None,
+    )
+    claude_code.handle_logs(
+        RESOURCE_ATTRS,
+        [_log_record("api_request_body", second_request, session_id="sess-shape")],
+        owner=None,
+    )
+
+    timeline = store.get_context_timeline("sess-shape")
+    user_blocks = [b for b in timeline if b["category"] == "user"]
+    assert len(user_blocks) == 2
+
+    seen = set()
+    for b in user_blocks:
+        key = (b["category"], b["label"], b["content"])
+        assert key not in seen, f"duplicate block found: {key}"
+        seen.add(key)
+
+
+def test_third_identical_resend_appends_nothing(isolated_sqlite_db):
+    """Pure idempotency: if Claude Code resends the exact same cumulative
+    history a third time totally unchanged, no new blocks should be
+    appended at all."""
+    store = isolated_sqlite_db
+
+    request_body = {
+        "messages": [
+            {"role": "user", "content": "<system-reminder>\nSome injected context here.\n</system-reminder>\n\nWhat's the deploy process?"},
+            {"role": "user", "content": "<session>\nWhat's the deploy process?\n</session>"},
+        ],
+    }
+
+    for _ in range(3):
+        claude_code.handle_logs(
+            RESOURCE_ATTRS,
+            [_log_record("api_request_body", request_body, session_id="sess-idempotent")],
+            owner=None,
+        )
+
+    timeline = store.get_context_timeline("sess-idempotent")
+    user_blocks = [b for b in timeline if b["category"] == "user"]
+    assert len(user_blocks) == 2
+
+
+def test_byte_identical_tool_results_in_same_request_are_both_stored(isolated_sqlite_db):
+    """Legitimate-repeat edge case: two tool_result blocks in the SAME
+    request that happen to have byte-identical content (e.g. two tool
+    calls both returning "OK") are genuinely distinct occurrences and
+    must both be stored — the occurrence-index approach must not dedupe
+    them away as if they were the same occurrence."""
+    store = isolated_sqlite_db
+
+    request_body = {
+        "messages": [
+            {"role": "user", "content": "run both checks"},
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "t1", "name": "check_a", "input": {}},
+                    {"type": "tool_use", "id": "t2", "name": "check_b", "input": {}},
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "t1", "content": "OK"},
+                    {"type": "tool_result", "tool_use_id": "t2", "content": "OK"},
+                ],
+            },
+        ],
+    }
+    claude_code.handle_logs(
+        RESOURCE_ATTRS,
+        [_log_record("api_request_body", request_body, session_id="sess-repeat")],
+        owner=None,
+    )
+
+    timeline = store.get_context_timeline("sess-repeat")
+    tool_results = [b for b in timeline if b["category"] == "tool_result"]
+    # Distinct labels (tool_use_id is embedded in the label), so this
+    # isn't even a same-identity case — but assert content explicitly too.
+    assert len(tool_results) == 2
+    assert all(b["content"] == "OK" for b in tool_results)
+
+
+def test_same_identity_repeat_admits_second_genuine_occurrence(isolated_sqlite_db):
+    """Exercises the occurrence-index Counter logic directly for blocks
+    that DO share an identical (category, label, content) key — e.g. two
+    plain assistant text replies that happen to be byte-identical
+    ("Done."). Request 1 sends one such assistant turn; request 2 resends
+    that turn PLUS a second, genuinely new occurrence of the exact same
+    text later in the conversation. The dedup must admit exactly one new
+    block (the 2nd occurrence), not zero (over-dedup) and not two
+    (under-dedup of the already-stored 1st occurrence)."""
+    store = isolated_sqlite_db
+
+    first_request = {
+        "messages": [
+            {"role": "user", "content": "ping"},
+            {"role": "assistant", "content": [{"type": "text", "text": "Done."}]},
+        ],
+    }
+    second_request = {
+        "messages": [
+            {"role": "user", "content": "ping"},
+            {"role": "assistant", "content": [{"type": "text", "text": "Done."}]},
+            {"role": "user", "content": "ping again"},
+            {"role": "assistant", "content": [{"type": "text", "text": "Done."}]},
+        ],
+    }
+
+    claude_code.handle_logs(
+        RESOURCE_ATTRS,
+        [_log_record("api_request_body", first_request, session_id="sess-same-identity")],
+        owner=None,
+    )
+    timeline_after_first = store.get_context_timeline("sess-same-identity")
+    assert len([b for b in timeline_after_first if b["label"] == "Assistant response"]) == 1
+
+    claude_code.handle_logs(
+        RESOURCE_ATTRS,
+        [_log_record("api_request_body", second_request, session_id="sess-same-identity")],
+        owner=None,
+    )
+    timeline_after_second = store.get_context_timeline("sess-same-identity")
+    done_blocks = [b for b in timeline_after_second if b["label"] == "Assistant response"]
+    assert len(done_blocks) == 2
+    assert all(b["content"] == "Done." for b in done_blocks)
+
+
 def test_body_is_read_from_attribute_not_log_record_body_field(isolated_sqlite_db):
     """Regression test for a bug found via a real local capture
     (CLAUDE_CODE_ENABLE_TELEMETRY=1, OTEL_LOG_RAW_API_BODIES=1): the raw

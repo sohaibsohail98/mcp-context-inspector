@@ -65,6 +65,26 @@ def test_quota_strip_has_no_fabricated_percentage(monkeypatch):
     assert "Not yet wired to a data source" in body
 
 
+def test_refresh_controls_present(monkeypatch):
+    """The Sessions panel must offer a manual refresh button and an
+    auto-refresh toggle, reusing the existing refreshDashboard/dashboardTimer
+    machinery rather than a second competing fetch/polling mechanism."""
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
+    app = server_module.server.streamable_http_app()
+    with TestClient(app) as client:
+        resp = client.get("/auth/login")
+
+    body = resp.text
+    for marker in (
+        "class=\"refresh-controls\"",
+        'id="manual-refresh-btn"',
+        "function manualRefresh()",
+        "function toggleAutoRefresh()",
+        "let dashboardAutoRefresh",
+    ):
+        assert marker in body, f"missing marker: {marker}"
+
+
 def test_settings_toggle_reuses_existing_tab_pattern(monkeypatch):
     """The ⚙ settings toggle must exist and follow the same show/hide-
     sibling-divs pattern already used for showConnectTab, not a new

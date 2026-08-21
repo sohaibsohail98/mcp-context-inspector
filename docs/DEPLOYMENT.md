@@ -5,11 +5,15 @@ Stub, full deploy walkthrough not written yet. What's true today:
 - Deployed to Cloud Run (`us-central1`), `--min-instances 0
   --max-instances 3`, no CPU-always-allocated, an Artifact Registry
   cleanup policy keeping the 3 most recent images.
-- `STORAGE_BACKEND=sqlite`, seeded from a deterministic demo dataset
-  (`scripts/seed_demo_db.py` → `demo/metrics.db`, baked into the image)
-  via `DEMO_SEED_SRC` + `METRICS_DB_PATH` env vars. Writes behind
-  Google sign-in land in an ephemeral copy that resets on cold start,
-  documented tradeoff, not a bug.
+- The public demo deployment runs `STORAGE_BACKEND=sqlite`, seeded from a
+  deterministic demo dataset (`scripts/seed_demo_db.py` → `demo/metrics.db`,
+  baked into the image) via `DEMO_SEED_SRC` + `METRICS_DB_PATH` env vars.
+  Writes behind Google sign-in land in an ephemeral copy that resets on
+  cold start. This is the right tradeoff for a free public demo (no
+  standing storage cost, no real user data to protect), not a limitation
+  of the storage layer itself — a real deployment sets
+  `STORAGE_BACKEND=firestore` or `STORAGE_BACKEND=dynamodb` instead; see
+  "Firestore setup" below.
 - Warmed by 2 Cloud Scheduler jobs hitting `/health` every 10 minutes.
 - Fronted by a Cloudflare Worker (`cloudflare-proxy/`, deployed with
   `npx wrangler deploy`), a transparent fetch-and-stream reverse proxy
@@ -45,6 +49,40 @@ Stub, full deploy walkthrough not written yet. What's true today:
 GitHub Actions deploy workflow (Workload Identity Federation) is live.
 Pushes to `main` touching `mcp_server/**` (or other deploy-relevant
 paths) auto-deploy to the Cloud Run service and Cloudflare Worker above.
+
+## Firestore setup
+
+For a real deployment where signed-in users' data needs to survive a
+Cloud Run cold start, set `STORAGE_BACKEND=firestore` on both the Cloud
+Run service and anywhere `mcp_server/auth/store.py` runs (the two stores
+share the same env var and must be switched together — see both
+dispatchers' docstrings). This backs both the session/metrics data
+(`metrics/store_firestore.py`) and the per-user auth token store
+(`mcp_server/auth/store_firestore.py`) with real, durable Firestore
+collections, so a cold start no longer resets a signed-in user's
+sessions or silently invalidates their token.
+
+- Uses `google.cloud.firestore.Client()` via Application Default
+  Credentials — no key file needed. Grant Cloud Run's built-in service
+  account the `roles/datastore.user` IAM role on the GCP project:
+  `gcloud projects add-iam-policy-binding <project> --member=serviceAccount:<cloud-run-sa> --role=roles/datastore.user`.
+- `get_recent_sessions`'s owner-scoped query
+  (`sessions.where("owner", "==", owner).order_by("timestamp", DESCENDING)`)
+  needs a composite index on `(owner ASC, timestamp DESC)` on the
+  `sessions` collection. Firestore's own error on the first unindexed
+  query includes a console link to create it, but don't rely on that
+  happening live in prod: create the index ahead of time via the Firestore
+  console (Indexes → Composite → Add Index → collection `sessions`,
+  fields `owner` Ascending + `timestamp` Descending) or `gcloud firestore
+  indexes composite create`.
+- Local testing against the real Firestore emulator (`gcloud emulators
+  firestore start`, or `firebase emulators:start` if using the Firebase
+  CLI) rather than a real GCP project: set `FIRESTORE_EMULATOR_HOST`
+  (e.g. `localhost:8080`) before starting the server or running
+  `uv run pytest` — the client library picks this up automatically, no
+  code changes needed. `tests/test_metrics_store_firestore.py` and
+  `tests/test_auth_store_firestore.py` skip cleanly if the emulator isn't
+  reachable.
 
 ## Running it locally
 

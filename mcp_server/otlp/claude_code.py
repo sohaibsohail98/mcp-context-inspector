@@ -40,6 +40,7 @@ Still unverified (no tool call happened in the captured session):
 """
 
 import json
+from collections import Counter
 
 from metrics import store
 from metrics.errors import SessionOwnershipError
@@ -55,6 +56,7 @@ from mcp_server.otlp.common import (
     estimate_tokens,
     truncate_content,
 )
+from mcp_server.otlp.redaction import redact
 
 # Narrow, deliberate exception set for per-record try/except in the batch
 # loops below: KeyError/TypeError cover malformed/missing dict shape,
@@ -77,7 +79,20 @@ def _mk_block(category, label, text, turn_n, status=None, capture_content=True):
     placeholder/redaction marker, not real content (see
     _mk_reasoning_block) — char_count/token_estimate still reflect the
     real size, but nothing gets stored for the Context Explorer's
-    expand-to-view feature to show."""
+    expand-to-view feature to show.
+
+    char_count/token_estimate are computed from the full, ORIGINAL text
+    before any redaction — these numbers must reflect real token spend,
+    which redaction doesn't change. `content`, by contrast, gets
+    redact()ed before truncate_content() is applied (redact-then-truncate,
+    not the reverse): redacting the full text first and then truncating
+    risks cutting a `[redacted-...]` placeholder in half right at the
+    truncation boundary, whereas truncating text that still contains the
+    original sensitive substring and redacting after is simpler to reason
+    about and matches "the stored preview is redacted." Net effect:
+    "stored preview" and "size numbers" are deliberately different
+    things, same asymmetry truncate_content already established, just
+    with an extra redaction step layered onto the stored side only."""
     text = text or ""
     return {
         "category": category,
@@ -86,7 +101,7 @@ def _mk_block(category, label, text, turn_n, status=None, capture_content=True):
         "token_estimate": estimate_tokens(text),
         "turn_n": turn_n,
         "status": status,
-        "content": truncate_content(text) if capture_content else None,
+        "content": truncate_content(redact(text)) if capture_content else None,
     }
 
 
@@ -266,14 +281,65 @@ def _current_turn_n(session_id, owner):
     return max(turn_ns) if turn_ns else 0
 
 
+def _block_identity(block):
+    """Hashable dedup key for a context block, used to diff a freshly
+    walked block list against what's already stored (see
+    _handle_request_body). Deliberately built only from (category,
+    label, content) — the three fields that are present, unchanged, on
+    BOTH a freshly-built block from _walk_request_body and an existing
+    block returned by store.get_context_timeline() (which threads raw
+    stored fields through mci_common.timeline.build_timeline unchanged,
+    only adding cumulative_tokens/cumulative_pct on top — see
+    mci_common/timeline.py). turn_n/char_count/token_estimate/status are
+    excluded: char_count and token_estimate are pure functions of
+    content so they'd be redundant, and turn_n/status don't affect
+    whether this is "the same content we've already stored".
+
+    Plain hash() of the tuple, not a cryptographic digest — this key
+    never leaves this process or gets persisted anywhere; it only needs
+    to be a good-enough hash key for an in-memory Counter for the
+    duration of one _handle_request_body call, so hashlib overhead
+    would be pure waste."""
+    return (block.get("category"), block.get("label"), block.get("content") or "")
+
+
 def _handle_request_body(session_id, attrs, owner):
     body = _parse_body(attrs)
     if not isinstance(body, dict):
         return  # content unavailable (e.g. body_ref-only) — nothing to walk
     fresh_blocks = _walk_request_body(body)
     existing = store.get_context_timeline(session_id, owner=owner)
-    tail = fresh_blocks[len(existing):]
-    for block in tail:
+
+    # Occurrence-indexed content-identity dedup, replacing a naive
+    # length-based tail slice (fresh_blocks[len(existing):]) that
+    # assumed every new payload is strictly the old block list plus new
+    # blocks appended at the end. Real Claude Code sessions can inject
+    # content (e.g. a <system-reminder> block) ahead of already-seen
+    # text in a later request, which shifts everything after it — the
+    # length slice then no longer lines up with what's actually new,
+    # and previously-stored blocks get re-appended as duplicates.
+    #
+    # Instead: count how many times each block identity already exists
+    # in `existing` (a multiset/Counter), then walk fresh_blocks in
+    # order maintaining a running per-identity count of occurrences
+    # seen so far in *this* walk. A block is genuinely new only once
+    # its running occurrence count exceeds how many of that identity
+    # were already stored — i.e. the Nth occurrence of an identity in
+    # fresh_blocks is admitted only if fewer than N occurrences of it
+    # are already in `existing`. This correctly:
+    #   - skips a block whose position shifted due to injected content
+    #     elsewhere, as long as its identity+occurrence-index was
+    #     already stored (fixes the reported bug), and
+    #   - still admits genuine repeats (e.g. two tool_results that
+    #     happen to be byte-identical "OK" text) as long as they're
+    #     occurrences beyond what's already stored.
+    existing_counts = Counter(_block_identity(b) for b in existing)
+    seen_counts = Counter()
+    for block in fresh_blocks:
+        identity = _block_identity(block)
+        seen_counts[identity] += 1
+        if seen_counts[identity] <= existing_counts[identity]:
+            continue  # this occurrence is already stored — skip
         store.append_context_block(session_id, block, owner=owner)
 
 
