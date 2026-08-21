@@ -5,10 +5,11 @@ password, one click:
 
 <img src="screenshots/signin-page.png" width="360" alt="Sign-in page">
 
-You land on a ready-to-use config: your token, the MCP server URL, and
-a paste-ready Claude Code / MCP-client config block.
+You land on a ready-to-use config (your token, the MCP server URL, and
+a paste-ready Claude Code / MCP-client config block), then straight
+into your own live dashboard:
 
-<img src="screenshots/connected-page.png" width="360" alt="Connected: your token and config">
+<img src="screenshots/connected-page.png" width="360" alt="Signed in: your own live dashboard">
 
 Two ways to get a token by hand, both accepted by the same
 `Authorization: Bearer <token>` header on `/mcp` and every `/api/*`
@@ -79,6 +80,25 @@ production-grade multi-tenant authorization server would carry.
 4. Copy the **Client ID** (safe to expose client-side, it's not a
    secret) and set it as `GOOGLE_OAUTH_CLIENT_ID` in your environment
    before starting the server.
+
+## Switching storage backends invalidates every existing token
+
+Tokens live in whichever store `STORAGE_BACKEND` points at (see
+`docs/DEPLOYMENT.md`), same as session data. Changing that env var on a
+running deployment (e.g. moving from SQLite to Firestore for
+durability) starts the auth store over empty: every previously-issued
+token, including your own owner token and anyone who'd already signed
+in with Google, stops working, and anyone using the OTEL live-telemetry
+snippet or the `context-inspector` MCP config will start silently
+getting `401 Unauthorized` until they update to a freshly-minted token.
+This isn't a bug, it's the same "the token store is exactly as durable
+as `STORAGE_BACKEND` says it is" rule applying to your own tokens as
+much as anyone else's — but it's easy to miss, since a failing OTLP
+export doesn't surface anywhere visible (Claude Code doesn't display
+its own telemetry errors). After switching backends, re-run
+`/auth/login`, grab the new token, and update it everywhere it's
+pasted: `~/.claude/settings.json`'s `OTEL_EXPORTER_OTLP_HEADERS` and
+`mcpServers.context-inspector.headers`, and any other client config.
 
 ## Data isolation
 

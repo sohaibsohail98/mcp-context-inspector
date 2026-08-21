@@ -28,7 +28,7 @@ def test_webapp_index_serves_shell_html():
         resp = client.get("/m/")
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
-    assert "mcp-context-inspector" in resp.text
+    assert "Lumen" in resp.text
     assert 'id="app"' in resp.text
     assert '/m/app.js' in resp.text
     assert '/m/styles.css' in resp.text

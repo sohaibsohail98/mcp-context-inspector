@@ -1,8 +1,10 @@
-# mcp-context-inspector
+# Lumen
 
 A drop-in MCP server and execution-metrics recorder for Bedrock-based
 agents and Claude Code: real per-session cost, token, and tool metrics,
 plus a full Context Window Explorer, over a real MCP handshake.
+
+Package/repo name: `mcp-context-inspector`.
 
 <!-- TODO: capture and add a Context Window Explorer GIF here. -->
 
