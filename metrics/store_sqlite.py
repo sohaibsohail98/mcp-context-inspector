@@ -544,11 +544,29 @@ def append_tool_call(session_id, tool_call, owner=None):
     conn.close()
 
 
+_PROMPT_PREVIEW_CHARS = 200
+
+
 def append_context_block(session_id, block, owner=None):
     """block: {category, label, char_count, token_estimate, turn_n,
     status=None, content=None} — same shape record_session's
     context_blocks rows use. owner must match the session's own owner
-    (see _check_ownership_or_raise)."""
+    (see _check_ownership_or_raise).
+
+    OTLP sessions are created by start_or_get_session with prompt=None
+    (unlike record_session, which gets its prompt as a direct argument
+    up front) — a live session has no equivalent single "the prompt"
+    argument, since content arrives incrementally as blocks. The first
+    real user-authored block (category == "user") is the closest
+    equivalent, so it backfills sessions.prompt here, once, the first
+    time one comes through: the `prompt IS NULL` guard in the UPDATE
+    means a later turn's user message can never clobber turn 0's
+    original prompt. content is preferred over label since it's the
+    actual message text; label ("User message") is only a fallback for
+    a block that came through with no content captured. Truncated for
+    list-view display — the full text is already preserved in this same
+    block's own context_blocks.content row, so storing it twice on
+    sessions.prompt would be pure duplication."""
     conn = _connect()
     _check_ownership_or_raise(conn, session_id, owner)
     seq = _next_seq(conn, "context_blocks", session_id)
@@ -566,6 +584,12 @@ def append_context_block(session_id, block, owner=None):
             block.get("content"),
         ),
     )
+    if block["category"] == "user":
+        preview = (block.get("content") or block.get("label") or "")[:_PROMPT_PREVIEW_CHARS]
+        conn.execute(
+            "UPDATE sessions SET prompt=? WHERE session_id=? AND (prompt IS NULL OR prompt='')",
+            (preview, session_id),
+        )
     conn.commit()
     conn.close()
 

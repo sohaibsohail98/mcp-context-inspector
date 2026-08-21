@@ -23,30 +23,31 @@ from mcp_server.auth.google import InvalidGoogleToken, verify_credential
 
 _PAGE_STYLE = """
   :root {
-    --bg: #0a0d13; --bg-raised: #12161f; --bg-raised-2: #161b26; --bg-sunken: #060a0f;
-    --border: #232a38; --border-soft: #1b212d;
-    --text: #e4eaf3; --text-dim: #8b96a8; --text-dimmer: #5f6b7d;
-    --accent: #35e0c8; --accent-2: #6c8dff; --accent-dim: #163832;
-    --warn: #f5b955; --warn-dim: #3a2c14; --warn-border: #4a3a1a;
-    --ok: #4ade80; --ok-dim: #13301f;
-    --err: #f2657a; --err-dim: #3a1620;
-    --thinking: #c084fc; --thinking-dim: #2c1c42;
-    --cat-system: #6b7280; --cat-tools: #8b98ac; --cat-user: #e4eaf3;
-    --cat-reasoning: #35e0c8; --cat-thinking: #c084fc; --cat-toolcall: #f5b955;
-    --cat-toolresult: #4ade80; --cat-answer: #6c8dff;
-    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 12px 32px -12px rgba(0,0,0,0.55);
+    --bg: #17150f; --bg-raised: #1f1c14; --bg-raised-2: #262115; --bg-sunken: #100e0a;
+    --border: #322c1f; --border-soft: #241f16;
+    --text: #ece5d3; --text-dim: #b0a68b; --text-dimmer: #756c56;
+    --accent: #6cbfa4; --accent-2: #8ba3e0; --accent-dim: #1c2b23;
+    --warn: #d9a45c; --warn-dim: #2e2314; --warn-border: #4a3419;
+    --ok: #6cbfa4; --ok-dim: #1c2b23;
+    --err: #d9737a; --err-dim: #3a1a1c;
+    --thinking: #b0a68b; --thinking-dim: #26211a;
+    --cat-system: #9d9377; --cat-tools: #b0a68b; --cat-user: #ece5d3;
+    --cat-reasoning: #6cbfa4; --cat-thinking: #b0a68b; --cat-toolcall: #d9a45c;
+    --cat-toolresult: #6cbfa4; --cat-answer: #8ba3e0;
+    --shadow: 0 1px 3px rgba(0,0,0,0.4), 0 12px 30px -16px rgba(0,0,0,0.6);
     --radius: 16px; --radius-sm: 10px;
   }
   * { box-sizing: border-box; }
   html { background: var(--bg); }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+    font-family: Archivo, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     min-height: 100vh;
     background:
-      radial-gradient(1200px 480px at 50% -10%, rgba(53,224,200,0.10), transparent 60%),
+      radial-gradient(1200px 480px at 50% -10%, rgba(108,191,164,0.08), transparent 60%),
       var(--bg);
     color: var(--text); line-height: 1.6; -webkit-font-smoothing: antialiased;
   }
+  h1, h2, h3 { font-family: "Source Serif 4", Georgia, serif; }
   /* Sign-in / connect-config content stays a narrow reading column;
      the post-auth dashboard screen (#dashboard-screen below) is a
      separate full-width sibling, not nested inside this. */
@@ -56,7 +57,7 @@ _PAGE_STYLE = """
     display: flex; align-items: center; justify-content: center;
     width: 2.1rem; height: 2.1rem; border-radius: 9px; flex-shrink: 0;
     background: linear-gradient(155deg, var(--accent), var(--accent-2));
-    color: #06110f; font-size: 1.05rem; font-weight: 700;
+    color: #12100a; font-size: 1.05rem; font-weight: 700;
     box-shadow: 0 4px 16px -4px rgba(53,224,200,0.45);
   }
   h1 {
@@ -79,10 +80,10 @@ _PAGE_STYLE = """
     background: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim);
   }
   code, pre {
-    background: #060a0f; border: 1px solid var(--border-soft); border-radius: 8px;
-    color: #9be8db; font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    background: #100e0a; border: 1px solid var(--border-soft); border-radius: 8px;
+    color: #8ba99a; font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
   }
-  code { padding: 0.18rem 0.5rem; font-size: 0.85em; border-width: 0; background: #10161f; }
+  code { padding: 0.18rem 0.5rem; font-size: 0.85em; border-width: 0; background: #1a160e; }
   pre { padding: 1rem 1.1rem; overflow-x: auto; font-size: 0.8rem; white-space: pre-wrap; word-break: break-all; }
   a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
@@ -98,7 +99,7 @@ _PAGE_STYLE = """
     border: 1px solid var(--border); border-radius: 12px; padding: 0.85rem 1.1rem;
     margin: 0.6rem 0; background: var(--bg-raised); transition: border-color 0.15s ease;
   }
-  details:hover { border-color: #2c3547; }
+  details:hover { border-color: #47402c; }
   details summary {
     cursor: pointer; font-size: 0.9rem; color: var(--text-dim); font-weight: 500;
     list-style: none; display: flex; align-items: center; gap: 0.6rem;
@@ -126,11 +127,11 @@ _PAGE_STYLE = """
     display: flex; align-items: center; justify-content: center; font-size: 1.4rem;
     background: var(--bg-raised-2); border: 1px solid var(--border);
   }
-  .icon-circle.accent { background: linear-gradient(155deg, var(--accent), var(--accent-2)); color: #06110f; }
+  .icon-circle.accent { background: linear-gradient(155deg, var(--accent), var(--accent-2)); color: #12100a; }
   .handshake .arrow { color: var(--text-dimmer); font-size: 1.3rem; }
   .badge-check {
     position: absolute; bottom: -2px; right: -2px; width: 1.15rem; height: 1.15rem; border-radius: 999px;
-    background: var(--accent); color: #06110f; display: flex; align-items: center; justify-content: center;
+    background: var(--accent); color: #12100a; display: flex; align-items: center; justify-content: center;
     font-size: 0.72rem; font-weight: 700; border: 2px solid var(--bg);
   }
   .consent-title { text-align: center; font-size: 1.28rem; font-weight: 650; margin: 0 0 0.4rem; letter-spacing: -0.01em; }
@@ -141,7 +142,7 @@ _PAGE_STYLE = """
   }
   .identity-row .avatar {
     width: 1.6rem; height: 1.6rem; border-radius: 999px; flex-shrink: 0; display: flex; align-items: center;
-    justify-content: center; font-size: 0.74rem; font-weight: 700; color: #06110f;
+    justify-content: center; font-size: 0.74rem; font-weight: 700; color: #12100a;
     background: linear-gradient(155deg, var(--accent), var(--accent-2));
   }
   .permission-list { display: grid; gap: 0.65rem; margin: 0 0 1.5rem; }
@@ -155,10 +156,10 @@ _PAGE_STYLE = """
     flex: 1; text-align: center; padding: 0.7rem 1rem; border-radius: 10px; font-weight: 600;
     font-size: 0.9rem; cursor: pointer; transition: filter 0.15s ease, border-color 0.15s ease, color 0.15s ease;
   }
-  .btn-primary { border: none; background: linear-gradient(155deg, var(--accent), var(--accent-2)); color: #06110f; }
+  .btn-primary { border: none; background: linear-gradient(155deg, var(--accent), var(--accent-2)); color: #12100a; }
   .btn-primary:hover { filter: brightness(1.08); }
   .btn-secondary { border: 1px solid var(--border); background: transparent; color: var(--text-dim); font-weight: 500; }
-  .btn-secondary:hover { border-color: #3a4459; color: var(--text); }
+  .btn-secondary:hover { border-color: #47402c; color: var(--text); }
   .success-banner { display: flex; align-items: center; gap: 0.9rem; margin-bottom: 1.5rem; }
   .success-banner .icon-circle { width: 2.7rem; height: 2.7rem; font-size: 1.15rem; }
   .success-banner h2 { margin: 0; font-size: 1.05rem; font-weight: 650; }
@@ -170,7 +171,7 @@ _PAGE_STYLE = """
   .kv-row:last-child { border-bottom: none; }
   .kv-label { font-size: 0.78rem; color: var(--text-dim); flex-shrink: 0; }
   .kv-value {
-    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.78rem; color: #9be8db;
+    font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.78rem; color: #8ba99a;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; text-align: right;
   }
   .tab-row { display: flex; gap: 0.4rem; flex-wrap: wrap; }
@@ -178,47 +179,53 @@ _PAGE_STYLE = """
     padding: 0.4rem 0.8rem; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-raised-2);
     color: var(--text-dim); font-size: 0.8rem; font-weight: 500; cursor: pointer; transition: all 0.15s ease;
   }
-  .tab-btn:hover { border-color: #3a4459; color: var(--text); }
+  .tab-btn:hover { border-color: #47402c; color: var(--text); }
   .tab-btn.active { background: var(--accent-dim); border-color: rgba(53,224,200,0.35); color: var(--accent); }
   .tab-panel { display: none; margin-top: 1rem; }
   .tab-panel.active { display: block; }
   .otel-optin { margin-top: 0.9rem; padding: 0.8rem; border: 1px solid var(--warn-border); background: var(--warn-dim); border-radius: 8px; }
 
-  /* Landing/home page hero */
-  .hero { text-align: center; padding: 1rem 0 0.5rem; }
-  .hero-eyebrow {
-    display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.72rem; font-weight: 600;
-    color: var(--accent); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.9rem;
+  /* Landing/home page hero — "Live Wire" direction: leads with proof (a
+     live-feeling recreation of the real Context Explorer bar + KPI
+     tiles) rather than words about the product, mirroring the actual
+     dashboard's own color semantics so the pitch and the product agree
+     with each other on sight. */
+  .lumen-kicker {
+    display: inline-flex; align-items: center; gap: 0.5rem; font-size: 0.76rem; font-weight: 600;
+    color: var(--accent); letter-spacing: 0.03em; background: var(--accent-dim); padding: 0.32rem 0.8rem;
+    border-radius: 999px; margin-bottom: 1.3rem;
   }
-  .hero-eyebrow::before { content: ""; width: 6px; height: 6px; border-radius: 999px; background: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
-  .hero h1 { font-size: 1.9rem; margin: 0 0 0.6rem; }
-  .hero .sub { max-width: 30rem; margin-left: auto; margin-right: auto; font-size: 1.02rem; }
-  .preview-frame {
-    position: relative; border-radius: 14px; border: 1px solid var(--border); background: #060a0f;
-    overflow: hidden; margin: 1.5rem 0 2rem; box-shadow: var(--shadow);
+  .lumen-kicker .pulse { width: 6px; height: 6px; border-radius: 999px; background: var(--accent); display: inline-block; animation: lumen-pulse 1.8s infinite; }
+  @keyframes lumen-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+  @media (prefers-reduced-motion: reduce) { .lumen-kicker .pulse { animation: none; } }
+  .lumen-h1 {
+    font-size: clamp(1.75rem, 4.4vw, 2.35rem); font-weight: 700; letter-spacing: -0.015em;
+    line-height: 1.18; margin: 0 0 1rem; text-wrap: balance; max-width: 20ch;
   }
-  .preview-frame .chrome {
-    display: flex; align-items: center; gap: 0.4rem; padding: 0.65rem 0.9rem; border-bottom: 1px solid var(--border-soft); background: var(--bg-raised);
+  .lumen-accent { color: var(--accent); }
+  .lumen-sub { font-size: 1rem; color: var(--text-dim); max-width: 46ch; margin: 0 0 2rem; line-height: 1.65; }
+
+  .lumen-demo {
+    border: 1px solid var(--border); border-radius: 14px; background: var(--bg-raised);
+    box-shadow: var(--shadow); overflow: hidden; margin: 0 0 1.4rem;
   }
-  .preview-frame .chrome .dot { width: 0.55rem; height: 0.55rem; border-radius: 999px; background: #333c4c; flex-shrink: 0; }
-  .preview-frame .chrome-url {
-    margin-left: 0.6rem; font-family: ui-monospace, monospace; font-size: 0.7rem; color: var(--text-dimmer);
-    background: var(--bg-raised-2); border-radius: 6px; padding: 0.15rem 0.6rem;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+  .lumen-demo-head {
+    display: flex; align-items: center; gap: 0.6rem; padding: 0.75rem 1rem; border-bottom: 1px solid var(--border-soft);
+    font-size: 0.76rem; color: var(--text-dimmer);
   }
-  .preview-body { padding: 1.1rem 1.2rem 1.3rem; }
-  .preview-bar { display: flex; height: 10px; width: 100%; border-radius: 999px; overflow: hidden; background: var(--bg-raised-2); margin-bottom: 0.9rem; }
-  .preview-legend { display: flex; flex-wrap: wrap; gap: 0.9rem; font-size: 0.72rem; color: var(--text-dim); margin-bottom: 1rem; }
-  .preview-legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
-  .preview-legend i { width: 7px; height: 7px; border-radius: 999px; display: inline-block; }
-  .preview-block {
-    display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
-    padding: 0.55rem 0.7rem; border-radius: 8px; background: var(--bg-raised-2); margin-bottom: 0.4rem; font-size: 0.78rem;
-  }
-  .preview-block .label { display: flex; align-items: center; gap: 0.55rem; color: var(--text); }
-  .preview-block .label i { width: 7px; height: 7px; border-radius: 999px; flex-shrink: 0; }
-  .preview-block .tok { font-family: ui-monospace, monospace; color: var(--text-dimmer); font-size: 0.72rem; }
-  .byline { text-align: center; font-size: 0.82rem; color: var(--text-dimmer); margin: -1rem 0 2rem; }
+  .lumen-dots { display: flex; gap: 0.35rem; }
+  .lumen-dots span { width: 7px; height: 7px; border-radius: 999px; background: var(--bg-raised-2); display: block; }
+  .lumen-demo-body { padding: 1.2rem 1.3rem 1.4rem; }
+  .lumen-demo-bar { display: flex; height: 24px; width: 100%; border-radius: 7px; overflow: hidden; margin-bottom: 0.9rem; }
+  .lumen-demo-legend { display: flex; flex-wrap: wrap; gap: 0.7rem 1.1rem; font-size: 0.74rem; color: var(--text-dim); margin-bottom: 1.1rem; }
+  .lumen-demo-legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
+  .lumen-demo-legend i { width: 7px; height: 7px; border-radius: 999px; display: inline-block; }
+  .lumen-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.6rem; }
+  .lumen-kpi { background: var(--bg-raised-2); border: 1px solid var(--border-soft); border-radius: 8px; padding: 0.6rem 0.75rem; }
+  .lumen-kpi .k-label { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dimmer); font-weight: 650; margin-bottom: 0.25rem; }
+  .lumen-kpi .k-value { font-weight: 650; font-size: 0.98rem; font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace; }
+
+  .byline { text-align: center; font-size: 0.82rem; color: var(--text-dimmer); margin: 0 0 2rem; }
   .byline a { color: var(--text-dim); }
 
   /* Live dashboard — full session-list + tabbed session-detail rebuild,
@@ -229,7 +236,7 @@ _PAGE_STYLE = """
   .dash-empty, .dash-error { color: var(--text-dim); font-size: 0.85rem; padding: 0.6rem 0.85rem; }
   .dash-error { color: var(--warn); }
 
-  .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-variant-numeric: tabular-nums; }
+  .mono { font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace; font-variant-numeric: tabular-nums; }
   #dashboard-screen { background: var(--bg); }
   .topbar {
     display: flex; align-items: center; gap: 1rem; padding: 0.85rem 1.5rem;
@@ -298,6 +305,7 @@ _PAGE_STYLE = """
   .src-badge.cc { background: var(--thinking-dim); color: var(--thinking); }
   .src-badge.gh { background: var(--accent-dim); color: var(--accent); }
   .src-badge.bd { background: var(--warn-dim); color: var(--warn); }
+  .src-badge.other { background: var(--bg-raised-2); color: var(--text-dim); }
   .session-prompt { font-size: 12px; font-weight: 550; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
   .session-row-meta { display: flex; align-items: center; justify-content: space-between; font-size: 10.5px; color: var(--text-dimmer); }
   .ctx-badge { display: inline-flex; align-items: center; gap: 0.25rem; font-weight: 650; }
@@ -342,7 +350,7 @@ _PAGE_STYLE = """
   .block-detail {
     margin: 0 0.55rem 0.4rem; padding: 0.7rem 0.85rem; border-radius: var(--radius-sm);
     background: var(--bg-sunken); border: 1px solid var(--border-soft);
-    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; line-height: 1.55;
+    font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; line-height: 1.55;
     color: var(--text-dim); white-space: pre-wrap; word-break: break-word; max-height: 20rem; overflow-y: auto;
   }
   .block-detail.unavailable { font-family: inherit; font-style: italic; color: var(--text-dimmer); white-space: normal; }
@@ -408,47 +416,54 @@ _PAGE_STYLE = """
   .agent-tabs { display: flex; gap: 0.4rem; padding: 0.9rem 1.1rem 0.9rem; flex-wrap: wrap; }
   .agent-tab { display: flex; align-items: center; gap: 0.4rem; font-size: 11px; font-weight: 600; padding: 0.32rem 0.7rem; border-radius: 999px; border: 1px solid var(--border); background: var(--bg-raised); color: var(--text-dim); cursor: default; }
   .agent-tab.active { background: var(--thinking-dim); color: var(--thinking); border-color: color-mix(in srgb, var(--thinking) 40%, transparent); }
-  .agent-tab .a-tok { font-family: ui-monospace, "SF Mono", Menlo, monospace; color: var(--text-dimmer); font-weight: 500; }
+  .agent-tab .a-tok { font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace; color: var(--text-dimmer); font-weight: 500; }
   .icon-btn { font-size: 0.8rem; font-weight: 500; padding: 0.4rem 0.75rem; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-raised-2); color: var(--text-dim); cursor: pointer; }
   .icon-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+  .icon-btn:disabled { opacity: 0.55; cursor: default; }
+  .icon-btn.spinning { animation: spin 0.7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .icon-btn.spinning { animation: none; } }
+  .refresh-controls { display: flex; align-items: center; gap: 0.4rem; }
+  .refresh-controls .chip.auto-off { color: var(--text-dimmer); }
 """
 
 
 @server.custom_route("/auth/login", methods=["GET"])
 async def auth_login(request: Request):
     intro = """
-<div class="hero">
-  <span class="hero-eyebrow">Model Context Protocol server</span>
-  <h1>mcp-context-inspector</h1>
-  <p class="sub">Execution metrics and a full Context Window Explorer for Bedrock-based agents and Claude Code — over a real MCP server, not a mock.</p>
-</div>
+<div class="lumen-kicker"><span class="pulse"></span> live &mdash; token-by-token, as it happens</div>
+<h1 class="lumen-h1">Watch your agent's <span class="lumen-accent">context window</span> fill up as you work.</h1>
+<p class="lumen-sub">Every token that entered the model, in the order it loaded: system prompt, tool specs, injected reminders, tool results. Not a summary. The real breakdown, against real cost, over a real MCP connection &mdash; no rewritten agent loop, no wrapper.</p>
 
-<div class="preview-frame">
-  <div class="chrome">
-    <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-    <span class="chrome-url">Context Window Explorer &middot; live preview</span>
+<div class="lumen-demo">
+  <div class="lumen-demo-head">
+    <span class="lumen-dots"><span></span><span></span><span></span></span>
+    <span>sess_8f2a1c4e &middot; claude-sonnet-5 &middot; 2m ago</span>
   </div>
-  <div class="preview-body">
-    <div class="preview-bar">
-      <div style="width:14%; background:#6b7280;"></div>
-      <div style="width:22%; background:#8b98ac;"></div>
-      <div style="width:6%; background:#e4eaf3;"></div>
-      <div style="width:18%; background:var(--accent);"></div>
-      <div style="width:12%; background:var(--warn);"></div>
-      <div style="width:20%; background:#4ade80;"></div>
-      <div style="width:8%; background:var(--accent-2);"></div>
+  <div class="lumen-demo-body">
+    <div class="lumen-demo-bar">
+      <div style="width:9%;background:var(--cat-system);"></div>
+      <div style="width:16%;background:var(--cat-tools);"></div>
+      <div style="width:6%;background:var(--cat-user);"></div>
+      <div style="width:11%;background:var(--cat-reasoning);"></div>
+      <div style="width:8%;background:var(--cat-toolcall);"></div>
+      <div style="width:41%;background:var(--cat-toolresult);"></div>
+      <div style="width:9%;background:var(--cat-answer);"></div>
     </div>
-    <div class="preview-legend">
-      <span><i style="background:#6b7280;"></i>system</span>
-      <span><i style="background:#8b98ac;"></i>tools</span>
-      <span><i style="background:var(--accent);"></i>reasoning</span>
-      <span><i style="background:var(--warn);"></i>tool call</span>
-      <span><i style="background:#4ade80;"></i>tool result</span>
-      <span><i style="background:var(--accent-2);"></i>answer</span>
+    <div class="lumen-demo-legend">
+      <span><i style="background:var(--cat-system);"></i>system</span>
+      <span><i style="background:var(--cat-tools);"></i>tools</span>
+      <span><i style="background:var(--cat-reasoning);"></i>reasoning</span>
+      <span><i style="background:var(--cat-toolcall);"></i>tool call</span>
+      <span><i style="background:var(--cat-toolresult);"></i>tool result</span>
+      <span><i style="background:var(--cat-answer);"></i>answer</span>
     </div>
-    <div class="preview-block"><span class="label"><i style="background:var(--warn);"></i>Tool call: get_service_metrics</span><span class="tok">120 tok</span></div>
-    <div class="preview-block"><span class="label"><i style="background:#4ade80;"></i>Tool result: get_service_metrics</span><span class="tok">640 tok</span></div>
-    <div class="preview-block"><span class="label"><i style="background:var(--accent-2);"></i>Final answer</span><span class="tok">210 tok</span></div>
+    <div class="lumen-kpis">
+      <div class="lumen-kpi"><div class="k-label">Tokens</div><div class="k-value">48.2k</div></div>
+      <div class="lumen-kpi"><div class="k-label">Cache hit</div><div class="k-value">81%</div></div>
+      <div class="lumen-kpi"><div class="k-label">Cost</div><div class="k-value">$0.94</div></div>
+      <div class="lumen-kpi"><div class="k-label">Context used</div><div class="k-value" style="color:var(--warn);">84%</div></div>
+    </div>
   </div>
 </div>
 <p class="byline">Built by <a href="https://github.com/sohaibsohail98" target="_blank" rel="noopener">@sohaibsohail98</a></p>
@@ -456,9 +471,9 @@ async def auth_login(request: Request):
 <div class="card">
   <h3>What this gives your agent</h3>
   <ul class="features">
-    <li>Real per-session cost, token, and tool-call metrics — 7 read-only MCP tools</li>
-    <li>The <strong>Context Window Explorer</strong> — exactly what entered the model's context window, block by block, with honest token estimates</li>
-    <li>Your own data, isolated from anyone else connected to this server — sign in below and everything you record or query is scoped to your account</li>
+    <li>Real per-session cost, token, and tool-call metrics &mdash; 8 MCP tools, 7 read-only</li>
+    <li>The <strong>Context Window Explorer</strong> &mdash; exactly what entered the model's context window, block by block, with honest token estimates</li>
+    <li>Your own data, isolated from anyone else connected to this server &mdash; sign in below and everything you record or query is scoped to your account</li>
   </ul>
 </div>
 <details>
@@ -470,21 +485,23 @@ async def auth_login(request: Request):
 </details>
 <details>
   <summary>Why sign in with Google instead of a password?</summary>
-  <p>No account to create or password to remember here — Google verifies who you are, this
+  <p>No account to create or password to remember here &mdash; Google verifies who you are, this
   server just checks the signed proof and hands you a token scoped to your account. That token,
   not your Google identity itself, is what your agent actually uses afterward.</p>
 </details>
 <details>
   <summary>What does "your own data" actually mean?</summary>
   <p>Every session recorded through your token is tagged with your account. Reads are filtered
-  the same way — you only ever see, list, or query sessions you recorded. Even guessing another
+  the same way &mdash; you only ever see, list, or query sessions you recorded. Even guessing another
   person's session ID reads back as "not found," identical to one that never existed.</p>
 </details>
 """
     client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID")
     if not client_id:
         return HTMLResponse(f"""<!doctype html>
-<html><head><title>mcp-context-inspector</title><style>{_PAGE_STYLE}</style></head>
+<html><head><title>Lumen</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&family=Archivo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<style>{_PAGE_STYLE}</style></head>
 <body>{intro}
 <div class="card security">
   <p>Google sign-in isn't configured on this server — <code>GOOGLE_OAUTH_CLIENT_ID</code>
@@ -493,7 +510,8 @@ async def auth_login(request: Request):
 </body></html>""", status_code=503)
 
     return HTMLResponse(f"""<!doctype html>
-<html><head><title>mcp-context-inspector</title>
+<html><head><title>Lumen</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&family=Archivo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
 <style>{_PAGE_STYLE}</style>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head><body>
@@ -621,6 +639,9 @@ async def auth_login(request: Request):
             once you sign in, the connector is live. No token to copy or paste anywhere.</li>
           </ol>
           <a class="copy" href="https://claude.ai/new#settings/customize-connectors" target="_blank" rel="noopener" style="display:inline-block; text-decoration:none;">Open claude.ai Connectors</a>
+          <p class="card-hint" style="margin-top: 0.7rem;"><strong>This is a separate sign-in from Claude Code.</strong>
+          Connecting here mints a token scoped to claude.ai only — your Claude Code CLI still needs its own
+          token from the "Claude Code" tab above. Disconnecting one never affects the other.</p>
         </div>
         `) + `
         <div class="tab-row" style="margin-top: 0.9rem;">
@@ -717,7 +738,7 @@ async def auth_login(request: Request):
       <div class="topbar">
         <div class="brand">
           <span class="brand-mark">&#9670;</span>
-          <span style="font-weight:650; font-size:0.95rem;">mcp-context-inspector</span>
+          <span style="font-weight:650; font-size:0.95rem;">Lumen</span>
         </div>
         <div class="topbar-spacer"></div>
         <span class="live-pill"><span class="live-dot"></span> live</span>
@@ -910,6 +931,7 @@ async def auth_login(request: Request):
   let dashboardRange = "7d"; // "today" | "7d" | "30d" | "all"
   let dashboardSourceFilter = "all"; // "all" | "claude_code" | "copilot" | "bedrock_agent"
   let dashboardSessions = []; // full bulk list (up to 500), unfiltered
+  let dashboardAutoRefresh = true;
 
   const RANGE_SECONDS = {{today: 86400, "7d": 7 * 86400, "30d": 30 * 86400, all: null}};
   const SOURCE_LABELS = {{claude_code: "Claude Code", copilot: "Copilot", bedrock_agent: "Bedrock agent"}};
@@ -932,7 +954,11 @@ async def auth_login(request: Request):
     const cutoff = secs === null ? null : Date.now() / 1000 - secs;
     return dashboardSessions.filter((s) => {{
       if (cutoff !== null && (s.timestamp || 0) < cutoff) return false;
-      if (dashboardSourceFilter !== "all" && s.source !== dashboardSourceFilter) return false;
+      if (dashboardSourceFilter === "other") {{
+        if (SOURCE_LABELS[s.source]) return false;
+      }} else if (dashboardSourceFilter !== "all" && s.source !== dashboardSourceFilter) {{
+        return false;
+      }}
       return true;
     }});
   }}
@@ -971,9 +997,11 @@ async def auth_login(request: Request):
 
   function renderSourceFilterRow() {{
     const present = new Set(dashboardSessions.map((s) => s.source));
+    const hasOther = [...present].some((s) => !SOURCE_LABELS[s]);
     const opts = [["all", "All sources"]].concat(
       Object.keys(SOURCE_LABELS).filter((k) => present.has(k)).map((k) => [k, SOURCE_LABELS[k]])
     );
+    if (hasOther) opts.push(["other", "Other"]);
     if (opts.length <= 1) return "";
     return `
       <div class="filter-row" style="padding: 0;">
@@ -1026,7 +1054,7 @@ async def auth_login(request: Request):
   function renderSessionRow(s) {{
     const prompt = (s.prompt || "(no prompt)").slice(0, 60);
     const active = s.session_id === dashboardSelected ? " active" : "";
-    const badge = SRC_BADGE[s.source] || {{cls: "bd", label: "?"}};
+    const badge = SRC_BADGE[s.source] || {{cls: "other", label: "Other"}};
     const pressure = ctxPressure(s.total_tokens);
     const dotTitle = pressure.level === "ok" ? "Context window usage: " + Math.round(pressure.pct) + "%"
       : "Context window usage: " + Math.round(pressure.pct) + "% — approaching the limit";
@@ -1051,7 +1079,13 @@ async def auth_login(request: Request):
       : inRange.map(renderSessionRow).join("");
     return `
       <div class="panel">
-        <div class="panel-head"><span class="panel-title">Sessions</span></div>
+        <div class="panel-head">
+          <span class="panel-title">Sessions</span>
+          <div class="refresh-controls">
+            <span class="chip` + (dashboardAutoRefresh ? "" : " auto-off") + `" onclick="toggleAutoRefresh()" title="Toggle automatic refresh">` + (dashboardAutoRefresh ? "Auto-refresh on" : "Auto-refresh off") + `</span>
+            <button class="icon-btn" id="manual-refresh-btn" onclick="manualRefresh()" title="Refresh now">&#8635;</button>
+          </div>
+        </div>
         <div id="source-filter-row">` + renderSourceFilterRow() + `</div>
         <div class="session-list" id="session-list">` + body + `</div>
       </div>`;
@@ -1316,6 +1350,8 @@ async def auth_login(request: Request):
   async function refreshDashboard(token) {{
     const root = document.getElementById("dash-root");
     if (!root) {{ clearInterval(dashboardTimer); return; }}
+    const btn = document.getElementById("manual-refresh-btn");
+    if (btn) {{ btn.disabled = true; btn.classList.add("spinning"); }}
     try {{
       dashboardSessions = await apiGet(token, "/api/sessions?limit=500");
       if (!document.getElementById("kpi-strip")) {{
@@ -1330,7 +1366,36 @@ async def auth_login(request: Request):
       }}
     }} catch (err) {{
       root.innerHTML = '<p class="dash-error">Failed to load sessions: ' + err.message + '</p>';
+    }} finally {{
+      // Panels (including this button) get fully re-rendered above on
+      // success, so this only matters on the error path — re-query
+      // rather than reuse `btn`, which may already be a detached node.
+      const freshBtn = document.getElementById("manual-refresh-btn");
+      if (freshBtn) {{ freshBtn.disabled = false; freshBtn.classList.remove("spinning"); }}
     }}
+  }}
+
+  function manualRefresh() {{
+    const root = document.getElementById("dash-root");
+    const token = root && root.dataset.token;
+    if (token) refreshDashboard(token);
+  }}
+
+  function toggleAutoRefresh() {{
+    dashboardAutoRefresh = !dashboardAutoRefresh;
+    if (dashboardTimer) {{
+      clearInterval(dashboardTimer);
+      dashboardTimer = null;
+    }}
+    if (dashboardAutoRefresh) {{
+      const root = document.getElementById("dash-root");
+      const token = root && root.dataset.token;
+      if (token) dashboardTimer = setInterval(() => refreshDashboard(token), 8000);
+    }}
+    // Panels re-render on the next refresh already, but toggling should
+    // reflect the new state immediately even if a full poll is 8s away.
+    const panel = document.getElementById("session-list-panel");
+    if (panel) panel.innerHTML = renderSessionListPanel();
   }}
 
   // One poll loop per page load; re-mounting (e.g. signing in again)
@@ -1340,6 +1405,7 @@ async def auth_login(request: Request):
     if (root) root.dataset.token = token;
     dashboardSelected = null;
     dashboardSessions = [];
+    dashboardAutoRefresh = true;
     if (dashboardTimer) clearInterval(dashboardTimer);
     renderDashboardShell();
     refreshDashboard(token);
@@ -1475,7 +1541,7 @@ async def auth_login(request: Request):
         <span class="arrow">┅┅┅&gt;</span>
         <div class="icon-circle accent">◈<span class="badge-check">✓</span></div>
       </div>
-      <h1 class="consent-title">Connect to mcp-context-inspector</h1>
+      <h1 class="consent-title">Connect to Lumen</h1>
       <p class="consent-sub">This will mint a personal access token scoped to your account.</p>
       <div class="identity-row">
         <span class="avatar">` + initial + `</span>
@@ -1540,6 +1606,26 @@ async def auth_login(request: Request):
       const data = await res.json();
       pendingCredential = null;
       if (res.ok) {{
+        // --- webapp/ auth handoff -----------------------------------
+        // Minimal, isolated addition: the mobile webapp (webapp/app.js,
+        // served at /m) reuses this same Google sign-in flow instead of
+        // building a second one. It sends users here with
+        // ?return_to=/m; if present, skip the desktop consent/dashboard
+        // screens entirely and bounce straight back with the freshly
+        // minted token in the URL fragment (never the query string, so
+        // it doesn't land in server logs) — webapp/app.js reads it once,
+        // stores it in its own localStorage key, and strips it from the
+        // URL bar. See webapp/app.js's consumeTokenFromLocation().
+        // startsWith("/") alone would also admit "//evil.com" — browsers
+        // treat a leading "//" as a protocol-relative absolute URL, which
+        // would carry the token off-origin in the fragment. Requiring a
+        // single "/" not followed by another "/" restricts this to a real
+        // same-origin relative path.
+        const returnTo = new URLSearchParams(window.location.search).get("return_to");
+        if (returnTo && /^\\/(?!\\/)/.test(returnTo)) {{
+          window.location.href = returnTo + "#token=" + encodeURIComponent(data.mcp_token) + "&email=" + encodeURIComponent(data.email);
+          return;
+        }}
         persistSession(data.mcp_token, data.email);
         currentEmail = data.email;
         currentToken = data.mcp_token;

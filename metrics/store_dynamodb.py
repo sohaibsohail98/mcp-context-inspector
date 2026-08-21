@@ -496,10 +496,24 @@ def append_tool_call(session_id, tool_call, owner=None):
     )
 
 
+_PROMPT_PREVIEW_CHARS = 200
+
+
 def append_context_block(session_id, block, owner=None):
     """block: {category, label, char_count, token_estimate, turn_n,
     status=None, content=None} — same shape record_session's
-    context_blocks rows use. owner must match the session's own owner."""
+    context_blocks rows use. owner must match the session's own owner.
+
+    Same backfill reasoning as store_sqlite.py's version: OTLP sessions
+    are created by start_or_get_session with prompt=None, since a live
+    session has no single upfront prompt argument the way record_session
+    does. The first real user-authored block (category == "user")
+    backfills the SESSION item's prompt attribute here, once — re-fetch
+    the item and check its current prompt before writing, so a later
+    turn's user message can never overwrite turn 0's original prompt.
+    Truncated for list-view display; the full text already lives in this
+    same block's own CTXBLOCK# item, so this would otherwise duplicate
+    it."""
     _check_ownership_or_raise(session_id, owner)
 
     def build_item(seq):
@@ -519,6 +533,16 @@ def append_context_block(session_id, block, owner=None):
         return item
 
     _put_next_indexed(session_id, "CTXBLOCK#", build_item)
+
+    if block["category"] == "user":
+        session_item = _table.get_item(Key={"session_id": session_id, "sk": "SESSION"}).get("Item")
+        if session_item and not session_item.get("prompt"):
+            preview = (block.get("content") or block.get("label") or "")[:_PROMPT_PREVIEW_CHARS]
+            _table.update_item(
+                Key={"session_id": session_id, "sk": "SESSION"},
+                UpdateExpression="SET prompt = :p",
+                ExpressionAttributeValues={":p": preview},
+            )
 
 
 def close_session(session_id, final_totals=None, owner=None):

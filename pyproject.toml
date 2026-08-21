@@ -11,6 +11,7 @@ dependencies = [
     "starlette",
     "uvicorn",
     "google-auth[requests]",
+    "google-cloud-firestore",
 ]
 
 [project.optional-dependencies]
