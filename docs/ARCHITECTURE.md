@@ -12,7 +12,8 @@ flowchart LR
         R -->|"direct Python import\n(local, owner=None)"| S[metrics/store.py]
         MCP["mcp_server/routes/, tools.py\n(MCP + REST routes)"] --> S
         S --> SQ["store_sqlite.py\n(local dev)"]
-        S --> DY["store_dynamodb.py\n(deployed)"]
+        S --> DY["store_dynamodb.py\n(AWS deployments)"]
+        S --> FS["store_firestore.py\n(this project's own deployment)"]
     end
 
     subgraph Remote["Another user's own agent"]
@@ -73,9 +74,15 @@ key for color-coding failures), `answer`.
 ## Storage backends
 
 `STORAGE_BACKEND=sqlite` (default, local dev; `data/metrics.db`, or
-`METRICS_DB_PATH` to point elsewhere) or `STORAGE_BACKEND=dynamodb`
-(set `METRICS_TABLE`/`AWS_REGION`); same function signatures either
-way, callers in `metrics/store.py` never know which backend is active.
-DynamoDB exists because a deployed container's local filesystem doesn't
-persist across invocations; SQLite is enough for local dev and for a
-demo deployment seeded from a fixture (`scripts/seed_demo_db.py`).
+`METRICS_DB_PATH` to point elsewhere), `STORAGE_BACKEND=dynamodb` (set
+`METRICS_TABLE`/`AWS_REGION`), or `STORAGE_BACKEND=firestore` (Google
+Cloud Firestore, native mode; see `docs/DEPLOYMENT.md` for the one-time
+GCP setup). Same function signatures across all three, so callers in
+`metrics/store.py` never know which backend is active. A deployed
+container's local filesystem doesn't persist across invocations, so
+SQLite alone is only right for local dev and a demo deployment seeded
+from a fixture (`scripts/seed_demo_db.py`); Firestore is what this
+project's own live deployment runs for durable, signed-in-user data.
+The per-user auth token store (`mcp_server/auth/store.py`) follows the
+same `STORAGE_BACKEND` switch and needs the same durability, since a
+lost token silently breaks that user's auth.

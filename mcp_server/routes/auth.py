@@ -431,7 +431,7 @@ _PAGE_STYLE = """
 @server.custom_route("/auth/login", methods=["GET"])
 async def auth_login(request: Request):
     intro = """
-<div class="lumen-kicker"><span class="pulse"></span> live &mdash; token-by-token, as it happens</div>
+<div class="lumen-kicker"><span class="pulse"></span> updates automatically as you work</div>
 <h1 class="lumen-h1">Watch your agent's <span class="lumen-accent">context window</span> fill up as you work.</h1>
 <p class="lumen-sub">Every token that entered the model, in the order it loaded: system prompt, tool specs, injected reminders, tool results. Not a summary. The real breakdown, against real cost, over a real MCP connection &mdash; no rewritten agent loop, no wrapper.</p>
 
