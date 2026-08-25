@@ -11,8 +11,43 @@ _detect_vendor's checks rather than assuming the receiver route itself
 is wrong.
 """
 
+import logging
+import time
+from collections import deque
+
 from mcp_server.otlp import claude_code, copilot
 from mcp_server.otlp.common import resource_attrs_dict
+
+logger = logging.getLogger(__name__)
+
+# In-memory only (resets on redeploy/restart) — this backs GET /otlp/debug,
+# a troubleshooting aid for exactly the "was anything received at all, and
+# what did the server think it was" question a fire-and-forget OTel
+# exporter otherwise gives no visibility into. Not a metrics/analytics
+# system (metrics/store.py + Firestore/DynamoDB already do that for
+# accepted data) — this exists specifically to see *rejected* data too.
+_counts = {"claude_code": 0, "copilot": 0, "skipped": 0}
+_last_accepted_at = {"claude_code": None, "copilot": None}
+_recent_skipped = deque(maxlen=20)
+
+
+def _record_skipped(resource_attrs, record_count=1):
+    _counts["skipped"] += record_count
+    _recent_skipped.append({"at": time.time(), "resource_attrs": resource_attrs})
+
+
+def _record_accepted(vendor):
+    _counts[vendor] += 1
+    _last_accepted_at[vendor] = time.time()
+
+
+def debug_snapshot():
+    """Plain-dict snapshot for the /otlp/debug route — see mcp_server/routes/otlp.py."""
+    return {
+        "counts": dict(_counts),
+        "last_accepted_at": dict(_last_accepted_at),
+        "recent_skipped": list(_recent_skipped),
+    }
 
 # Candidate service.name values for each vendor. Claude Code's telemetry
 # docs don't spell out the exact resource attribute value; "claude-code"
@@ -21,6 +56,26 @@ from mcp_server.otlp.common import resource_attrs_dict
 # set once a real payload has been captured locally.
 _CLAUDE_CODE_SERVICE_NAMES = {"claude-code", "claude_code"}
 _COPILOT_SERVICE_NAMES = {"github-copilot", "copilot", "github.copilot"}
+
+
+def _log_undetected_vendor(resource_attrs):
+    """A real client whose resource attributes don't match any of
+    detect_vendor's checks gets counted as "skipped" in the response
+    body, which is only visible if something is actually looking at
+    that response — Claude Code's own OTLP exporter fires-and-forgets
+    and prints nothing. Without this, an undetected vendor is
+    completely silent: no error, no 4xx, no visible signal anywhere
+    that data arrived and was thrown away. Logging it — and recording it
+    via _record_skipped for GET /otlp/debug — lets a real payload's
+    actual resource attribute shape be read back without needing Cloud
+    Run log access, which is exactly the missing piece that made this
+    bug unfalsifiable from outside the server (see api_tests/README.md
+    and the investigation report — no real captured payload was ever
+    persisted anywhere in this repo). resource_attrs is OTLP *resource*
+    metadata (service name, session id, host info) — never prompt/
+    response content, which lives in log_records/metrics/spans and is
+    never passed here — so logging/storing it in full is safe."""
+    logger.warning("otlp: undetected vendor, resource_attrs=%r", resource_attrs)
 
 
 def detect_vendor(resource_attrs):
@@ -63,10 +118,14 @@ def handle_logs_payload(payload, owner):
         if vendor == "claude_code":
             claude_code.handle_logs(attrs, log_records, owner)
             counts["claude_code"] += len(log_records)
+            _record_accepted("claude_code")
         elif vendor == "copilot":
             copilot.handle_logs(attrs, log_records, owner)
             counts["copilot"] += len(log_records)
+            _record_accepted("copilot")
         else:
+            _log_undetected_vendor(attrs)
+            _record_skipped(attrs, len(log_records))
             counts["skipped"] += len(log_records)
     return counts
 
@@ -86,10 +145,14 @@ def handle_metrics_payload(payload, owner):
         if vendor == "claude_code":
             claude_code.handle_metrics(attrs, metrics, owner)
             counts["claude_code"] += len(metrics)
+            _record_accepted("claude_code")
         elif vendor == "copilot":
             copilot.handle_metrics(attrs, metrics, owner)
             counts["copilot"] += len(metrics)
+            _record_accepted("copilot")
         else:
+            _log_undetected_vendor(attrs)
+            _record_skipped(attrs, len(metrics))
             counts["skipped"] += len(metrics)
     return counts
 
@@ -113,6 +176,9 @@ def handle_traces_payload(payload, owner):
         if vendor == "copilot":
             copilot.handle_traces(attrs, spans, owner)
             counts["copilot"] += len(spans)
+            _record_accepted("copilot")
         else:
+            _log_undetected_vendor(attrs)
+            _record_skipped(attrs, len(spans))
             counts["skipped"] += len(spans)
     return counts

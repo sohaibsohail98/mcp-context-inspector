@@ -74,3 +74,20 @@ async def otlp_traces(request: Request):
         return JSONResponse({"error": "malformed JSON body"}, status_code=400)
     counts = otlp.handle_traces_payload(body, owner=current_owner.get())
     return JSONResponse({"accepted": counts})
+
+
+@server.custom_route("/otlp/debug", methods=["GET"])
+async def otlp_debug(request: Request):
+    """Troubleshooting aid, not a metrics endpoint — answers "did
+    anything reach this server at all, and what did it think it was,"
+    which a fire-and-forget OTel exporter otherwise gives zero
+    visibility into from the client side. In-memory only (see
+    mcp_server/otlp/__init__.py's _counts) — resets on every
+    redeploy/restart, so a zero here after a fresh deploy doesn't by
+    itself mean nothing has arrived since. Under the same bearer auth as
+    the rest of /otlp (protected_prefixes in middleware.py), since
+    resource_attrs from recent_skipped is operational data about this
+    deployment's callers, not something to expose publicly."""
+    return JSONResponse(
+        {"message": "in-memory counters since last server restart/redeploy", **otlp.debug_snapshot()}
+    )

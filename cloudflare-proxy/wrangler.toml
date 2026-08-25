@@ -4,3 +4,17 @@ compatibility_date = "2026-08-19"
 
 [vars]
 ORIGIN = "https://mcp-context-inspector-1097847824883.us-central1.run.app"
+
+# Without this block, `wrangler deploy` leaves Observability at its
+# default (off) on every deploy, silently reverting any toggle made by
+# hand in the dashboard's Settings > Observability — which is exactly
+# what happened here (dashboard showed a "your wrangler config doesn't
+# match" banner). Traces stay off: this Worker is a pure pass-through
+# proxy (see worker.js) with no internal spans worth tracing.
+[observability]
+enabled = true
+
+[observability.logs]
+enabled = true
+persist = true
+invocation_logs = true

@@ -17,5 +17,25 @@ jobs:
       # PR so a regression in the MCP server itself is caught before it
       # ships — this package is meant to be handed to other people, so
       # it needs to hold up on its own, not just "worked when I ran it
-      # locally once."
-      - run: uv run python -m pytest -v
+      # locally once." api_tests/ is excluded here on purpose — those
+      # hit a real deployed URL over the network (see api-e2e-tests
+      # below) and would make this "no network calls" job a liar.
+      - run: uv run python -m pytest -v --ignore=api_tests
+
+  api-e2e-tests:
+    runs-on: ubuntu-latest
+    # Live black-box tests against the real deployed instance (see
+    # api_tests/README.md) — only runs once API_TEST_BASE_URL/
+    # API_TEST_TOKEN secrets exist in the repo. Without them this job
+    # still runs but every test self-skips (api_tests/conftest.py), so
+    # it shows green-with-skips rather than silently not existing —
+    # visible in the Actions UI as "needs secrets configured" instead
+    # of just being absent.
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.1
+      - run: uv venv && uv pip install -e ".[dev]"
+      - run: uv run python -m pytest api_tests/ -v
+        env:
+          API_TEST_BASE_URL: ${{ secrets.API_TEST_BASE_URL }}
+          API_TEST_TOKEN: ${{ secrets.API_TEST_TOKEN }}
