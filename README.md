@@ -376,6 +376,10 @@ Relevant env vars once deployed:
   SDK's DNS-rebinding protection. Getting this wrong manifests as `421
   Invalid Host header` on authenticated requests only — an unauthenticated
   smoke test won't catch it.
+- `DEV_MODE_SUBS` — comma-separated Google `sub` allowlist for developer-mode
+  dashboard features (currently: showing `api_tests`' synthetic probe
+  sessions, hidden from everyone else by default). Find your own `sub` via
+  `mcp_server.auth.store.list_users()`.
 
 ## Contributing
 

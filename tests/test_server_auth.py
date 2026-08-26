@@ -216,6 +216,103 @@ def test_api_record_session_attributes_to_the_calling_token(client, isolated_aut
     assert len(owner_view) == 1
 
 
+# --- Developer mode: hiding api_tests probe sessions ---------------------
+# api_tests/ posts real OTLP payloads against a real deployment to verify
+# ingestion end-to-end (see api_tests/README.md) — every session_id it
+# creates is prefixed "api-tests-". Without filtering, every account's
+# dashboard would show these synthetic probe sessions alongside real ones.
+
+
+def _claude_code_otlp_payload(session_id):
+    return {
+        "resourceLogs": [
+            {
+                "resource": {"attributes": [{"key": "service.name", "value": {"stringValue": "claude-code"}}]},
+                "scopeLogs": [
+                    {
+                        "logRecords": [
+                            {
+                                "attributes": [{"key": "session.id", "value": {"stringValue": session_id}}],
+                                "body": {"stringValue": "api_tests probe"},
+                            }
+                        ]
+                    }
+                ],
+            }
+        ]
+    }
+
+
+def test_api_sessions_hides_api_tests_probe_sessions_by_default(client):
+    real_id = "sess_real123"
+    test_id = "api-tests-abc123"
+    client.post(
+        "/otlp/v1/logs", json=_claude_code_otlp_payload(real_id), headers={"Authorization": "Bearer owner-secret"}
+    )
+    client.post(
+        "/otlp/v1/logs", json=_claude_code_otlp_payload(test_id), headers={"Authorization": "Bearer owner-secret"}
+    )
+
+    sessions = client.get("/api/sessions", headers={"Authorization": "Bearer owner-secret"}).json()
+    session_ids = {s["session_id"] for s in sessions}
+    assert real_id in session_ids
+    assert test_id not in session_ids
+
+
+def test_dev_mode_status_true_for_owner_token(client):
+    resp = client.get("/api/dev-mode-status", headers={"Authorization": "Bearer owner-secret"})
+    assert resp.json() == {"dev_mode": True}
+
+
+def test_dev_mode_status_false_for_unlisted_per_user_token(client, isolated_auth_store):
+    token = isolated_auth_store.get_or_create_token("not-on-allowlist-sub", "a@example.com")
+    resp = client.get("/api/dev-mode-status", headers={"Authorization": f"Bearer {token}"})
+    assert resp.json() == {"dev_mode": False}
+
+
+def test_dev_mode_status_true_for_allowlisted_sub(client, isolated_auth_store, monkeypatch):
+    monkeypatch.setenv("DEV_MODE_SUBS", "friend-sub,another-sub")
+    token = isolated_auth_store.get_or_create_token("friend-sub", "friend@example.com")
+    resp = client.get("/api/dev-mode-status", headers={"Authorization": f"Bearer {token}"})
+    assert resp.json() == {"dev_mode": True}
+
+
+def test_include_test_sessions_ignored_for_non_dev_mode_account(client, isolated_auth_store):
+    """A stray ?include_test_sessions=1 from an unlisted account must be
+    silently ignored, not honored — otherwise the query param itself
+    becomes a way to bypass the allowlist."""
+    token = isolated_auth_store.get_or_create_token("not-on-allowlist-sub", "a@example.com")
+    test_id = "api-tests-xyz789"
+    client.post(
+        "/otlp/v1/logs",
+        json=_claude_code_otlp_payload(test_id),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    sessions = client.get(
+        "/api/sessions?include_test_sessions=1", headers={"Authorization": f"Bearer {token}"}
+    ).json()
+    assert test_id not in {s["session_id"] for s in sessions}
+
+
+def test_include_test_sessions_honored_for_owner_token(client):
+    real_id = "sess_real456"
+    test_id = "api-tests-def456"
+    client.post(
+        "/otlp/v1/logs", json=_claude_code_otlp_payload(real_id), headers={"Authorization": "Bearer owner-secret"}
+    )
+    client.post(
+        "/otlp/v1/logs", json=_claude_code_otlp_payload(test_id), headers={"Authorization": "Bearer owner-secret"}
+    )
+
+    sessions = client.get(
+        "/api/sessions?include_test_sessions=1", headers={"Authorization": "Bearer owner-secret"}
+    ).json()
+    session_ids = {s["session_id"] for s in sessions}
+    assert real_id in session_ids
+    assert test_id in session_ids
+
+
 def test_api_record_session_missing_field_is_a_400(client):
     resp = client.post(
         "/api/record-session",

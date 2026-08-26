@@ -10,7 +10,13 @@ git clone https://github.com/sohaibsohail98/mcp-context-inspector.git
 cd mcp-context-inspector
 uv venv && uv pip install -e ".[dev]"
 source .venv/bin/activate
+git config core.hooksPath .githooks   # scans staged changes for secrets before every commit
 ```
+
+The hooks step needs [gitleaks](https://github.com/gitleaks/gitleaks)
+installed (`brew install gitleaks`) — without it, the hook prints a warning
+and lets the commit through rather than blocking you, so it degrades safely
+if you skip this.
 
 Run the server locally:
 

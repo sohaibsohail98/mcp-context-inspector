@@ -5,6 +5,21 @@ on:
   pull_request:
 
 jobs:
+  secrets-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # Full-history scan, not just the diff — catches a secret in an
+      # older commit on this branch too, same class of leak that had to
+      # be scrubbed from main's history with git-filter-repo once
+      # already. See .githooks/pre-commit for the local, staged-diff-only
+      # equivalent that should catch this before it's ever committed.
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   lint:
     runs-on: ubuntu-latest
     steps:

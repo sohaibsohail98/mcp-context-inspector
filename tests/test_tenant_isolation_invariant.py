@@ -79,6 +79,7 @@ _KNOWN_SCOPED_ROUTES = {
     ("POST", "/otlp/v1/traces"),
     ("GET", "/otlp/debug"),
     ("GET", "/api/sessions"),
+    ("GET", "/api/dev-mode-status"),
     ("GET", "/api/sessions/{session_id}"),
     ("GET", "/api/tool-metrics"),
     ("GET", "/api/cost"),

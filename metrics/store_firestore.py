@@ -356,7 +356,7 @@ def get_context_timeline(session_id, owner=None):
     return build_timeline(rows)
 
 
-def get_recent_sessions(limit=10, owner=None):
+def get_recent_sessions(limit=10, owner=None, include_test_sessions=False):
     """Requires a composite index on (owner ASC, timestamp DESC) in
     production for the owner-filtered query below to run without
     Firestore rejecting it — deploying that index is a separate task,
@@ -370,7 +370,14 @@ def get_recent_sessions(limit=10, owner=None):
     tool_calls subcollections — N extra subcollection reads for a page
     of `limit` sessions. Acceptable, documented tradeoff at
     personal-project scale (same reasoning store_dynamodb.py's own
-    comments give for its scan-based aggregates)."""
+    comments give for its scan-based aggregates).
+
+    include_test_sessions=False (the default) drops rows whose
+    session_id starts with "api-tests-" — see store_sqlite.py's
+    get_recent_sessions docstring. Filtered client-side after `limit` is
+    already applied server-side, so a page that's entirely test data can
+    come back empty rather than backfilled — acceptable at this scale,
+    same as the rest of this function's tradeoffs."""
     client = _client()
     query = _sessions(client)
     if owner is not None:
@@ -380,6 +387,8 @@ def get_recent_sessions(limit=10, owner=None):
     result = []
     for doc in query.stream():
         data = doc.to_dict()
+        if not include_test_sessions and data["session_id"].startswith("api-tests-"):
+            continue
         turns = [t.to_dict() for t in doc.reference.collection("turns").stream()]
         tool_calls = [t.to_dict() for t in doc.reference.collection("tool_calls").stream()]
         result.append(

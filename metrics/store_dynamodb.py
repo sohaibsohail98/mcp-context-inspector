@@ -286,7 +286,10 @@ def get_cost_estimate(session_id=None, period_seconds=None, owner=None):
     return sum(i["estimated_cost"] for i in items if i["timestamp"] >= since)
 
 
-def get_recent_sessions(limit=10, owner=None):
+def get_recent_sessions(limit=10, owner=None, include_test_sessions=False):
+    """include_test_sessions=False (the default) drops rows whose
+    session_id starts with "api-tests-" — see store_sqlite.py's
+    get_recent_sessions docstring."""
     if owner is not None:
         items = _clean(
             _scan_all(
@@ -300,6 +303,8 @@ def get_recent_sessions(limit=10, owner=None):
             _scan_all(FilterExpression="sk = :sk", ExpressionAttributeValues={":sk": "SESSION"})
         )
 
+    if not include_test_sessions:
+        items = [i for i in items if not i["session_id"].startswith("api-tests-")]
     items.sort(key=lambda i: i["timestamp"], reverse=True)
     # Turn/tool-call aggregates via bounded Queries per already-sliced-to-
     # `limit` session (partition-key lookup, same pattern

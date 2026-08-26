@@ -48,6 +48,17 @@ a live browser-driven OAuth round-trip, not something a black-box HTTP
 script can drive. See `tests/test_oauth.py` for the monkeypatched,
 in-process version of that flow.
 
+## This writes real sessions to the real account behind API_TEST_TOKEN
+
+`test_otlp.py` POSTs real OTLP payloads that land as real rows in whatever
+account `API_TEST_TOKEN` belongs to — every session_id it creates is
+prefixed `api-tests-`. `GET /api/sessions` hides anything with that prefix
+by default for everyone (see `mcp_server/dev_mode.py`), so these probe
+sessions don't clutter the normal dashboard view. An account listed in the
+`DEV_MODE_SUBS` env var (or the shared owner token) can still see them via
+the dashboard's "Test sessions: hidden/shown" toggle, or by passing
+`?include_test_sessions=1` to `/api/sessions` directly.
+
 ## CI
 
 Wired into `.github/workflows/tests.yml` as a separate `api-e2e-tests` job,

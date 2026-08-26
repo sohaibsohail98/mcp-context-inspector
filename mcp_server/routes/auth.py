@@ -1032,6 +1032,12 @@ async def auth_login(request: Request):
   let dashboardSourceFilter = "all"; // "all" | "claude_code" | "copilot" | "bedrock_agent"
   let dashboardSessions = []; // full bulk list (up to 500), unfiltered
   let dashboardAutoRefresh = true;
+  // Whether this signed-in account is on the DEV_MODE_SUBS allowlist
+  // (see GET /api/dev-mode-status) — checked once per mount, since it
+  // can't change mid-session. Everyone else never sees the toggle at
+  // all, not a shown-but-disabled one.
+  let dashboardIsDevMode = false;
+  let dashboardShowTestSessions = false;
 
   const RANGE_SECONDS = {{today: 86400, "7d": 7 * 86400, "30d": 30 * 86400, all: null}};
   const SOURCE_LABELS = {{claude_code: "Claude Code", copilot: "Copilot", bedrock_agent: "Bedrock agent"}};
@@ -1181,7 +1187,9 @@ async def auth_login(request: Request):
       <div class="panel">
         <div class="panel-head">
           <span class="panel-title">Sessions</span>
-          <div class="refresh-controls">
+          <div class="refresh-controls">` + (dashboardIsDevMode ? `
+            <span class="chip` + (dashboardShowTestSessions ? "" : " auto-off") + `" onclick="toggleTestSessions()" title="Show/hide api_tests probe sessions (dev-mode only, not visible to other accounts)">` + (dashboardShowTestSessions ? "Test sessions: shown" : "Test sessions: hidden") + `</span>
+          ` : ``) + `
             <span class="chip` + (dashboardAutoRefresh ? "" : " auto-off") + `" onclick="toggleAutoRefresh()" title="Toggle automatic refresh">` + (dashboardAutoRefresh ? "Auto-refresh on" : "Auto-refresh off") + `</span>
             <button class="icon-btn" id="manual-refresh-btn" onclick="manualRefresh()" title="Refresh now">&#8635;</button>
           </div>
@@ -1453,7 +1461,8 @@ async def auth_login(request: Request):
     const btn = document.getElementById("manual-refresh-btn");
     if (btn) {{ btn.disabled = true; btn.classList.add("spinning"); }}
     try {{
-      dashboardSessions = await apiGet(token, "/api/sessions?limit=500");
+      const testParam = dashboardIsDevMode && dashboardShowTestSessions ? "&include_test_sessions=1" : "";
+      dashboardSessions = await apiGet(token, "/api/sessions?limit=500" + testParam);
       if (!document.getElementById("kpi-strip")) {{
         renderDashboardShell();
       }} else {{
@@ -1498,6 +1507,13 @@ async def auth_login(request: Request):
     if (panel) panel.innerHTML = renderSessionListPanel();
   }}
 
+  function toggleTestSessions() {{
+    dashboardShowTestSessions = !dashboardShowTestSessions;
+    const root = document.getElementById("dash-root");
+    const token = root && root.dataset.token;
+    if (token) refreshDashboard(token);
+  }}
+
   // One poll loop per page load; re-mounting (e.g. signing in again)
   // clears the previous timer instead of stacking a second one.
   function mountDashboard(token) {{
@@ -1506,9 +1522,14 @@ async def auth_login(request: Request):
     dashboardSelected = null;
     dashboardSessions = [];
     dashboardAutoRefresh = true;
+    dashboardIsDevMode = false;
+    dashboardShowTestSessions = false;
     if (dashboardTimer) clearInterval(dashboardTimer);
     renderDashboardShell();
-    refreshDashboard(token);
+    apiGet(token, "/api/dev-mode-status")
+      .then((data) => {{ dashboardIsDevMode = !!data.dev_mode; }})
+      .catch(() => {{}})
+      .finally(() => refreshDashboard(token));
     dashboardTimer = setInterval(() => refreshDashboard(token), 8000);
   }}
 

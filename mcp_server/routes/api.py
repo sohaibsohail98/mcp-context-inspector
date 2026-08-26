@@ -10,13 +10,31 @@ from starlette.responses import JSONResponse, RedirectResponse
 
 from metrics import store
 
+from mcp_server import dev_mode
 from mcp_server.app import current_owner, server
 
 
 @server.custom_route("/api/sessions", methods=["GET"])
 async def api_sessions(request: Request):
     limit = int(request.query_params.get("limit", 10))
-    return JSONResponse(store.get_recent_sessions(limit, owner=current_owner.get()))
+    owner = current_owner.get()
+    # ?include_test_sessions=1 only takes effect for an allowlisted
+    # account (see dev_mode.py) — anyone else's request for it is
+    # silently ignored rather than erroring, so a stray query param
+    # never becomes a way to probe who's on the allowlist.
+    include_test_sessions = (
+        request.query_params.get("include_test_sessions") == "1" and dev_mode.is_dev_mode_account(owner)
+    )
+    return JSONResponse(store.get_recent_sessions(limit, owner=owner, include_test_sessions=include_test_sessions))
+
+
+@server.custom_route("/api/dev-mode-status", methods=["GET"])
+async def api_dev_mode_status(request: Request):
+    """Tells the dashboard whether to render the "show test sessions"
+    toggle at all — the toggle itself is meaningless to anyone not on
+    the DEV_MODE_SUBS allowlist, so it's hidden rather than shown-and-
+    disabled for everyone else."""
+    return JSONResponse({"dev_mode": dev_mode.is_dev_mode_account(current_owner.get())})
 
 
 @server.custom_route("/api/sessions/{session_id}", methods=["GET"])

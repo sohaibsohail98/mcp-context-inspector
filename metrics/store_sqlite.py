@@ -383,11 +383,19 @@ def get_context_timeline(session_id, owner=None):
     return build_timeline(dict(r) for r in rows)
 
 
-def get_recent_sessions(limit=10, owner=None):
+def get_recent_sessions(limit=10, owner=None, include_test_sessions=False):
     """Aggregates (turn_count, cache tokens, tool call/error counts) are
     correlated subqueries, not per-row follow-up fetches — one query
     total, not the N+1 pattern the dashboard's KPI strip comment
-    explicitly calls out avoiding elsewhere."""
+    explicitly calls out avoiding elsewhere.
+
+    include_test_sessions=False (the default) excludes rows whose
+    session_id starts with "api-tests-" — the live black-box suite in
+    api_tests/ posts real OTLP payloads against a real deployment and
+    otherwise clutters every account's dashboard with synthetic probe
+    sessions (see api_tests/client.py's session_id generation). The
+    prefix is the marker, not a schema column, since every api_tests
+    session_id is already generated with it."""
     conn = _connect()
     agg_sql = (
         "(SELECT COUNT(*) FROM turns WHERE turns.session_id = sessions.session_id) AS turn_count, "
@@ -399,18 +407,20 @@ def get_recent_sessions(limit=10, owner=None):
         "(SELECT COUNT(*) FROM tool_calls WHERE tool_calls.session_id = sessions.session_id "
         "AND tool_calls.status = 'error') AS tool_call_errors"
     )
+    where_clauses = []
+    params = []
     if owner is not None:
-        rows = conn.execute(
-            f"SELECT session_id, prompt, model, total_tokens, estimated_cost, timestamp, "
-            f"source, status, {agg_sql} FROM sessions WHERE owner=? ORDER BY timestamp DESC LIMIT ?",
-            (owner, limit),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            f"SELECT session_id, prompt, model, total_tokens, estimated_cost, timestamp, "
-            f"source, status, {agg_sql} FROM sessions ORDER BY timestamp DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
+        where_clauses.append("owner=?")
+        params.append(owner)
+    if not include_test_sessions:
+        where_clauses.append("session_id NOT LIKE 'api-tests-%'")
+    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+    params.append(limit)
+    rows = conn.execute(
+        f"SELECT session_id, prompt, model, total_tokens, estimated_cost, timestamp, "
+        f"source, status, {agg_sql} FROM sessions {where_sql} ORDER BY timestamp DESC LIMIT ?",
+        params,
+    ).fetchall()
     conn.close()
     return [{**dict(r), "source": r["source"] or "bedrock_agent", "status": r["status"] or "closed"} for r in rows]
 

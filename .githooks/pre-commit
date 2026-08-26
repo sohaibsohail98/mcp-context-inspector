@@ -1,0 +1,17 @@
+#!/bin/sh
+# Scans staged changes for secrets before they ever reach a commit —
+# added after a real bearer token was committed and later had to be
+# scrubbed from git history with git-filter-repo + a force-push. Cheap
+# insurance: gitleaks only scans the staged diff here, not the whole
+# repo, so this stays fast on every commit.
+#
+# Activate once per clone:
+#     git config core.hooksPath .githooks
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+    echo "pre-commit: gitleaks not installed — skipping secret scan." >&2
+    echo "Install it (brew install gitleaks) so this hook can actually catch something." >&2
+    exit 0
+fi
+
+gitleaks protect --staged --verbose
