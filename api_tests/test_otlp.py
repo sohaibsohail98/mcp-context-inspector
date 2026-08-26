@@ -66,6 +66,14 @@ def test_accepted_session_becomes_visible_via_api(client):
     assert resp.status == 200
     assert resp.body["accepted"]["claude_code"] == 1
 
+    # Polls GET /api/sessions/{id} (session_detail), not the list view
+    # (GET /api/sessions) — the list view hides anything whose
+    # session_id starts "api-tests-" by default (see
+    # mcp_server/dev_mode.py), which every session this suite creates
+    # does. session_detail is a direct fetch by known ID with no such
+    # filtering, so this test doesn't depend on API_TEST_TOKEN being on
+    # the DEV_MODE_SUBS allowlist to see its own probe data.
+    #
     # No documented eventual-consistency window in any storage backend
     # (SQLite/DynamoDB/Firestore all write synchronously per
     # metrics/store.py's dispatcher) — a short retry loop only guards
@@ -74,13 +82,13 @@ def test_accepted_session_becomes_visible_via_api(client):
     deadline = time.time() + 10
     found = None
     while time.time() < deadline:
-        sessions = client.sessions().body
-        found = next((s for s in sessions if s["session_id"] == session_id), None)
-        if found:
+        detail = client.session_detail(session_id)
+        if detail.status == 200:
+            found = detail.body["metrics"]["session"]
             break
         time.sleep(1)
 
-    assert found is not None, f"session {session_id} never appeared via /api/sessions"
+    assert found is not None, f"session {session_id} never appeared via /api/sessions/{{id}}"
     assert found["source"] == "claude_code"
 
 
