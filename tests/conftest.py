@@ -102,3 +102,22 @@ def _reset_oauth_register_rate_limit():
     routes_oauth._register_attempts.clear()
     yield
     routes_oauth._register_attempts.clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_otlp_debug_counters():
+    """mcp_server.otlp's _counts/_last_accepted_at/_recent_skipped are
+    module-level, in-memory state (see that module's docstring) — same
+    reasoning as _reset_oauth_register_rate_limit above: without this,
+    GET /otlp/debug tests would see counters left over from whatever
+    other test sent OTLP payloads earlier in the same test session,
+    across the same owner keys."""
+    from mcp_server import otlp
+
+    otlp._counts.clear()
+    otlp._last_accepted_at.clear()
+    otlp._recent_skipped.clear()
+    yield
+    otlp._counts.clear()
+    otlp._last_accepted_at.clear()
+    otlp._recent_skipped.clear()

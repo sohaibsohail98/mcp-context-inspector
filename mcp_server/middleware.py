@@ -45,16 +45,32 @@ class MultiTokenAuthMiddleware(BaseHTTPMiddleware):
     open would make the MCP-side auth pointless. /auth/* itself stays
     unauthenticated, since that is the pre-auth sign-in flow.
 
+    GET /setup/install is also carved out of the bearer-token gate
+    (see unauthenticated_exact_paths) — it's the curl-able one-liner's
+    target (`curl ... | sh`), which can't carry an Authorization header,
+    so its credential is the short-lived `?t=` code checked inside the
+    route handler itself (routes/setup.py's setup_install), not a bearer
+    token here.
+
     Also sets `current_owner` for the rest of this request, so every
     read/write below can filter to the caller's own data. See
     metrics/store.py's owner param and the README's Auth section."""
 
-    def __init__(self, app, owner_token, protected_prefixes=("/mcp", "/api/", "/otlp", "/setup")):
+    def __init__(
+        self,
+        app,
+        owner_token,
+        protected_prefixes=("/mcp", "/api/", "/otlp", "/setup"),
+        unauthenticated_exact_paths=("/setup/install",),
+    ):
         super().__init__(app)
         self.owner_token = owner_token
         self.protected_prefixes = protected_prefixes
+        self.unauthenticated_exact_paths = unauthenticated_exact_paths
 
     async def dispatch(self, request, call_next):
+        if request.url.path in self.unauthenticated_exact_paths:
+            return await call_next(request)
         if any(request.url.path.startswith(p) for p in self.protected_prefixes):
             header = request.headers.get("authorization", "")
             token = header.removeprefix("Bearer ") if header.startswith("Bearer ") else None

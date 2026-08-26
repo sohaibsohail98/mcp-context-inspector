@@ -359,6 +359,78 @@ def test_otlp_route_rejects_non_object_body(client):
     assert resp.status_code == 400
 
 
+# --- /otlp/debug tenant isolation ---------------------------------------
+# Regression coverage for the gap the launch-plan review found: this route
+# used to return process-global counters, not filtered by current_owner —
+# see mcp_server/otlp/__init__.py's owner-keyed _counts.
+
+
+def test_otlp_debug_does_not_leak_another_tenants_data(client, isolated_auth_store):
+    """Alice's session landing must not flip Bob's /otlp/debug panel to
+    "connected" — the exact false-positive the review flagged."""
+    alice_token = isolated_auth_store.get_or_create_token("alice-sub", "alice@example.com")
+    bob_token = isolated_auth_store.get_or_create_token("bob-sub", "bob@example.com")
+
+    resource_logs = {
+        "resourceLogs": [
+            {
+                "resource": {"attributes": [{"key": "service.name", "value": {"stringValue": "claude-code"}}]},
+                "scopeLogs": [{"logRecords": [{"body": {"stringValue": "hi"}}]}],
+            }
+        ]
+    }
+    client.post("/otlp/v1/logs", json=resource_logs, headers={"Authorization": f"Bearer {alice_token}"})
+
+    alice_debug = client.get("/otlp/debug", headers={"Authorization": f"Bearer {alice_token}"}).json()
+    bob_debug = client.get("/otlp/debug", headers={"Authorization": f"Bearer {bob_token}"}).json()
+
+    assert alice_debug["counts"]["claude_code"] == 1
+    assert alice_debug["last_accepted_at"]["claude_code"] is not None
+    assert bob_debug["counts"]["claude_code"] == 0
+    assert bob_debug["last_accepted_at"]["claude_code"] is None
+
+
+def test_otlp_debug_recent_skipped_is_owner_scoped(client, isolated_auth_store):
+    """recent_skipped carries resource_attrs (hostnames, session IDs) —
+    the review's second finding was that any authenticated caller could
+    read another tenant's entries here."""
+    alice_token = isolated_auth_store.get_or_create_token("alice-sub", "alice@example.com")
+    bob_token = isolated_auth_store.get_or_create_token("bob-sub", "bob@example.com")
+
+    undetected_vendor_logs = {
+        "resourceLogs": [
+            {
+                "resource": {"attributes": [{"key": "host.name", "value": {"stringValue": "alices-laptop"}}]},
+                "scopeLogs": [{"logRecords": [{"body": {"stringValue": "hi"}}]}],
+            }
+        ]
+    }
+    client.post(
+        "/otlp/v1/logs", json=undetected_vendor_logs, headers={"Authorization": f"Bearer {alice_token}"}
+    )
+
+    alice_debug = client.get("/otlp/debug", headers={"Authorization": f"Bearer {alice_token}"}).json()
+    bob_debug = client.get("/otlp/debug", headers={"Authorization": f"Bearer {bob_token}"}).json()
+
+    assert len(alice_debug["recent_skipped"]) == 1
+    assert alice_debug["recent_skipped"][0]["resource_attrs"]["host.name"] == "alices-laptop"
+    assert bob_debug["recent_skipped"] == []
+
+
+def test_otlp_debug_owner_token_has_its_own_bucket(client, isolated_auth_store):
+    """The shared owner token's counters are their own bucket, not a
+    merge of every signed-in user's data."""
+    alice_token = isolated_auth_store.get_or_create_token("alice-sub", "alice@example.com")
+    client.post(
+        "/otlp/v1/logs",
+        json={"resourceLogs": []},
+        headers={"Authorization": f"Bearer {alice_token}"},
+    )
+
+    owner_debug = client.get("/otlp/debug", headers={"Authorization": "Bearer owner-secret"}).json()
+    assert owner_debug["counts"] == {"claude_code": 0, "copilot": 0, "skipped": 0}
+
+
 # --- /setup/apply-local-config -----------------------------------------
 # This route does a real local filesystem write (the caller's own
 # ~/.claude/settings.json) — every test here monkeypatches
@@ -480,6 +552,123 @@ def test_local_script_is_valid_python(client):
 
     resp = client.get("/setup/local-script", headers={"Authorization": "Bearer owner-secret"})
     ast.parse(resp.text)  # raises SyntaxError if the template substitution broke anything
+
+
+# --- /setup/issue-install-code + /setup/install --------------------------
+# The curl-able one-liner: /setup/issue-install-code mints a short-lived,
+# single-use code bound to the caller's own bearer token; /setup/install
+# exchanges that code (no Authorization header — the code IS the
+# credential, since a piped curl command can't carry a bearer header) for
+# a POSIX-sh installer script that performs the identical settings.json
+# merge as /setup/local-script's downloaded Python script.
+
+
+def test_issue_install_code_rejects_missing_token(client):
+    resp = client.post("/setup/issue-install-code")
+    assert resp.status_code == 401
+
+
+def test_issue_install_code_returns_code_and_ttl(client):
+    resp = client.post("/setup/issue-install-code", headers={"Authorization": "Bearer owner-secret"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["code"]
+    assert body["expires_in"] == local_setup.INSTALL_CODE_TTL_SECONDS
+
+
+def test_setup_install_rejects_missing_code(client):
+    resp = client.get("/setup/install")
+    assert resp.status_code == 400
+
+
+def test_setup_install_rejects_invalid_code(client):
+    resp = client.get("/setup/install", params={"t": "not-a-real-code"})
+    assert resp.status_code == 400
+
+
+def test_setup_install_exchanges_valid_code_for_a_shell_script(client):
+    code = client.post(
+        "/setup/issue-install-code", headers={"Authorization": "Bearer owner-secret"}
+    ).json()["code"]
+
+    resp = client.get("/setup/install", params={"t": code})
+    assert resp.status_code == 200
+    assert "owner-secret" in resp.text
+    assert "/mcp" in resp.text
+    assert "/otlp" in resp.text
+    assert resp.text.startswith("#!/bin/sh")
+
+
+def test_setup_install_code_is_single_use(client):
+    code = client.post(
+        "/setup/issue-install-code", headers={"Authorization": "Bearer owner-secret"}
+    ).json()["code"]
+
+    first = client.get("/setup/install", params={"t": code})
+    second = client.get("/setup/install", params={"t": code})
+    assert first.status_code == 200
+    assert second.status_code == 400
+
+
+def test_setup_install_rejects_expired_code(client, monkeypatch, isolated_auth_store):
+    from mcp_server.auth import store_sqlite
+
+    code = client.post(
+        "/setup/issue-install-code", headers={"Authorization": "Bearer owner-secret"}
+    ).json()["code"]
+
+    # Simulate the "copied the command, got pulled away, pasted it 20
+    # minutes later" case the plan explicitly calls out as the common
+    # failure mode — backdate expires_at directly rather than sleeping.
+    conn = store_sqlite._connect()
+    conn.execute("UPDATE install_codes SET expires_at = 0")
+    conn.commit()
+    conn.close()
+
+    resp = client.get("/setup/install", params={"t": code})
+    assert resp.status_code == 400
+    assert "expired" in resp.text.lower()
+
+
+def test_setup_install_script_is_valid_posix_shell(client):
+    """A malformed template (unbalanced braces from the heavy {{ }}
+    escaping) would otherwise only surface at curl-time in someone's
+    terminal — catch it here instead by actually invoking `sh -n`
+    (syntax-check only, no execution) against the real script."""
+    import subprocess
+
+    code = client.post(
+        "/setup/issue-install-code", headers={"Authorization": "Bearer owner-secret"}
+    ).json()["code"]
+    script = client.get("/setup/install", params={"t": code}).text
+
+    result = subprocess.run(["sh", "-n"], input=script, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_setup_install_script_execution_applies_same_patch_as_local_script(client, tmp_path, monkeypatch):
+    """The curl-installer must perform the identical settings.json merge
+    as /setup/local-script's downloaded Python script — same keys, same
+    values — since it's meant to be an equally valid path to the same
+    result."""
+    import subprocess
+
+    code = client.post(
+        "/setup/issue-install-code", headers={"Authorization": "Bearer owner-secret"}
+    ).json()["code"]
+    script = client.get("/setup/install", params={"t": code}).text
+
+    script_path = tmp_path / "install.sh"
+    script_path.write_text(script)
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    result = subprocess.run(["sh", str(script_path)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+    written = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+    assert written["mcpServers"]["context-inspector"]["headers"]["Authorization"] == "Bearer owner-secret"
+    assert written["env"]["CLAUDE_CODE_ENABLE_TELEMETRY"] == "1"
+    assert written["env"]["OTEL_RESOURCE_ATTRIBUTES"] == "service.name=claude-code"
 
 
 def test_local_script_execution_applies_same_patch_as_apply_local_config(client, tmp_path, monkeypatch):

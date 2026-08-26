@@ -13,7 +13,7 @@ is wrong.
 
 import logging
 import time
-from collections import deque
+from collections import defaultdict, deque
 
 from mcp_server.otlp import claude_code, copilot
 from mcp_server.otlp.common import resource_attrs_dict
@@ -26,27 +26,53 @@ logger = logging.getLogger(__name__)
 # exporter otherwise gives no visibility into. Not a metrics/analytics
 # system (metrics/store.py + Firestore/DynamoDB already do that for
 # accepted data) — this exists specifically to see *rejected* data too.
-_counts = {"claude_code": 0, "copilot": 0, "skipped": 0}
-_last_accepted_at = {"claude_code": None, "copilot": None}
-_recent_skipped = deque(maxlen=20)
+#
+# Keyed by owner (the google_sub current_owner resolves to, or the
+# sentinel _OWNER_TOKEN_KEY for the shared owner-token/all-data caller —
+# see current_owner's docstring) so GET /otlp/debug can answer "did MY
+# data arrive" instead of leaking every tenant's counters to whoever asks
+# first. Found in review: this used to be flat process-global state,
+# which both false-positived "connected" for any signed-in caller the
+# instant ANY tenant's data landed, and leaked other tenants' resource_attrs
+# (hostnames, session IDs) via recent_skipped to any authenticated caller.
+_OWNER_TOKEN_KEY = "__owner_token__"
 
 
-def _record_skipped(resource_attrs, record_count=1):
-    _counts["skipped"] += record_count
-    _recent_skipped.append({"at": time.time(), "resource_attrs": resource_attrs})
+def _owner_key(owner):
+    return _OWNER_TOKEN_KEY if owner is None else owner
 
 
-def _record_accepted(vendor):
-    _counts[vendor] += 1
-    _last_accepted_at[vendor] = time.time()
+def _new_counts():
+    return {"claude_code": 0, "copilot": 0, "skipped": 0}
 
 
-def debug_snapshot():
-    """Plain-dict snapshot for the /otlp/debug route — see mcp_server/routes/otlp.py."""
+_counts = defaultdict(_new_counts)
+_last_accepted_at = defaultdict(lambda: {"claude_code": None, "copilot": None})
+_recent_skipped = defaultdict(lambda: deque(maxlen=20))
+
+
+def _record_skipped(owner, resource_attrs, record_count=1):
+    key = _owner_key(owner)
+    _counts[key]["skipped"] += record_count
+    _recent_skipped[key].append({"at": time.time(), "resource_attrs": resource_attrs})
+
+
+def _record_accepted(owner, vendor):
+    key = _owner_key(owner)
+    _counts[key][vendor] += 1
+    _last_accepted_at[key][vendor] = time.time()
+
+
+def debug_snapshot(owner):
+    """Plain-dict snapshot for the /otlp/debug route — see
+    mcp_server/routes/otlp.py. Scoped to `owner` (None = the shared
+    owner-token's own all-data counters, which are their own bucket here,
+    not literally every tenant's data merged — see _owner_key)."""
+    key = _owner_key(owner)
     return {
-        "counts": dict(_counts),
-        "last_accepted_at": dict(_last_accepted_at),
-        "recent_skipped": list(_recent_skipped),
+        "counts": dict(_counts[key]),
+        "last_accepted_at": dict(_last_accepted_at[key]),
+        "recent_skipped": list(_recent_skipped[key]),
     }
 
 # Candidate service.name values for each vendor. Claude Code's telemetry
@@ -118,14 +144,14 @@ def handle_logs_payload(payload, owner):
         if vendor == "claude_code":
             claude_code.handle_logs(attrs, log_records, owner)
             counts["claude_code"] += len(log_records)
-            _record_accepted("claude_code")
+            _record_accepted(owner, "claude_code")
         elif vendor == "copilot":
             copilot.handle_logs(attrs, log_records, owner)
             counts["copilot"] += len(log_records)
-            _record_accepted("copilot")
+            _record_accepted(owner, "copilot")
         else:
             _log_undetected_vendor(attrs)
-            _record_skipped(attrs, len(log_records))
+            _record_skipped(owner, attrs, len(log_records))
             counts["skipped"] += len(log_records)
     return counts
 
@@ -145,14 +171,14 @@ def handle_metrics_payload(payload, owner):
         if vendor == "claude_code":
             claude_code.handle_metrics(attrs, metrics, owner)
             counts["claude_code"] += len(metrics)
-            _record_accepted("claude_code")
+            _record_accepted(owner, "claude_code")
         elif vendor == "copilot":
             copilot.handle_metrics(attrs, metrics, owner)
             counts["copilot"] += len(metrics)
-            _record_accepted("copilot")
+            _record_accepted(owner, "copilot")
         else:
             _log_undetected_vendor(attrs)
-            _record_skipped(attrs, len(metrics))
+            _record_skipped(owner, attrs, len(metrics))
             counts["skipped"] += len(metrics)
     return counts
 
@@ -176,9 +202,9 @@ def handle_traces_payload(payload, owner):
         if vendor == "copilot":
             copilot.handle_traces(attrs, spans, owner)
             counts["copilot"] += len(spans)
-            _record_accepted("copilot")
+            _record_accepted(owner, "copilot")
         else:
             _log_undetected_vendor(attrs)
-            _record_skipped(attrs, len(spans))
+            _record_skipped(owner, attrs, len(spans))
             counts["skipped"] += len(spans)
     return counts

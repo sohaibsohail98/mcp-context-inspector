@@ -54,6 +54,8 @@ from urllib.parse import urlparse
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
+from mcp_server import local_setup
+
 _client = None
 
 
@@ -84,6 +86,10 @@ def _codes():
 
 def _tokens():
     return _db().collection("oauth_tokens")
+
+
+def _install_codes():
+    return _db().collection("install_codes")
 
 
 def _sha256_hex(value):
@@ -286,6 +292,58 @@ def redeem_oauth_code(code, client_id, redirect_uri, code_verifier, resource):
 
         transaction.update(doc_ref, {"consumed_at": now})
         return row["google_sub"], row["email"]
+
+    transaction = _db().transaction()
+    return _txn(transaction)
+
+
+def issue_install_code(bearer_token, ttl_seconds=local_setup.INSTALL_CODE_TTL_SECONDS):
+    """Mints a one-time code for the /setup/install curl-able one-liner —
+    the page hands this to a signed-in caller instead of embedding their
+    real bearer token in plaintext (which would otherwise end up in shell
+    history forever). Stores bearer_token itself (not an identity to
+    re-derive it from later) — works identically for a per-user token or
+    the shared owner token. Returns the raw code (shown exactly once);
+    only its hash is stored, same reasoning as issue_oauth_code.
+    Deliberately a separate collection from oauth_codes — no
+    client_id/redirect_uri/PKCE, since there's no OAuth client or browser
+    redirect involved here."""
+    raw = secrets.token_urlsafe(32)
+    now = time.time()
+    _install_codes().document(_sha256_hex(raw)).set(
+        {
+            "bearer_token": bearer_token,
+            "created_at": now,
+            "expires_at": now + ttl_seconds,
+            "consumed_at": None,
+        }
+    )
+    return raw
+
+
+def redeem_install_code(code):
+    """Validates and single-use-consumes an install code, same
+    transactional single-use guarantee as redeem_oauth_code (see that
+    function's docstring for why the consume happens inside the same
+    transaction as the checks). Raises ValueError with a caller-safe
+    message; returns the bearer token on success."""
+    code_hash = _sha256_hex(code)
+    doc_ref = _install_codes().document(code_hash)
+
+    @firestore.transactional
+    def _txn(transaction):
+        snapshot = doc_ref.get(transaction=transaction)
+        if not snapshot.exists:
+            raise ValueError("invalid install code")
+        row = snapshot.to_dict()
+        now = time.time()
+        if row.get("consumed_at") is not None:
+            raise ValueError("install code already used")
+        if row["expires_at"] < now:
+            raise ValueError("install code expired")
+
+        transaction.update(doc_ref, {"consumed_at": now})
+        return row["bearer_token"]
 
     transaction = _db().transaction()
     return _txn(transaction)

@@ -31,6 +31,8 @@ import time
 from pathlib import Path
 from urllib.parse import urlparse
 
+from mcp_server import local_setup
+
 DB_PATH = Path(__file__).parent.parent / "data" / "mcp_auth.db"
 
 _SCHEMA = """
@@ -85,6 +87,23 @@ _SCHEMA = """
         email TEXT,
         client_name TEXT,
         created_at REAL
+    );
+
+    -- One-time install codes: the short-lived code /setup/install's
+    -- curl-able one-liner exchanges for the caller's real bearer token,
+    -- so the token itself never sits in shell history via a plaintext
+    -- curl arg. Deliberately a separate, simpler table from oauth_codes
+    -- above — no client_id/redirect_uri/PKCE, since there's no OAuth
+    -- client or browser redirect involved here, just "the signed-in
+    -- page handed you a code, now exchange it." Same single-use +
+    -- TTL + hash-keyed-storage shape as oauth_codes for the same
+    -- reasoning (see issue_install_code/redeem_install_code below).
+    CREATE TABLE IF NOT EXISTS install_codes (
+        code_hash TEXT PRIMARY KEY,
+        bearer_token TEXT,
+        created_at REAL,
+        expires_at REAL,
+        consumed_at REAL
     );
 """
 
@@ -300,6 +319,62 @@ def redeem_oauth_code(code, client_id, redirect_uri, code_verifier, resource):
     conn.commit()
     conn.close()
     return row["google_sub"], row["email"]
+
+
+def issue_install_code(bearer_token, ttl_seconds=local_setup.INSTALL_CODE_TTL_SECONDS):
+    """Mints a one-time code for the /setup/install curl-able one-liner —
+    the page hands this to a signed-in caller instead of embedding their
+    real bearer token in plaintext (which would otherwise end up in shell
+    history forever). Stores bearer_token itself (not an identity to
+    re-derive it from later) — simplest correct contract, and works
+    identically for a per-user token or the shared owner token, neither
+    of which needs re-deriving. Returns the raw code (shown exactly
+    once); only its hash is stored, same reasoning as issue_oauth_code."""
+    raw = secrets.token_urlsafe(32)
+    now = time.time()
+    conn = _connect()
+    conn.execute(
+        "INSERT INTO install_codes (code_hash, bearer_token, created_at, expires_at, consumed_at) "
+        "VALUES (?,?,?,?,NULL)",
+        (_sha256_hex(raw), bearer_token, now, now + ttl_seconds),
+    )
+    conn.commit()
+    conn.close()
+    return raw
+
+
+def redeem_install_code(code):
+    """Validates and single-use-consumes an install code, same atomicity
+    guarantee as redeem_oauth_code (the final UPDATE's WHERE consumed_at
+    IS NULL is what actually enforces single-use under a race, not the
+    earlier read). Raises ValueError with a caller-safe message — the
+    install script surfaces this directly, so "expired" vs "already
+    used" vs "invalid" are distinguished rather than collapsed into one
+    generic failure. Returns the bearer token on success."""
+    code_hash = _sha256_hex(code)
+    conn = _connect()
+    row = conn.execute("SELECT * FROM install_codes WHERE code_hash=?", (code_hash,)).fetchone()
+    if row is None:
+        conn.close()
+        raise ValueError("invalid install code")
+    row = dict(row)
+    now = time.time()
+    if row["consumed_at"] is not None:
+        conn.close()
+        raise ValueError("install code already used")
+    if row["expires_at"] < now:
+        conn.close()
+        raise ValueError("install code expired")
+
+    cursor = conn.execute(
+        "UPDATE install_codes SET consumed_at=? WHERE code_hash=? AND consumed_at IS NULL", (now, code_hash)
+    )
+    if cursor.rowcount != 1:
+        conn.close()
+        raise ValueError("install code already used")
+    conn.commit()
+    conn.close()
+    return row["bearer_token"]
 
 
 def list_oauth_clients():

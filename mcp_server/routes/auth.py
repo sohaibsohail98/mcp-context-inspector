@@ -394,6 +394,25 @@ _PAGE_STYLE = """
   .tag { font-size: 11px; padding: 0.22rem 0.55rem; border-radius: 999px; background: var(--bg-sunken); color: var(--text-dim); border: 1px solid var(--border); }
   .disclosure-note { display: flex; gap: 0.6rem; align-items: flex-start; padding: 0.85rem 1rem; border-radius: var(--radius-sm); background: var(--warn-dim); border: 1px solid var(--warn-border); font-size: 11.5px; color: var(--text); }
   .disclosure-note strong { color: var(--warn); }
+
+  /* Setup card: explicit numbered steps instead of prose-with-a-button. */
+  .setup-step { display: flex; gap: 0.75rem; margin-top: 0.9rem; }
+  .setup-step-num {
+    flex-shrink: 0; width: 1.5rem; height: 1.5rem; border-radius: 999px; margin-top: 0.05rem;
+    background: var(--accent-dim); color: var(--accent); font-size: 0.78rem; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .setup-step-body { flex: 1; min-width: 0; }
+  .setup-step-title { font-size: 0.87rem; font-weight: 600; color: var(--text); margin-bottom: 0.35rem; }
+  .setup-step pre { margin: 0; font-size: 0.8rem; }
+  .setup-waiting {
+    margin-top: 0.9rem; padding: 0.8rem 1rem; border-radius: var(--radius-sm);
+    background: var(--warn-dim); border: 1px solid var(--warn-border);
+    display: flex; align-items: center; gap: 0.6rem; font-size: 0.85rem; color: var(--text);
+  }
+  .setup-waiting .pulse { width: 8px; height: 8px; border-radius: 999px; background: var(--warn); flex-shrink: 0; animation: lumen-pulse 1.8s infinite; }
+  @media (prefers-reduced-motion: reduce) { .setup-waiting .pulse { animation: none; } }
+  .setup-waiting strong { color: var(--warn); }
   .range-row { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.2rem; }
   .quota-strip { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem; }
   .quota-card { background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.85rem 1rem; box-shadow: var(--shadow); position: relative; }
@@ -602,21 +621,55 @@ async def auth_login(request: Request):
         <div id="local-setup-result" style="margin-top: 0.7rem; font-size: 0.85rem;"></div>
       </div>
       ` : `
-      <div id="local-script-card" class="card accent">
-        <h3>Download setup script</h3>
-        <p class="card-hint">Gets you connected everywhere — MCP query tools <strong>and</strong>
-        automatic telemetry — with one script you run once, locally. This server is deployed, so
-        it can't write to your machine directly; the script does the exact same
-        <code>~/.claude/settings.json</code> merge <a href="#advanced-setup" onclick="showConnectTab('claude'); const d = document.querySelector('details'); d.open = true; d.scrollIntoView({{behavior:'smooth'}}); return false;" style="color:inherit; text-decoration:underline;">the manual snippets below</a>
-        would have you paste in by hand, but running locally, on your own machine, under your
-        own inspection. Your existing settings are backed up first and merged, never overwritten.</p>
-        <button class="copy" onclick="downloadLocalScript()" id="local-script-btn">Download setup script</button>
-        <div id="local-script-result" style="margin-top: 0.7rem; font-size: 0.85rem;"></div>
+      <div id="install-card" class="card accent">
+        <h3>Set up Claude Code</h3>
+        <p class="card-hint">Once you run this, Claude Code streams your session data straight to
+        this dashboard in the background — nothing stored locally, nothing to keep running.</p>
+
+        <p style="margin: 0.9rem 0 0.5rem; font-size: 0.87rem;">
+          <em><strong>Please close any existing Claude Code sessions</strong></em> &mdash; terminal
+          windows or editor integrations &mdash; before running this. Env vars only load once at
+          process startup, so a session that's already open won't pick up the new config no
+          matter how correct the file on disk now is.
+        </p>
+
+        <pre id="install-cmd">fetching your install command&hellip;</pre>
+        <div style="display:flex; gap:0.5rem;">
+          <button class="copy" onclick="copyText('install-cmd')" id="install-copy-btn">Copy command</button>
+          <button class="icon-btn" onclick="refreshInstallCommand()" id="install-refresh-btn" title="Get a fresh command (the old one expires after a few minutes)">&#8635; New command</button>
+        </div>
         <p class="card-hint" style="margin-top: 0.6rem;">
+          This command is single-use and expires in a few minutes — the code in the URL exchanges
+          once for your real token, server-side, so the token itself never ends up sitting in your
+          shell history. If it's gone stale, click "New command" for a fresh one.
+        </p>
+
+        <details style="margin-top: 0.9rem;">
+          <summary>Not comfortable piping straight into a shell? Inspect it first</summary>
+          <p class="card-hint">Same script either way — this just downloads it instead of piping
+          it directly, so you (or <code>less</code>, or your editor) can read exactly what it's
+          about to do before anything runs:</p>
+          <pre id="install-cmd-inspect">fetching your install command&hellip;</pre>
+          <button class="copy" onclick="copyText('install-cmd-inspect')">Copy command</button>
+        </details>
+
+        <div id="test-connection-card" style="margin-top: 1.1rem; padding-top: 1.1rem; border-top: 1px solid var(--border-soft);">
+          <div class="setup-step-title">Test your connection</div>
+          <div id="test-connection-result">
+            <div class="setup-waiting"><span class="pulse"></span>
+              <span>Waiting for your first prompt&hellip; run the command above, close and
+              reopen Claude Code, then run one prompt. Check back here about 10 seconds after
+              it finishes — that's how often telemetry exports.</span>
+            </div>
+          </div>
+          <button class="icon-btn" onclick="checkConnection()" style="margin-top:0.6rem;" id="test-connection-btn">&#8635; Check now</button>
+        </div>
+
+        <p class="card-hint" style="margin-top: 0.9rem;">
           Prefer not to run a script? <a href="https://claude.ai/new#settings/customize-connectors" target="_blank" rel="noopener" onclick="document.querySelector('details').open=true;">Connect via claude.ai Connectors instead &rarr;</a>
           — opens claude.ai's Connectors settings in a new tab. Paste just the MCP server URL from
           "Your connection" above (no token needed — you'll sign in with Google right there) under
-          <strong>Add custom connector</strong>. Full steps in the "Advanced" section below, now expanded.
+          <strong>Add custom connector</strong>. Full steps in the "Advanced" section below.
         </p>
       </div>
       `) + `
@@ -836,45 +889,78 @@ async def auth_login(request: Request):
     }}
   }}
 
-  // Fetches a personalized setup script (see /setup/local-script — same
-  // bearer-token auth as every other protected route, never a plain link,
-  // so the token-bearing file can only be produced by someone who's
-  // already authenticated) and triggers a normal browser download via a
-  // synthetic <a download> click. Nothing here talks to the local
-  // filesystem — that only happens once the user runs the downloaded
-  // script themselves.
-  async function downloadLocalScript() {{
-    const btn = document.getElementById("local-script-btn");
-    const result = document.getElementById("local-script-result");
-    const filename = "mcp-context-inspector-setup.py";
-    btn.disabled = true;
-    btn.textContent = "Preparing…";
+  // Mints a fresh short-lived install code (see POST
+  // /setup/issue-install-code) and renders both the piped one-liner and
+  // the inspect-first (download, read, then run) variant of the exact
+  // same command — see LUMEN_LAUNCH_PLAN.md §1.2. The code is single-use
+  // and expires in a few minutes, so this re-mints on every call rather
+  // than caching — "New command" (and page reload) always gets a live one.
+  async function refreshInstallCommand() {{
+    const cmdEl = document.getElementById("install-cmd");
+    const inspectEl = document.getElementById("install-cmd-inspect");
+    const btn = document.getElementById("install-refresh-btn");
+    if (!cmdEl) return;  // localhost path renders a different card with no install-cmd element
+    if (btn) {{ btn.disabled = true; btn.classList.add("spinning"); }}
     try {{
-      const res = await fetch("/setup/local-script", {{
+      const res = await fetch("/setup/issue-install-code", {{
+        method: "POST",
         headers: {{ Authorization: "Bearer " + currentToken }},
       }});
-      if (!res.ok) {{
-        const data = await res.json().catch(() => ({{}}));
-        throw new Error(data.error || ("HTTP " + res.status));
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+      const installUrl = window.location.origin + "/setup/install?t=" + encodeURIComponent(data.code);
+      cmdEl.textContent = "curl -fsSL " + installUrl + " | sh";
+      if (inspectEl) {{
+        inspectEl.textContent = "curl -fsSL " + installUrl + " -o install.sh\\nless install.sh"
+          + "        # read exactly what it's about to do\\nsh install.sh";
       }}
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-      result.innerHTML = '<span style="color:var(--ok);">&check; Downloaded <code>' + filename + '</code> — '
-        + 'run it with:</span><pre style="margin-top:0.4rem;">python3 ' + filename + '</pre>'
-        + '<span style="color:var(--text-dim);">It contains your token, so treat it like a password — delete it after running.</span>';
-      btn.disabled = false;
-      btn.textContent = "Download setup script";
     }} catch (err) {{
-      result.innerHTML = '<span style="color:var(--err);">' + err.message + '</span>';
+      cmdEl.textContent = "Couldn't fetch an install command: " + err.message + " — click \\"New command\\" to retry.";
+    }} finally {{
+      if (btn) {{ btn.disabled = false; btn.classList.remove("spinning"); }}
+    }}
+  }}
+
+  // "Test your connection" — a single on-demand check against
+  // GET /otlp/debug (owner-scoped, see mcp_server/otlp/__init__.py),
+  // never a polling loop: Claude Code only exports telemetry on actual
+  // use, so there's no honest way to fake a heartbeat here. Three
+  // states: still waiting (nothing accepted and nothing skipped yet),
+  // connected (at least one claude_code payload accepted), or received-
+  // but-unrecognized (something landed in recent_skipped — the vendor-
+  // detection miss this project hit once before, see otlp/__init__.py's
+  // detect_vendor).
+  async function checkConnection() {{
+    const resultEl = document.getElementById("test-connection-result");
+    const btn = document.getElementById("test-connection-btn");
+    if (!resultEl) return;
+    btn.disabled = true;
+    try {{
+      const res = await fetch("/otlp/debug", {{ headers: {{ Authorization: "Bearer " + currentToken }} }});
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+
+      if (data.counts.claude_code > 0) {{
+        const lastAt = data.last_accepted_at.claude_code;
+        const when = lastAt ? new Date(lastAt * 1000).toLocaleString() : "just now";
+        resultEl.innerHTML = '<div class="setup-waiting" style="background:var(--accent-dim); border-color: color-mix(in srgb, var(--accent) 40%, transparent);">'
+          + '<span style="color:var(--accent);">&check;</span>'
+          + '<span><strong>Connected as ' + currentEmail + '</strong> — first session seen ' + when + '.</span></div>';
+      }} else if (data.counts.skipped > 0 || (data.recent_skipped && data.recent_skipped.length > 0)) {{
+        resultEl.innerHTML = '<div class="setup-waiting">'
+          + '<span style="color:var(--err);">&#9888;</span>'
+          + '<span>We\\'re receiving data from your machine but can\\'t identify it as Claude Code — '
+          + 're-run the install command above, then close and reopen Claude Code before your next prompt.</span></div>';
+      }} else {{
+        resultEl.innerHTML = '<div class="setup-waiting"><span class="pulse"></span>'
+          + '<span>Waiting for your first prompt&hellip; run the command above, close and '
+          + 'reopen Claude Code, then run one prompt. Check back here about 10 seconds after '
+          + 'it finishes — that\\'s how often telemetry exports.</span></div>';
+      }}
+    }} catch (err) {{
+      resultEl.innerHTML = '<span style="color:var(--err);">' + err.message + '</span>';
+    }} finally {{
       btn.disabled = false;
-      btn.textContent = "Download setup script";
     }}
   }}
 
@@ -1632,6 +1718,7 @@ async def auth_login(request: Request):
         currentEmail = data.email;
         currentToken = data.mcp_token;
         landing.innerHTML = successBanner(data.email) + connectPage(data.email, data.mcp_token);
+        refreshInstallCommand();
       }} else {{
         landing.innerHTML = "<div class='card security'>Sign-in failed: " + (data.error || "unknown error") + "</div>";
       }}
@@ -1690,6 +1777,7 @@ async def auth_login(request: Request):
     const landing = document.getElementById("landing");
     landing.classList.remove("hidden");
     landing.innerHTML = successBanner(email) + connectPage(email, token);
+    refreshInstallCommand();
     goToDashboard();
     apiGet(token, "/api/sessions?limit=1").catch(() => signOut());
   }}

@@ -78,16 +78,23 @@ async def otlp_traces(request: Request):
 
 @server.custom_route("/otlp/debug", methods=["GET"])
 async def otlp_debug(request: Request):
-    """Troubleshooting aid, not a metrics endpoint — answers "did
-    anything reach this server at all, and what did it think it was,"
-    which a fire-and-forget OTel exporter otherwise gives zero
-    visibility into from the client side. In-memory only (see
-    mcp_server/otlp/__init__.py's _counts) — resets on every
-    redeploy/restart, so a zero here after a fresh deploy doesn't by
-    itself mean nothing has arrived since. Under the same bearer auth as
-    the rest of /otlp (protected_prefixes in middleware.py), since
-    resource_attrs from recent_skipped is operational data about this
-    deployment's callers, not something to expose publicly."""
+    """Troubleshooting aid, not a metrics endpoint — answers "did MY
+    data reach this server, and what did it think it was," which a
+    fire-and-forget OTel exporter otherwise gives zero visibility into
+    from the client side. In-memory only (see mcp_server/otlp/__init__.py's
+    _counts) — resets on every redeploy/restart, so a zero here after a
+    fresh deploy doesn't by itself mean nothing has arrived since.
+
+    Scoped to current_owner (see mcp_server/otlp/__init__.py's
+    debug_snapshot): each caller only ever sees their own counters and
+    their own recent_skipped entries, never another tenant's. Found in
+    review — this used to return process-global counters, which both
+    false-positived "connected" across tenants and leaked other
+    tenants' resource_attrs (hostnames, session IDs) via recent_skipped
+    to any authenticated caller."""
     return JSONResponse(
-        {"message": "in-memory counters since last server restart/redeploy", **otlp.debug_snapshot()}
+        {
+            "message": "in-memory counters since last server restart/redeploy, scoped to your account",
+            **otlp.debug_snapshot(current_owner.get()),
+        }
     )

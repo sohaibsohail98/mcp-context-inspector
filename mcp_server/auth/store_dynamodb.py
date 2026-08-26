@@ -43,6 +43,7 @@ import uuid
 import boto3
 
 from mci_common.config import DEFAULT_REGION
+from mcp_server import local_setup
 
 TABLE_NAME = os.environ.get("AUTH_TABLE", "mcp-context-auth")
 REGION = os.environ.get("AWS_REGION", DEFAULT_REGION)
@@ -68,6 +69,10 @@ def _code_key(code_hash):
 
 def _oauth_token_key(token):
     return {"pk": f"TOKEN#{token}", "sk": "ACCESS_TOKEN"}
+
+
+def _install_code_key(code_hash):
+    return {"pk": f"INSTALLCODE#{code_hash}", "sk": "INSTALL_CODE"}
 
 
 def get_or_create_token(google_sub, email):
@@ -269,6 +274,64 @@ def redeem_oauth_code(code, client_id, redirect_uri, code_verifier, resource):
             raise ValueError("authorization code already used") from e
         raise
     return row["google_sub"], row["email"]
+
+
+def issue_install_code(bearer_token, ttl_seconds=local_setup.INSTALL_CODE_TTL_SECONDS):
+    """Mints a one-time code for the /setup/install curl-able one-liner —
+    see the SQLite version's docstring for the full contract. Stores
+    bearer_token itself (not an identity to re-derive it from later).
+    Deliberately a separate item shape from CODE#/AUTH_CODE — no
+    client_id/redirect_uri/PKCE, since there's no OAuth client or
+    browser redirect involved."""
+    import hashlib
+    import secrets
+
+    raw = secrets.token_urlsafe(32)
+    code_hash = hashlib.sha256(raw.encode()).hexdigest()
+    now = time.time()
+    expires_at = now + ttl_seconds
+    _table.put_item(
+        Item={
+            **_install_code_key(code_hash),
+            "bearer_token": bearer_token,
+            "created_at": now,
+            "expires_at": expires_at,
+            "ttl": int(expires_at) + 3600,  # DynamoDB TTL cleanup, 1h grace past explicit expiry
+        }
+    )
+    return raw
+
+
+def redeem_install_code(code):
+    """Validates and single-use-consumes an install code — same
+    conditional-update atomicity as redeem_oauth_code (see that
+    function's docstring). Returns the bearer token on success."""
+    import hashlib
+
+    from botocore.exceptions import ClientError
+
+    code_hash = hashlib.sha256(code.encode()).hexdigest()
+    row = _table.get_item(Key=_install_code_key(code_hash)).get("Item")
+    if row is None:
+        raise ValueError("invalid install code")
+    now = time.time()
+    if row.get("consumed_at") is not None:
+        raise ValueError("install code already used")
+    if row["expires_at"] < now:
+        raise ValueError("install code expired")
+
+    try:
+        _table.update_item(
+            Key=_install_code_key(code_hash),
+            UpdateExpression="SET consumed_at = :now",
+            ConditionExpression="attribute_not_exists(consumed_at)",
+            ExpressionAttributeValues={":now": now},
+        )
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+            raise ValueError("install code already used") from e
+        raise
+    return row["bearer_token"]
 
 
 def mint_oauth_token(google_sub, email, client_name):
