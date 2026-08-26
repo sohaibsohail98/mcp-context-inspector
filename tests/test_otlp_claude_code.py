@@ -510,3 +510,85 @@ def test_body_is_read_from_attribute_not_log_record_body_field(isolated_sqlite_d
 
     timeline = store.get_context_timeline("sess-real-shape")
     assert any(b["category"] == "user" for b in timeline)
+
+
+def test_connection_only_event_does_not_create_an_empty_session(isolated_sqlite_db):
+    """Regression test for a real bug found via live capture (2026-08-27,
+    claude-code 2.1.246): running /clear starts a brand-new session_id
+    client-side, and if no real prompt follows, that session's only log
+    record is a lone mcp_server_connection event, a connection-health
+    ping, not a turn. Before the fix, _handle_log_record created a
+    session row (start_or_get_session) for ANY event with a session_id,
+    so this left a permanent, empty (prompt=None, model=None,
+    status="open" forever) row that nothing ever backfilled, since no
+    other event for that session_id was ever going to arrive. Reported
+    by a user as "sessions missing/showing up broken" in their history."""
+    store = isolated_sqlite_db
+
+    record = {
+        "timeUnixNano": "1000000000",
+        "attributes": [
+            {"key": "event.name", "value": {"stringValue": "mcp_server_connection"}},
+            {"key": "session.id", "value": {"stringValue": "sess-clear-only"}},
+        ],
+        "body": {"stringValue": "claude_code.mcp_server_connection"},
+    }
+
+    claude_code.handle_logs(RESOURCE_ATTRS, [record], owner=None)
+
+    assert store.get_session_metrics("sess-clear-only") is None
+
+
+def test_real_turn_after_connection_only_event_still_creates_session(isolated_sqlite_db):
+    """The fix only skips session creation for non-turn events — a
+    session_id that sends mcp_server_connection first and then a real
+    turn must still land normally."""
+    store = isolated_sqlite_db
+
+    connection_record = {
+        "timeUnixNano": "1000000000",
+        "attributes": [
+            {"key": "event.name", "value": {"stringValue": "mcp_server_connection"}},
+            {"key": "session.id", "value": {"stringValue": "sess-then-real"}},
+        ],
+        "body": {"stringValue": "claude_code.mcp_server_connection"},
+    }
+    request_body = {"messages": [{"role": "user", "content": "a real prompt after all"}]}
+    request_record = _log_record("api_request_body", request_body, session_id="sess-then-real")
+
+    claude_code.handle_logs(RESOURCE_ATTRS, [connection_record, request_record], owner=None)
+
+    assert store.get_session_metrics("sess-then-real") is not None
+
+
+def _token_usage_metric(session_id, value, value_key="asInt"):
+    return {
+        "name": "claude_code.token.usage",
+        "sum": {
+            "dataPoints": [
+                {
+                    "attributes": [{"key": "session.id", "value": {"stringValue": session_id}}],
+                    value_key: value,
+                }
+            ]
+        },
+    }
+
+
+def test_zero_value_metric_does_not_create_a_session(isolated_sqlite_db):
+    """A claude_code.token.usage datapoint with a zero value carries no
+    real usage to report — same reasoning as the logs-side fix above,
+    applied to the metrics path."""
+    store = isolated_sqlite_db
+
+    claude_code.handle_metrics(RESOURCE_ATTRS, [_token_usage_metric("sess-zero-metric", 0)], owner=None)
+
+    assert store.get_session_metrics("sess-zero-metric") is None
+
+
+def test_nonzero_value_metric_still_creates_a_session(isolated_sqlite_db):
+    store = isolated_sqlite_db
+
+    claude_code.handle_metrics(RESOURCE_ATTRS, [_token_usage_metric("sess-real-metric", 42)], owner=None)
+
+    assert store.get_session_metrics("sess-real-metric") is not None

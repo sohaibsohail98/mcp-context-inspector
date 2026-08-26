@@ -232,7 +232,14 @@ def _claude_code_otlp_payload(session_id):
                     {
                         "logRecords": [
                             {
-                                "attributes": [{"key": "session.id", "value": {"stringValue": session_id}}],
+                                "attributes": [
+                                    {"key": "session.id", "value": {"stringValue": session_id}},
+                                    # A real turn event, not just a bare log record — see
+                                    # otlp/claude_code.py's _TURN_EVENT_NAMES: a session_id
+                                    # with no turn-shaped event (e.g. only
+                                    # mcp_server_connection) doesn't create a session row.
+                                    {"key": "event.name", "value": {"stringValue": "user_prompt"}},
+                                ],
                                 "body": {"stringValue": "api_tests probe"},
                             }
                         ]

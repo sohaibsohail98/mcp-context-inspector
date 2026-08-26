@@ -361,6 +361,19 @@ def _handle_tool_result(session_id, attrs, owner):
     )
 
 
+# Event names that indicate a real conversational turn happened, as
+# opposed to housekeeping Claude Code emits regardless of activity.
+# Confirmed by live capture (2026-08-27): running /clear starts a brand-
+# new session.id client-side and, if no real prompt follows, that new
+# session's ONLY log record is a lone mcp_server_connection event — a
+# connection-health ping, not a turn. Creating a session row for that
+# alone left a permanent, empty (prompt=None, model=None, status="open"
+# forever) row that never gets backfilled, since no further event for
+# that session_id ever arrives — exactly the "session shows up but is
+# useless" symptom reported as "missing sessions."
+_TURN_EVENT_NAMES = {"api_request_body", "api_response_body", "tool_result", "user_prompt", "assistant_response"}
+
+
 def _handle_log_record(resource_attrs, record, owner):
     attrs = attrs_list_to_dict(record.get("attributes", []))
     # Correlation identifiers are unverified as to which level Claude
@@ -370,20 +383,27 @@ def _handle_log_record(resource_attrs, record, owner):
     if not session_id:
         return
 
+    event_name = attrs.get("event.name")
+    if event_name not in _TURN_EVENT_NAMES:
+        # mcp_server_connection and anything else: no session created —
+        # see _TURN_EVENT_NAMES's docstring. A session_id that later
+        # sends a real turn event still creates its row normally at that
+        # point; this only skips the empty-row case.
+        return
+
     model = attrs.get("model") or resource_attrs.get("model")
     store.start_or_get_session(session_id, owner=owner, source="claude_code", model=model)
 
-    event_name = attrs.get("event.name")
     if event_name == "api_request_body":
         _handle_request_body(session_id, attrs, owner)
     elif event_name == "api_response_body":
         _handle_response_body(session_id, attrs, owner)
     elif event_name == "tool_result":
         _handle_tool_result(session_id, attrs, owner)
-    # user_prompt / assistant_response / mcp_server_connection: skipped
-    # on purpose, not an oversight. Request/response bodies already
-    # carry this content; mcp_server_connection health surfacing is
-    # deferred.
+    # user_prompt / assistant_response: session row created above (so a
+    # session started this way is still visible even if bodies are ever
+    # unavailable) but content processing is still skipped on purpose —
+    # request/response bodies already carry the same content.
 
 
 def handle_logs(resource_attrs, log_records, owner):
@@ -406,6 +426,19 @@ def _handle_metric(resource_attrs, metric, owner):
         return
     datapoints = (metric.get("sum") or metric.get("gauge") or {}).get("dataPoints", [])
     for dp in datapoints:
+        # A zero-value datapoint carries no real usage to report — same
+        # "don't create a session for housekeeping, only for a real
+        # turn" reasoning as _TURN_EVENT_NAMES above, applied to the
+        # metrics side. The confirmed-live /clear repro that motivated
+        # that logs-side fix didn't actually hit this path (its metrics
+        # batch carried real nonzero values from a genuine turn), but
+        # this guard is still correct on its own terms and cheap to keep.
+        value = dp.get("asInt", dp.get("asDouble", 0))
+        try:
+            if float(value) <= 0:
+                continue
+        except (TypeError, ValueError):
+            continue
         dp_attrs = attrs_list_to_dict(dp.get("attributes", []))
         session_id = dp_attrs.get("session.id") or resource_attrs.get("session.id")
         if not session_id:
