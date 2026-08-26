@@ -24,7 +24,7 @@ _PAGE_STYLE = """
   :root {
     --bg: #17150f; --bg-raised: #1f1c14; --bg-raised-2: #262115; --bg-sunken: #100e0a;
     --border: #322c1f; --border-soft: #241f16;
-    --text: #ece5d3; --text-dim: #b0a68b; --text-dimmer: #756c56;
+    --text: #ece5d3; --text-dim: #b0a68b; --text-dimmer: #8a8168;
     --accent: #6cbfa4; --accent-2: #8ba3e0; --accent-dim: #1c2b23;
     --warn: #d9a45c; --warn-dim: #2e2314; --warn-border: #4a3419;
     --ok: #6cbfa4; --ok-dim: #1c2b23;
@@ -224,8 +224,17 @@ _PAGE_STYLE = """
   .lumen-kpi .k-label { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dimmer); font-weight: 650; margin-bottom: 0.25rem; }
   .lumen-kpi .k-value { font-weight: 650; font-size: 0.98rem; font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace; }
 
-  .byline { text-align: center; font-size: 0.82rem; color: var(--text-dimmer); margin: 0 0 2rem; }
+  .byline { text-align: center; font-size: 0.82rem; color: var(--text-dimmer); margin: 2rem 0 0; }
   .byline a { color: var(--text-dim); }
+  .compat-strip {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin: 1.1rem 0 1.6rem;
+    font-size: 0.78rem; color: var(--text-dimmer);
+  }
+  .compat-chip {
+    border: 1px solid var(--border); border-radius: 999px; padding: 0.28rem 0.7rem;
+    color: var(--text-dim); background: var(--bg-raised-2);
+  }
+  .trust-card { border-color: var(--border); }
 
   /* Live dashboard — full session-list + tabbed session-detail rebuild,
      matching the approved mockup (see PR description). Shown to every
@@ -243,6 +252,19 @@ _PAGE_STYLE = """
   }
   .topbar .brand { margin-bottom: 0; }
   .topbar-spacer { flex: 1; }
+  .landing-topbar {
+    display: flex; align-items: center; gap: 1rem; max-width: 640px; margin: 0 auto;
+    padding: 1.4rem 1.5rem 0;
+  }
+  .landing-topbar .brand { margin-bottom: 0; }
+  .landing-topbar .spacer { flex: 1; }
+  .gh-link {
+    display: inline-flex; align-items: center; gap: 0.45rem; font-size: 0.85rem;
+    color: var(--text-dim); padding: 0.4rem 0.75rem; border-radius: 8px;
+    border: 1px solid var(--border); transition: border-color 0.15s ease, color 0.15s ease;
+  }
+  .gh-link:hover { border-color: var(--accent); color: var(--accent); text-decoration: none; }
+  .gh-link svg { width: 16px; height: 16px; fill: currentColor; }
   .live-pill {
     display: inline-flex; align-items: center; gap: 0.4rem; font-size: 11.5px; color: var(--ok);
     background: var(--ok-dim); border: 1px solid color-mix(in srgb, var(--ok) 35%, transparent);
@@ -451,22 +473,22 @@ async def auth_login(request: Request):
     intro = """
 <div class="lumen-kicker"><span class="pulse"></span> updates automatically as you work</div>
 <h1 class="lumen-h1">Watch your agent's <span class="lumen-accent">context window</span> fill up as you work.</h1>
-<p class="lumen-sub">Every token that entered the model, in the order it loaded: system prompt, tool specs, injected reminders, tool results. Not a summary. The real breakdown, against real cost, over a real MCP connection &mdash; no rewritten agent loop, no wrapper.</p>
+<p class="lumen-sub">Every token that entered the model, in the order it loaded: system prompt, tool specs, injected reminders, tool results. Not a summary, the real breakdown, against real cost, over a real MCP connection. No rewritten agent loop, no wrapper.</p>
 
-<div class="lumen-demo">
+<div class="lumen-demo" id="lumen-demo">
   <div class="lumen-demo-head">
     <span class="lumen-dots"><span></span><span></span><span></span></span>
     <span>sess_8f2a1c4e &middot; claude-sonnet-5 &middot; 2m ago</span>
   </div>
   <div class="lumen-demo-body">
-    <div class="lumen-demo-bar">
-      <div style="width:9%;background:var(--cat-system);"></div>
-      <div style="width:16%;background:var(--cat-tools);"></div>
-      <div style="width:6%;background:var(--cat-user);"></div>
-      <div style="width:11%;background:var(--cat-reasoning);"></div>
-      <div style="width:8%;background:var(--cat-toolcall);"></div>
-      <div style="width:41%;background:var(--cat-toolresult);"></div>
-      <div style="width:9%;background:var(--cat-answer);"></div>
+    <div class="lumen-demo-bar" id="lumen-demo-bar">
+      <div data-w="9" style="width:0%;background:var(--cat-system);"></div>
+      <div data-w="16" style="width:0%;background:var(--cat-tools);"></div>
+      <div data-w="6" style="width:0%;background:var(--cat-user);"></div>
+      <div data-w="11" style="width:0%;background:var(--cat-reasoning);"></div>
+      <div data-w="8" style="width:0%;background:var(--cat-toolcall);"></div>
+      <div data-w="41" style="width:0%;background:var(--cat-toolresult);"></div>
+      <div data-w="9" style="width:0%;background:var(--cat-answer);"></div>
     </div>
     <div class="lumen-demo-legend">
       <span><i style="background:var(--cat-system);"></i>system</span>
@@ -477,42 +499,106 @@ async def auth_login(request: Request):
       <span><i style="background:var(--cat-answer);"></i>answer</span>
     </div>
     <div class="lumen-kpis">
-      <div class="lumen-kpi"><div class="k-label">Tokens</div><div class="k-value">48.2k</div></div>
-      <div class="lumen-kpi"><div class="k-label">Cache hit</div><div class="k-value">81%</div></div>
-      <div class="lumen-kpi"><div class="k-label">Cost</div><div class="k-value">$0.94</div></div>
-      <div class="lumen-kpi"><div class="k-label">Context used</div><div class="k-value" style="color:var(--warn);">84%</div></div>
+      <div class="lumen-kpi"><div class="k-label">Tokens</div><div class="k-value" id="kpi-tokens">0</div></div>
+      <div class="lumen-kpi"><div class="k-label">Cache hit</div><div class="k-value" id="kpi-cache">0%</div></div>
+      <div class="lumen-kpi"><div class="k-label">Cost</div><div class="k-value" id="kpi-cost">$0.00</div></div>
+      <div class="lumen-kpi"><div class="k-label">Context used</div><div class="k-value" id="kpi-context" style="color:var(--warn);">0%</div></div>
     </div>
   </div>
 </div>
-<p class="byline">Built by <a href="https://github.com/sohaibsohail98" target="_blank" rel="noopener">@sohaibsohail98</a></p>
+
+<div class="compat-strip">
+  <span>Works with</span>
+  <span class="compat-chip">Claude Code</span>
+  <span class="compat-chip">claude.ai</span>
+  <span class="compat-chip">Bedrock agents</span>
+  <span class="compat-chip">GitHub Copilot</span>
+</div>
 
 <div class="card">
   <h3>What this gives your agent</h3>
   <ul class="features">
-    <li>Real per-session cost, token, and tool-call metrics &mdash; 8 MCP tools, 7 read-only</li>
-    <li>The <strong>Context Window Explorer</strong> &mdash; exactly what entered the model's context window, block by block, with honest token estimates</li>
-    <li>Your own data, isolated from anyone else connected to this server &mdash; sign in below and everything you record or query is scoped to your account</li>
+    <li>Real per-session cost, token, and tool-call metrics: 8 MCP tools, 7 read-only</li>
+    <li>The <strong>Context Window Explorer</strong>: exactly what entered the model's context window, block by block, with honest token estimates</li>
+    <li>Your own data, isolated from anyone else connected to this server. Sign in below and everything you record or query is scoped to your account</li>
   </ul>
 </div>
-<details>
+
+<div class="card trust-card">
+  <h3>What Lumen stores, and what it never sees</h3>
+  <p class="card-hint" style="margin-bottom:0.6rem;">Sign-in mints a bearer token tied to your Google account; Lumen never sees your Google password.
+  Session metrics (tokens, cost, tool names) are stored by default. Full prompt/response content is only
+  captured if you turn on the optional raw-body flag, and even then it passes through basic redaction
+  before storage. Your data is never visible to another signed-in user, only to you and the server owner.</p>
+</div>
+
+<details class="faq-group">
   <summary>What is an MCP server?</summary>
   <p>MCP (Model Context Protocol) is an open standard that lets an LLM or agent call tools over a
   normal HTTP connection. This server exposes read/write tools for agent execution
   data, and is built to support two integration paths: Bedrock-based agents calling the
   <code>record_session</code> tool directly, and Claude Code.</p>
 </details>
-<details>
+<details class="faq-group">
   <summary>Why sign in with Google instead of a password?</summary>
-  <p>No account to create or password to remember here &mdash; Google verifies who you are, this
+  <p>No account to create or password to remember here. Google verifies who you are, this
   server just checks the signed proof and hands you a token scoped to your account. That token,
   not your Google identity itself, is what your agent actually uses afterward.</p>
 </details>
-<details>
+<details class="faq-group">
   <summary>What does "your own data" actually mean?</summary>
   <p>Every session recorded through your token is tagged with your account. Reads are filtered
-  the same way &mdash; you only ever see, list, or query sessions you recorded. Even guessing another
+  the same way, you only ever see, list, or query sessions you recorded. Even guessing another
   person's session ID reads back as "not found," identical to one that never existed.</p>
 </details>
+
+<p class="byline">Built by <a href="https://github.com/sohaibsohail98" target="_blank" rel="noopener">@sohaibsohail98</a> &middot;
+<a href="https://github.com/sohaibsohail98/mcp-context-inspector" target="_blank" rel="noopener">source on GitHub</a></p>
+
+<script>
+  // Animates the hero demo card's bars/KPIs from zero once, on first
+  // load only — a static mock would otherwise read as a screenshot,
+  // not a live product. Respects prefers-reduced-motion by snapping
+  // straight to final values instead of animating.
+  (function () {
+    var reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    var bars = document.querySelectorAll("#lumen-demo-bar > div");
+    var targets = { tokens: 48200, cache: 81, cost: 0.94, context: 84 };
+    var duration = reduceMotion ? 0 : 900;
+    var start = null;
+
+    function ease(t) { return 1 - Math.pow(1 - t, 3); }
+
+    function frame(ts) {
+      if (start === null) start = ts;
+      var t = duration === 0 ? 1 : Math.min(1, (ts - start) / duration);
+      var e = ease(t);
+      bars.forEach(function (bar) {
+        var target = parseFloat(bar.dataset.w);
+        bar.style.width = (target * e) + "%";
+      });
+      document.getElementById("kpi-tokens").textContent = (targets.tokens * e / 1000).toFixed(1) + "k";
+      document.getElementById("kpi-cache").textContent = Math.round(targets.cache * e) + "%";
+      document.getElementById("kpi-cost").textContent = "$" + (targets.cost * e).toFixed(2);
+      document.getElementById("kpi-context").textContent = Math.round(targets.context * e) + "%";
+      if (t < 1) requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  })();
+</script>
+"""
+    landing_topbar = """
+<div class="landing-topbar" id="landing-topbar">
+  <div class="brand">
+    <span class="brand-mark">&#9670;</span>
+    <span style="font-weight:650; font-size:0.95rem;">Lumen</span>
+  </div>
+  <div class="spacer"></div>
+  <a class="gh-link" href="https://github.com/sohaibsohail98/mcp-context-inspector" target="_blank" rel="noopener">
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+    <span>GitHub</span>
+  </a>
+</div>
 """
     client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID")
     if not client_id:
@@ -521,9 +607,9 @@ async def auth_login(request: Request):
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&family=Archivo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
 <style>{_PAGE_STYLE}</style></head>
-<body>{intro}
+<body>{landing_topbar}{intro}
 <div class="card security">
-  <p>Google sign-in isn't configured on this server — <code>GOOGLE_OAUTH_CLIENT_ID</code>
+  <p>Google sign-in isn't configured on this server. <code>GOOGLE_OAUTH_CLIENT_ID</code>
   isn't set. Ask whoever's running it to set that up, or use the owner's shared token instead.</p>
 </div>
 </body></html>""", status_code=503)
@@ -535,6 +621,7 @@ async def auth_login(request: Request):
 <style>{_PAGE_STYLE}</style>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head><body>
+{landing_topbar}
 <div class="narrow-page">
 <div id="intro">{intro}
 <div class="card">
@@ -831,6 +918,7 @@ async def auth_login(request: Request):
 
   function goToDashboard() {{
     document.querySelector(".narrow-page").classList.add("hidden");
+    document.getElementById("landing-topbar")?.classList.add("hidden");
     const screen = document.getElementById("dashboard-screen");
     screen.innerHTML = dashboardScreen(currentEmail, avatarInitial(currentEmail));
     screen.classList.remove("hidden");
@@ -841,6 +929,7 @@ async def auth_login(request: Request):
     if (dashboardTimer) clearInterval(dashboardTimer);
     document.getElementById("dashboard-screen").classList.add("hidden");
     document.querySelector(".narrow-page").classList.remove("hidden");
+    document.getElementById("landing-topbar")?.classList.remove("hidden");
   }}
 
   function toggleIdentityMenu(evt) {{

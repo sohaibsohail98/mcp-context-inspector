@@ -214,17 +214,23 @@
   <main>
     <section id="overview">
       <h1>Lumen</h1>
+      <div class="callout" style="background: var(--surface-sunken);">
+        <span class="icon" style="color: var(--accent-ink);">&#9432;</span>
+        <span><strong>Independent, unaffiliated open-source project.</strong> Lumen is not built,
+        maintained, or endorsed by Anthropic. "Claude" and "Claude Code" are Anthropic's products;
+        Lumen reads their publicly documented OpenTelemetry export and MCP protocol, nothing more.</span>
+      </div>
       <p class="lede">
         A drop-in MCP server that gives Claude Code, Bedrock-based agents, and other MCP/LLM
-        clients real per-session cost, token, and tool metrics — plus a full
-        <strong>Context Window Explorer</strong> — over a real MCP handshake.
+        clients real per-session cost, token, and tool metrics, plus a full
+        <strong>Context Window Explorer</strong>, over a real MCP handshake.
       </p>
       <p>
         Most agent observability tools re-show data your own UI already displays. Lumen shows
         something you normally can't see at all: system prompt, tool specs, reasoning, tool calls
-        and results, and the final answer, in the order they actually entered context — measured
-        against the model's real context window, with each block marked as visible-to-the-user or
-        invisible overhead.
+        and results, and the final answer, in the order they actually entered context. Each block
+        is measured against the model's real context window and marked as either visible to the
+        user or invisible overhead.
       </p>
     </section>
 
@@ -233,11 +239,11 @@
       <p>
         Live demo: <a href="https://mcp-inspector.sohaibsohail.workers.dev" target="_blank" rel="noopener">mcp-inspector.sohaibsohail.workers.dev</a>
       </p>
-      <p>Seeded with fixture data — writes made behind Google sign-in don't survive a cold start on the demo, since it runs on SQLite.</p>
+      <p>Seeded with fixture data. Writes made behind Google sign-in don't survive a cold start on the demo, since it runs on SQLite.</p>
       <p>Not yet published to PyPI, so run it from source:</p>
       <pre><code>git clone https://github.com/sohaibsohail98/mcp-context-inspector
 cd mcp-context-inspector && uv run python -m mcp_server.server</code></pre>
-      <p>With no <code>MCP_AUTH_TOKEN</code> set, the server generates and prints one on startup — same trust model as a Jupyter server's printed token.</p>
+      <p>With no <code>MCP_AUTH_TOKEN</code> set, the server generates and prints one on startup, using the same trust model as a Jupyter server's printed token.</p>
     </section>
 
     <section id="install">
@@ -258,7 +264,7 @@ export MCP_SERVER_PORT=8787
 uv run python -m mcp_server.server</code></pre>
       <p>
         Open <code>http://localhost:8787</code> (use <code>localhost</code>, not
-        <code>127.0.0.1</code> — Google sign-in needs it) and use
+        <code>127.0.0.1</code>, since Google sign-in needs it) and use
         <code>local-test-owner-token</code> as the bearer token for the config it generates.
       </p>
       <p>Run tests with <code>uv run pytest</code>, lint with <code>uv run ruff check .</code></p>
@@ -268,17 +274,17 @@ uv run python -m mcp_server.server</code></pre>
       <h2>The one-command setup</h2>
       <p>
         Sign in at <code>/auth/login</code> and the page hands you a single command to paste into
-        a terminal — it writes the MCP connection and telemetry config into your own
+        a terminal. It writes the MCP connection and telemetry config into your own
         <code>~/.claude/settings.json</code> (backed up first, merged, never overwritten):
       </p>
       <pre><code>curl -fsSL https://mcp-inspector.sohaibsohail.workers.dev/setup/install?t=&lt;code&gt; | sh</code></pre>
       <p>
-        The <code>?t=</code> code is single-use and short-lived — your real token is never in the
-        command itself.
+        The <code>?t=</code> code is single-use and short-lived, so your real token is never in
+        the command itself.
       </p>
       <div class="callout">
         <span class="icon">⚠</span>
-        <span>Close and reopen Claude Code afterward — env vars only load at process startup.
+        <span>Close and reopen Claude Code afterward, since env vars only load at process startup.
         Run one prompt, then check "Test my connection" on the page.</span>
       </div>
     </section>
@@ -297,10 +303,10 @@ uv run python -m mcp_server.server</code></pre>
 
     <section id="claude-ai">
       <h2>claude.ai (Connectors)</h2>
-      <p>claude.ai's Connectors feature speaks the MCP OAuth flow directly — no token to copy:</p>
+      <p>claude.ai's Connectors feature speaks the MCP OAuth flow directly, so there's no token to copy:</p>
       <ol class="step-list">
         <li><strong>claude.ai → Settings → Connectors → Add custom connector.</strong></li>
-        <li>Paste the MCP server URL. Leave OAuth Client ID/Secret blank — Lumen registers itself dynamically per the MCP spec.</li>
+        <li>Paste the MCP server URL. Leave OAuth Client ID/Secret blank; Lumen registers itself dynamically per the MCP spec.</li>
         <li>claude.ai opens a Google sign-in prompt automatically. Sign in once.</li>
         <li>All 8 tools are now available in any claude.ai chat.</li>
       </ol>
@@ -328,7 +334,7 @@ export OTEL_LOGS_EXPORT_INTERVAL=5000
 export OTEL_LOG_RAW_API_BODIES=1   # opt-in: needed for the Context Explorer</code></pre>
       <p>
         The <code>OTEL_RESOURCE_ATTRIBUTES</code>/<code>*_INCLUDE_SESSION_ID</code> lines are what
-        let Lumen recognize the session as Claude Code's at all — omit them and every session is
+        let Lumen recognize the session as Claude Code's at all. Omit them and every session is
         silently dropped.
       </p>
     </section>
@@ -355,12 +361,12 @@ export OTEL_LOG_RAW_API_BODIES=1   # opt-in: needed for the Context Explorer</co
       <h2>Auth model</h2>
       <p>
         A plain bearer token (the owner token, or a personal token from <code>/auth/login</code>)
-        works for clients you hand a token to directly — Claude Code's MCP config, curl. claude.ai's
-        Connectors UI instead speaks OAuth 2.1 and mints its own token on sign-in, kept separate so
-        disconnecting one doesn't invalidate the other.
+        works for clients you hand a token to directly, such as Claude Code's MCP config or curl.
+        claude.ai's Connectors UI instead speaks OAuth 2.1 and mints its own token on sign-in, kept
+        separate so disconnecting one doesn't invalidate the other.
       </p>
       <p>
-        Every session is attributed to whoever recorded it — a per-user token only ever sees,
+        Every session is attributed to whoever recorded it. A per-user token only ever sees,
         queries, and records its own data. There's no way to read or list another user's sessions,
         even by guessing an ID.
       </p>
@@ -385,9 +391,9 @@ export OTEL_LOG_RAW_API_BODIES=1   # opt-in: needed for the Context Explorer</co
       <h2>Storage backends</h2>
       <p>Three options, selected with <code>STORAGE_BACKEND</code>:</p>
       <ul>
-        <li><strong>sqlite</strong> (default) — zero setup, good for local dev. Doesn't survive a Cloud Run cold start.</li>
-        <li><strong>dynamodb</strong> — durable, AWS-hosted.</li>
-        <li><strong>firestore</strong> — durable, GCP-hosted, the recommended choice for a real deployment with sign-in-backed writes.</li>
+        <li><strong>sqlite</strong> (default): zero setup, good for local dev. Doesn't survive a Cloud Run cold start.</li>
+        <li><strong>dynamodb</strong>: durable, AWS-hosted.</li>
+        <li><strong>firestore</strong>: durable, GCP-hosted, the recommended choice for a real deployment with sign-in-backed writes.</li>
       </ul>
     </section>
 
@@ -402,7 +408,7 @@ export OTEL_LOG_RAW_API_BODIES=1   # opt-in: needed for the Context Explorer</co
     </section>
 
     <footer>
-      MIT licensed. Built by <a href="https://github.com/sohaibsohail98" target="_blank" rel="noopener">@sohaibsohail98</a> —
+      MIT licensed. Built by <a href="https://github.com/sohaibsohail98" target="_blank" rel="noopener">@sohaibsohail98</a>,
       developed alongside <a href="https://github.com/sohaibsohail98/sre-investigation-agent" target="_blank" rel="noopener">sre-investigation-agent</a>.
     </footer>
   </main>
