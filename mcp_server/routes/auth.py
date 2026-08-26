@@ -16,9 +16,8 @@ from mcp_server.app import server
 from mcp_server.auth.google import InvalidGoogleToken, verify_credential
 
 
-# Google sign-in: the pre-auth flow that mints a per-user MCP token; not
-# gated by MultiTokenAuthMiddleware, which only checks /mcp, /api/, and
-# /otlp.
+# /auth/* is the pre-auth flow that mints a per-user MCP token, so it is
+# deliberately NOT in MultiTokenAuthMiddleware's protected_prefixes.
 
 
 _PAGE_STYLE = """
@@ -1823,41 +1822,5 @@ async def auth_verify(request: Request):
 
     token = auth_store.get_or_create_token(identity["sub"], identity["email"])
     return JSONResponse({"mcp_token": token, "email": identity["email"]})
-
-
-# --- OAuth 2.1 + PKCE authorization server ------------------------------
-# The /oauth/* + /.well-known/* routes themselves live in
-# mcp_server/routes/oauth.py. Lets an MCP client that only knows how to
-# do OAuth (e.g. a "Connectors" style integration in a chat UI, which
-# offers no way to paste a plain bearer token) authenticate anyway. This
-# server acts as BOTH the OAuth resource server (the /mcp endpoint
-# itself, gated by MultiTokenAuthMiddleware above) and the authorization
-# server — the MCP spec allows either a combined or split deployment,
-# and combined is simplest here since there's no separate identity
-# provider to delegate to beyond Google sign-in, which this server
-# already does its own verification of.
-#
-# Flow (RFC 8414 authorization server metadata, RFC 9728 protected
-# resource metadata, RFC 7591 dynamic client registration, OAuth 2.1 +
-# PKCE for the actual grant):
-#   1. Client hits /mcp with no/bad token -> 401 with a WWW-Authenticate
-#      header pointing at /.well-known/oauth-protected-resource/mcp (see
-#      MultiTokenAuthMiddleware above).
-#   2. Client fetches that, learns this server is also its own
-#      authorization server, fetches /.well-known/oauth-authorization-server
-#      for the actual endpoints.
-#   3. Client POSTs /oauth/register once (RFC 7591) to get a client_id —
-#      no manual setup, no client secret (public client, PKCE-protected).
-#   4. Client opens /oauth/authorize in a browser; user signs in with
-#      Google (this server's existing identity check, reused as the
-#      consent step); server redirects back with a one-time code.
-#   5. Client exchanges the code at /oauth/token (with the PKCE verifier)
-#      for an access token — which is just an ordinary bearer token, so
-#      MultiTokenAuthMiddleware needs no special-casing to accept it (see
-#      auth_store.is_valid_token, which checks both sign-in tokens and
-#      OAuth-issued ones).
-#
-# All of this is generic, spec-compliant OAuth — any MCP client that does
-# discovery correctly can use it, not just one specific product.
 
 

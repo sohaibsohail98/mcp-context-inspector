@@ -1,13 +1,7 @@
-"""Firestore backend for the per-user MCP token store — a third option
-alongside auth/store_sqlite.py (local dev) and auth/store_dynamodb.py
-(AWS/DynamoDB persistent backend), for deployments that already run on
-GCP/Firestore rather than DynamoDB. Same function signatures and return
-shapes as those two modules; callers go through auth/store.py's
-dispatcher and never know which backend is active.
-
-Separate from metrics/store_firestore.py (session-execution data) — same
-split as SQLite/DynamoDB: this is identity/credential data with a
-different lifecycle and sensitivity.
+"""Firestore backend for the per-user MCP token store, for deployments
+that already run on GCP/Firestore rather than DynamoDB. Same function
+signatures and return shapes as auth/store_sqlite.py and
+auth/store_dynamodb.py; callers go through auth/store.py's dispatcher.
 
 Collections mirror the SQLite table names 1:1 (see store_sqlite.py's
 module docstring for the full security reasoning behind this shape,

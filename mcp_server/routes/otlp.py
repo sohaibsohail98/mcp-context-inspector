@@ -85,13 +85,11 @@ async def otlp_debug(request: Request):
     _counts) — resets on every redeploy/restart, so a zero here after a
     fresh deploy doesn't by itself mean nothing has arrived since.
 
-    Scoped to current_owner (see mcp_server/otlp/__init__.py's
-    debug_snapshot): each caller only ever sees their own counters and
-    their own recent_skipped entries, never another tenant's. Found in
-    review — this used to return process-global counters, which both
-    false-positived "connected" across tenants and leaked other
-    tenants' resource_attrs (hostnames, session IDs) via recent_skipped
-    to any authenticated caller."""
+    Scoped to current_owner: each caller only ever sees their own
+    counters and recent_skipped entries. Found in review — this used to
+    return process-global counters, which both false-positived
+    "connected" across tenants and leaked other tenants' resource_attrs
+    (hostnames, session IDs) to any authenticated caller."""
     return JSONResponse(
         {
             "message": "in-memory counters since last server restart/redeploy, scoped to your account",

@@ -1,11 +1,9 @@
 """DynamoDB backend for the per-user MCP token store — the auth
 equivalent of metrics/store_dynamodb.py, same reasoning: a Cloud Run
 container's local filesystem doesn't persist across cold starts or
-survive multiple concurrent instances each with their own local
-SQLite file, and this table holds OAuth credentials as well as
-sign-in tokens. Same function signatures as auth/store_sqlite.py;
-callers go through auth/store.py's dispatcher and never know which
-backend is active.
+survive multiple concurrent instances each with their own SQLite file.
+Same function signatures as auth/store_sqlite.py; callers go through
+auth/store.py's dispatcher.
 
 Single-table design, mirroring the metrics table's approach:
 partition key `pk`, sort key `sk`.

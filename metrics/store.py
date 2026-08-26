@@ -3,7 +3,7 @@ deployed. Set STORAGE_BACKEND=dynamodb (done automatically by consuming
 deployments, e.g. sre-investigation-agent's AgentCore environment
 variables) or STORAGE_BACKEND=firestore (this project's own Cloud Run
 deployment, for durable per-user data that survives a cold start — see
-docs/DEPLOYMENT.md) to switch. Same function signatures either way;
+README.md's "Storage backends") to switch. Same function signatures either way;
 callers import from here and never know which backend is active.
 """
 

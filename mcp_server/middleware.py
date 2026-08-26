@@ -22,10 +22,9 @@ def _public_origin(request):
     even for a real https:// caller), and the worker deletes the inbound
     Host header and lets fetch() re-derive it from env.ORIGIN, so the
     Host this process sees is Cloud Run's own raw hostname, never the
-    public one a client actually talked to. This is the equivalent of
-    MCP_ALLOWED_HOSTS/CHAT_UI_ORIGIN for URLs this server generates
-    ABOUT itself — OAuth issuer/resource metadata, the downloadable
-    local-setup script. Getting this wrong doesn't 401 or crash
+    public one a client actually talked to. Used for URLs this server
+    generates ABOUT itself — OAuth issuer/resource metadata, the
+    downloadable local-setup script. Getting this wrong doesn't 401 or crash
     anything: a wrong-but-well-formed URL only fails later, when
     something else tries to fetch it.
 
@@ -114,13 +113,12 @@ class OAuthCORSMiddleware(BaseHTTPMiddleware):
     is the entire point of them being public. Left to the app-wide
     middleware, a preflight from an unrecognized origin gets hard-
     rejected with a generic 400 before ever reaching the OAuth route's
-    own permissive CORS handling (see _oauth_cors_json in the /oauth/*
-    routes below) — which is exactly what broke registration for a real
-    client in production before this middleware existed.
+    own permissive CORS handling — which is exactly what broke
+    registration for a real client in production before this existed.
 
     Only handles the preflight (OPTIONS) case; the routes themselves
     already set Access-Control-Allow-Origin: * on their actual GET/POST
-    responses, so this doesn't need to touch those."""
+    responses."""
 
     OAUTH_PREFIXES = ("/oauth/", "/.well-known/oauth-")
 

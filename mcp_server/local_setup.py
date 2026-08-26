@@ -49,8 +49,8 @@ def build_settings_patch(base_url, bearer_token):
             # to detect_vendor's session.id-presence check, which is itself
             # opt-in and was silently missing both here and in what a real
             # Claude Code session sends by default. Confirmed against a
-            # real captured session on 2026-08-25 (see docs/AUTH.md) that
-            # all four of these are what actually got a session to land.
+            # real captured session on 2026-08-25 that all four of these
+            # are what actually got a session to land.
             "OTEL_RESOURCE_ATTRIBUTES": "service.name=claude-code",
             "OTEL_METRICS_INCLUDE_SESSION_ID": "true",
             "OTEL_LOGS_INCLUDE_SESSION_ID": "true",

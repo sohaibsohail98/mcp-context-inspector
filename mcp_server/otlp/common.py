@@ -61,9 +61,8 @@ def _otlp_value(value_obj, _depth=0):
     """An OTLP JSON `AnyValue` is `{"stringValue": ...}` or
     `{"intValue": ...}` or `{"boolValue": ...}` or `{"doubleValue": ...}`
     etc — exactly one key present. Returns the unwrapped Python value.
-    Unrecognized/empty AnyValue objects (e.g. `{}"` for a genuinely null
-    attribute) return None rather than raising, since a single malformed
-    attribute shouldn't sink an entire batch."""
+    Unrecognized/empty AnyValue objects return None rather than raising,
+    since a single malformed attribute shouldn't sink an entire batch."""
     if not value_obj or _depth >= _MAX_OTLP_VALUE_DEPTH:
         return None
     for key in ("stringValue", "intValue", "doubleValue", "boolValue"):

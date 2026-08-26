@@ -94,11 +94,10 @@ def _migrate_sessions_table(conn):
     rows get owner=NULL, meaning "recorded before ownership existed" —
     treated the same as the server owner's own sessions (visible with
     the admin/owner token, invisible to any per-user token's filtered
-    view). source/status predate OTLP ingestion the same way — ALTER
-    TABLE ... DEFAULT backfills every pre-existing row as
-    source='bedrock_agent', status='closed' (record_session's atomic
-    one-shot write was always effectively both), so existing data reads
-    correctly without a separate backfill pass."""
+    view). source/status predate OTLP ingestion the same way; ALTER
+    TABLE ... DEFAULT backfills pre-existing rows as
+    source='bedrock_agent', status='closed', which is what
+    record_session's atomic one-shot write always effectively was."""
     existing = {row["name"] for row in conn.execute("PRAGMA table_info(sessions)")}
     if "owner" not in existing:
         conn.execute("ALTER TABLE sessions ADD COLUMN owner TEXT")
@@ -242,13 +241,11 @@ def record_session(prompt, model_id, loop_result, owner=None):
 
 
 def get_session_metrics(session_id, owner=None):
-    """Session metadata split from per-prompt processing metrics — the two
-    are conceptually different (identity/timing vs. what it cost to
-    answer this prompt), so callers get them as separate sub-dicts rather
-    than one flat blob. owner=None (the admin/owner token) sees any
-    session; a per-user owner only sees sessions it owns — everything
-    else reads as "not found," the same shape as a genuinely missing
-    session_id, so this can't be used to probe which session_ids exist."""
+    """Session metadata and per-prompt processing metrics as separate
+    sub-dicts. owner=None (the admin/owner token) sees any session; a
+    per-user owner only sees sessions it owns — everything else reads as
+    "not found," the same shape as a genuinely missing session_id, so
+    this can't be used to probe which session_ids exist."""
     conn = _connect()
     row = conn.execute("SELECT * FROM sessions WHERE session_id=?", (session_id,)).fetchone()
     conn.close()
@@ -424,13 +421,12 @@ def start_or_get_session(session_id, owner=None, source="claude_code", model=Non
     Copilot session reports turns/tool-calls/context-blocks one at a
     time as they happen. Idempotent on session_id: a client that
     reconnects or retries a batch calls this again with the same ID and
-    gets the existing session back rather than a duplicate row. Caller-
-    supplied session_id (Claude Code's/Copilot's own ID), not a
-    server-generated uuid4 like record_session's — since it's
-    externally chosen, a caller must not be able to "adopt" another
-    owner's existing session_id just by reusing it; raises
-    SessionOwnershipError if this session_id already belongs to someone
-    else (see _visible()'s admin/owner=None semantics)."""
+    gets the existing session back rather than a duplicate row. The
+    session_id is caller-supplied (Claude Code's/Copilot's own ID), not
+    a server-generated uuid4 like record_session's — so a caller must
+    not be able to "adopt" another owner's session_id by reusing it;
+    raises SessionOwnershipError when it already belongs to someone
+    else."""
     conn = _connect()
     row = conn.execute("SELECT session_id, owner FROM sessions WHERE session_id=?", (session_id,)).fetchone()
     if row:
@@ -553,20 +549,13 @@ def append_context_block(session_id, block, owner=None):
     context_blocks rows use. owner must match the session's own owner
     (see _check_ownership_or_raise).
 
-    OTLP sessions are created by start_or_get_session with prompt=None
-    (unlike record_session, which gets its prompt as a direct argument
-    up front) — a live session has no equivalent single "the prompt"
-    argument, since content arrives incrementally as blocks. The first
-    real user-authored block (category == "user") is the closest
-    equivalent, so it backfills sessions.prompt here, once, the first
-    time one comes through: the `prompt IS NULL` guard in the UPDATE
-    means a later turn's user message can never clobber turn 0's
-    original prompt. content is preferred over label since it's the
-    actual message text; label ("User message") is only a fallback for
-    a block that came through with no content captured. Truncated for
-    list-view display — the full text is already preserved in this same
-    block's own context_blocks.content row, so storing it twice on
-    sessions.prompt would be pure duplication."""
+    OTLP sessions are created by start_or_get_session with prompt=None,
+    since a live session's content arrives incrementally as blocks. The
+    first user-authored block backfills sessions.prompt here — the
+    `prompt IS NULL` guard means a later turn's user message can never
+    clobber turn 0's original prompt. Truncated for list-view display;
+    the full text already lives in this block's own
+    context_blocks.content row."""
     conn = _connect()
     _check_ownership_or_raise(conn, session_id, owner)
     seq = _next_seq(conn, "context_blocks", session_id)

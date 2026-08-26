@@ -68,6 +68,18 @@ jobs:
             --project="${{ vars.GCP_PROJECT }}" \
             --region="$REGION" \
             --quiet
+          # `gcloud run deploy` only creates the revision — it does not
+          # move traffic if a traffic tag/split was ever set on the
+          # service out-of-band (e.g. via the console, or a manual
+          # `--tag` deploy for canary testing). That silently pinned
+          # production to a stale revision for two days here before it
+          # was caught — every future deploy explicitly forces 100%
+          # traffic onto whatever was just built, every time.
+          gcloud run services update-traffic "$SERVICE" \
+            --project="${{ vars.GCP_PROJECT }}" \
+            --region="$REGION" \
+            --to-latest \
+            --quiet
           echo "url=$(gcloud run services describe $SERVICE --project=${{ vars.GCP_PROJECT }} --region=$REGION --format='value(status.url)')" >> "$GITHUB_OUTPUT"
 
       - name: Smoke-test the deployment

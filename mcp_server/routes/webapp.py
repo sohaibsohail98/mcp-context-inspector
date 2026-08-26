@@ -1,22 +1,12 @@
-"""Static-file routes for the mobile session-history webapp — a small,
-purpose-built, single-column UI kept physically separate from the
-desktop dashboard's inline-HTML-in-Python approach in routes/auth.py.
-Real files under webapp/ at the repo root (index.html/app.js/styles.css,
-no build step, same zero-dependency philosophy as the desktop
-dashboard's own JS), served here rather than templated as Python
-strings.
+"""Static-file routes (/m) for the mobile session-history webapp. Real
+files under webapp/ at the repo root (index.html/app.js/styles.css, no
+build step), served here rather than templated as Python strings the
+way routes/auth.py's desktop dashboard is.
 
-Route path: /m — short (easy to type/bookmark on a phone), and
-distinct from /auth/login (the desktop entry point) and /api/* (the
-REST data layer this page's JS calls client-side). /m itself is NOT in
-MultiTokenAuthMiddleware's protected_prefixes, since these are just
-static assets containing no per-user data — auth happens client-side
-in app.js, which is gated at fetch time by the same bearer-token check
-as everything else under /api/*.
-
-Importing this module registers its routes on the shared `server`
-instance (decorator side effect), same pattern as routes/api.py and
-routes/setup.py."""
+/m is NOT in MultiTokenAuthMiddleware's protected_prefixes, since these
+are just static assets containing no per-user data — auth happens
+client-side in app.js, gated at fetch time by the same bearer-token
+check as everything else under /api/*."""
 
 from pathlib import Path
 
@@ -27,9 +17,12 @@ from mcp_server.app import server
 
 _WEBAPP_DIR = Path(__file__).resolve().parent.parent.parent / "webapp"
 
+# Allowlist of servable filenames -> media type. An allowlist, not a
+# path join against the request, so `/m/../..`-style traversal can't
+# reach anything outside webapp/.
 _STATIC_FILES = {
-    "app.js": ("app.js", "text/javascript"),
-    "styles.css": ("styles.css", "text/css"),
+    "app.js": "text/javascript",
+    "styles.css": "text/css",
 }
 
 
@@ -49,8 +42,7 @@ async def webapp_index(request: Request):
 @server.custom_route("/m/{filename}", methods=["GET"])
 async def webapp_static(request: Request):
     filename = request.path_params["filename"]
-    entry = _STATIC_FILES.get(filename)
-    if entry is None:
+    media_type = _STATIC_FILES.get(filename)
+    if media_type is None:
         return RedirectResponse(url="/m/")
-    disk_name, media_type = entry
-    return FileResponse(_WEBAPP_DIR / disk_name, media_type=media_type)
+    return FileResponse(_WEBAPP_DIR / filename, media_type=media_type)

@@ -1,0 +1,60 @@
+<svg width="900" height="360" viewBox="0 0 900 360" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Architecture: Claude Code and browser clients talk to a Cloudflare Worker proxy, which forwards to Cloud Run, which reads and writes Firestore or DynamoDB">
+  <defs>
+    <style>
+      .box { fill: #1f1c14; stroke: #322c1f; stroke-width: 1.5; rx: 12; }
+      .box-accent { fill: #1c2b23; stroke: #6cbfa4; stroke-width: 1.5; rx: 12; }
+      .label { font-family: 'Inter','Helvetica',sans-serif; font-size: 15px; font-weight: 600; fill: #ece5d3; }
+      .sub { font-family: 'Inter','Helvetica',sans-serif; font-size: 11.5px; fill: #b0a68b; }
+      .arrow { stroke: #6cbfa4; stroke-width: 2; fill: none; marker-end: url(#arrowhead); }
+      .arrow-dim { stroke: #756c56; stroke-width: 1.5; fill: none; stroke-dasharray: 4 3; marker-end: url(#arrowhead-dim); }
+      .caption { font-family: 'JetBrains Mono','SF Mono',monospace; font-size: 10.5px; fill: #756c56; }
+    </style>
+    <marker id="arrowhead" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#6cbfa4"/>
+    </marker>
+    <marker id="arrowhead-dim" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#756c56"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="900" height="360" fill="#17150f"/>
+
+  <!-- Clients -->
+  <rect class="box" x="30" y="40" width="190" height="60"/>
+  <text class="label" x="50" y="65">Claude Code</text>
+  <text class="sub" x="50" y="82">native OTLP export</text>
+
+  <rect class="box" x="30" y="120" width="190" height="60"/>
+  <text class="label" x="50" y="145">claude.ai / browser</text>
+  <text class="sub" x="50" y="162">MCP Connector, sign-in</text>
+
+  <rect class="box" x="30" y="200" width="190" height="60"/>
+  <text class="label" x="50" y="225">Bedrock-style agent</text>
+  <text class="sub" x="50" y="242">record_session tool call</text>
+
+  <!-- Cloudflare Worker -->
+  <rect class="box-accent" x="300" y="120" width="200" height="70"/>
+  <text class="label" x="320" y="150">Cloudflare Worker</text>
+  <text class="sub" x="320" y="168">reverse proxy, short public URL</text>
+
+  <!-- Cloud Run -->
+  <rect class="box-accent" x="580" y="120" width="200" height="70"/>
+  <text class="label" x="600" y="150">Cloud Run</text>
+  <text class="sub" x="600" y="168">Lumen server (Starlette + MCP)</text>
+
+  <!-- Storage -->
+  <rect class="box" x="580" y="250" width="200" height="70"/>
+  <text class="label" x="600" y="278">Firestore / DynamoDB</text>
+  <text class="sub" x="600" y="296">sessions, tokens, OAuth codes</text>
+
+  <!-- Arrows -->
+  <path class="arrow" d="M220,70 C260,70 260,150 300,155"/>
+  <path class="arrow" d="M220,150 L300,155"/>
+  <path class="arrow" d="M220,230 C260,230 260,155 300,155"/>
+
+  <path class="arrow" d="M500,155 L580,155"/>
+  <text class="caption" x="505" y="145">fetch + stream</text>
+
+  <path class="arrow" d="M680,190 L680,250"/>
+  <text class="caption" x="695" y="225">owner-scoped reads/writes</text>
+</svg>

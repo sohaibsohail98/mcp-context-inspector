@@ -726,7 +726,6 @@ def test_local_script_execution_applies_same_patch_as_apply_local_config(client,
     script_path = tmp_path / "setup.py"
     script_path.write_text(resp.text)
 
-    settings_path = tmp_path / "settings.json"
     monkeypatch.setenv("HOME", str(tmp_path))
     # The script resolves ~/.claude/settings.json via Path.home(); point
     # HOME at tmp_path and expect the write under tmp_path/.claude/.

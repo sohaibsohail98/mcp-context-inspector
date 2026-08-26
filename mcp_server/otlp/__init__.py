@@ -20,20 +20,16 @@ from mcp_server.otlp.common import resource_attrs_dict
 
 logger = logging.getLogger(__name__)
 
-# In-memory only (resets on redeploy/restart) — this backs GET /otlp/debug,
-# a troubleshooting aid for exactly the "was anything received at all, and
-# what did the server think it was" question a fire-and-forget OTel
-# exporter otherwise gives no visibility into. Not a metrics/analytics
-# system (metrics/store.py + Firestore/DynamoDB already do that for
-# accepted data) — this exists specifically to see *rejected* data too.
+# In-memory only (resets on redeploy/restart) — backs GET /otlp/debug,
+# which answers "was anything received at all, and what did the server
+# think it was" for a fire-and-forget OTel exporter. Unlike
+# metrics/store.py this also records *rejected* data.
 #
 # Keyed by owner (the google_sub current_owner resolves to, or the
-# sentinel _OWNER_TOKEN_KEY for the shared owner-token/all-data caller —
-# see current_owner's docstring) so GET /otlp/debug can answer "did MY
-# data arrive" instead of leaking every tenant's counters to whoever asks
-# first. Found in review: this used to be flat process-global state,
-# which both false-positived "connected" for any signed-in caller the
-# instant ANY tenant's data landed, and leaked other tenants' resource_attrs
+# sentinel _OWNER_TOKEN_KEY for the shared owner-token caller). Found in
+# review: this used to be flat process-global state, which both
+# false-positived "connected" for any signed-in caller the instant ANY
+# tenant's data landed, and leaked other tenants' resource_attrs
 # (hostnames, session IDs) via recent_skipped to any authenticated caller.
 _OWNER_TOKEN_KEY = "__owner_token__"
 
@@ -85,22 +81,13 @@ _COPILOT_SERVICE_NAMES = {"github-copilot", "copilot", "github.copilot"}
 
 
 def _log_undetected_vendor(resource_attrs):
-    """A real client whose resource attributes don't match any of
-    detect_vendor's checks gets counted as "skipped" in the response
-    body, which is only visible if something is actually looking at
-    that response — Claude Code's own OTLP exporter fires-and-forgets
-    and prints nothing. Without this, an undetected vendor is
-    completely silent: no error, no 4xx, no visible signal anywhere
-    that data arrived and was thrown away. Logging it — and recording it
-    via _record_skipped for GET /otlp/debug — lets a real payload's
-    actual resource attribute shape be read back without needing Cloud
-    Run log access, which is exactly the missing piece that made this
-    bug unfalsifiable from outside the server (see api_tests/README.md
-    and the investigation report — no real captured payload was ever
-    persisted anywhere in this repo). resource_attrs is OTLP *resource*
-    metadata (service name, session id, host info) — never prompt/
-    response content, which lives in log_records/metrics/spans and is
-    never passed here — so logging/storing it in full is safe."""
+    """An undetected vendor is otherwise completely silent: Claude Code's
+    OTLP exporter fires-and-forgets, so the "skipped" count in the
+    response body is never seen. Logging it (plus _record_skipped for GET
+    /otlp/debug) is what makes a mismatched payload's real resource
+    attribute shape readable without Cloud Run log access. resource_attrs
+    is OTLP *resource* metadata only (service name, session id, host
+    info) — never prompt/response content — so logging it in full is safe."""
     logger.warning("otlp: undetected vendor, resource_attrs=%r", resource_attrs)
 
 

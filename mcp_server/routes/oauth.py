@@ -1,7 +1,32 @@
 """The OAuth 2.1 authorization server (RFC 9728/8414/7591 + PKCE) that
 lets any spec-compliant MCP client (claude.ai Connectors, Cursor,
 Copilot, ...) discover, register, and authenticate against this server
-without a manually pasted token."""
+without a manually pasted token.
+
+This server acts as BOTH the OAuth resource server (the /mcp endpoint,
+gated by MultiTokenAuthMiddleware) and the authorization server — the
+MCP spec allows either, and combined is simplest here since there's no
+identity provider to delegate to beyond Google sign-in, which this
+server already verifies itself.
+
+Flow:
+  1. Client hits /mcp with no/bad token -> 401 with a WWW-Authenticate
+     header pointing at /.well-known/oauth-protected-resource/mcp (see
+     MultiTokenAuthMiddleware).
+  2. Client fetches that, learns this server is also its own
+     authorization server, fetches /.well-known/oauth-authorization-server
+     for the actual endpoints.
+  3. Client POSTs /oauth/register once (RFC 7591) to get a client_id —
+     no manual setup, no client secret (public client, PKCE-protected).
+  4. Client opens /oauth/authorize in a browser; user signs in with
+     Google (this server's existing identity check, reused as the
+     consent step); server redirects back with a one-time code.
+  5. Client exchanges the code at /oauth/token (with the PKCE verifier)
+     for an access token — an ordinary bearer token, so
+     MultiTokenAuthMiddleware needs no special-casing to accept it (see
+     auth_store.is_valid_token, which checks both sign-in tokens and
+     OAuth-issued ones).
+"""
 
 import json
 import os

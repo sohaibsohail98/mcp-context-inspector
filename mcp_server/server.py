@@ -11,12 +11,11 @@ Reusable, connectable by Bedrock-based agents and by Claude Code — not
 coupled to any specific chat UI.
 See web/server.py for the chat frontend, a separate process.
 
-This is now a thin entrypoint: shared state lives in app.py, auth/CORS
-middleware in middleware.py, MCP tools in tools.py, and REST/OTLP/OAuth/
-setup routes in the routes_*.py modules alongside it. Importing those
-modules below is what registers their tools/routes onto the shared
-`server` instance (decorator side effects) — this file just needs to
-import them, then wire up uvicorn.
+A thin entrypoint: shared state lives in app.py, auth/CORS middleware in
+middleware.py, MCP tools in tools.py, and REST/OTLP/OAuth/setup routes
+under routes/. Importing those modules below is what registers their
+tools/routes onto the shared `server` instance (decorator side effects);
+this file just imports them, then wires up uvicorn.
 
 Run from repo root:
     uv run python -m mcp_server.server
@@ -130,18 +129,16 @@ if __name__ == "__main__":
     # silently *auto-enables* DNS-rebinding Host-header protection
     # scoped to that default whenever no explicit transport_security is
     # given (see mcp/server/lowlevel/server.py). That's fine for local
-    # dev (uvicorn also binds 127.0.0.1 by default) but on Cloud Run the
-    # real Host header the container sees is the service's own
-    # `*.run.app` hostname — the Cloudflare Worker in front
+    # dev but on Cloud Run the real Host header the container sees is the
+    # service's own `*.run.app` hostname — the Cloudflare Worker in front
     # (cloudflare-proxy/worker.js) deletes the inbound Host header and
     # lets fetch() re-derive it from env.ORIGIN, so it's never the
     # workers.dev proxy hostname either. Without an explicit allowlist
     # covering that real Cloud Run host, every production request gets
     # hard-rejected with 421 "Invalid Host header" — this bit us live
-    # (Google sign-in on the chat UI failing with HTTP 421). Building
-    # transport_security explicitly here — rather than skipping it — so
-    # DNS-rebinding protection stays *on* everywhere, just correctly
-    # scoped to hosts that are actually legitimate for this deployment.
+    # (Google sign-in on the chat UI failing with HTTP 421). Set
+    # explicitly rather than skipped, so DNS-rebinding protection stays
+    # *on* everywhere, just correctly scoped for this deployment.
     allowed_hosts = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
     # Comma-separated list of additional Host header values this
     # deployment's requests actually arrive with — e.g. the Cloud Run

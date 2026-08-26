@@ -15,7 +15,18 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest", "ruff"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+# Default set (pyflakes + a slice of pycodestyle) — this is a lint pass
+# to catch real mistakes (unused imports, undefined names, bare excepts),
+# not a full style-enforcement rewrite of an existing codebase.
+select = ["E", "F", "W"]
+ignore = ["E501"]  # line length handled by the formatter, not the linter
 
 [build-system]
 requires = ["hatchling"]

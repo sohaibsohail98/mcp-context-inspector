@@ -1,21 +1,13 @@
 """SQLite backend for the per-user MCP token store — the local-dev /
-default backend, same role as metrics/store_sqlite.py. Reached only
-through auth/store.py's dispatcher (STORAGE_BACKEND env var); import
-this module directly only for the DB_PATH test hook (see
-tests/conftest.py's isolated_auth_store fixture) or in local dev where
-STORAGE_BACKEND is unset. See auth/store_dynamodb.py for the persistent
-backend meant for Cloud Run's ephemeral filesystem — this module's
-writes are lost on cold start / reset across concurrent instances.
+default backend. Reached through auth/store.py's dispatcher
+(STORAGE_BACKEND env var); import directly only for the DB_PATH test
+hook (tests/conftest.py's isolated_auth_store fixture). This backend's
+writes are lost on Cloud Run cold start — see auth/store_dynamodb.py
+for the persistent one.
 
-Separate from metrics/ (session-execution data) since this is
-identity/credential data with a different lifecycle and sensitivity.
-
-One row per Google account (`google_sub`, the stable, non-reassignable
-subject identifier from the verified ID token — never the email, which
-a user can change). A user who signs in again gets their existing token
-back rather than a fresh one, so pasting the same "Sign in with Google"
-flow twice doesn't invalidate a token they've already put in an MCP
-client config.
+One row per Google account, keyed on `google_sub` (the stable,
+non-reassignable subject identifier from the verified ID token — never
+the email, which a user can change).
 
 Also stores the OAuth 2.1 + PKCE authorization-server data (client
 registrations, one-time authorization codes, per-client access tokens)
@@ -92,12 +84,9 @@ _SCHEMA = """
     -- One-time install codes: the short-lived code /setup/install's
     -- curl-able one-liner exchanges for the caller's real bearer token,
     -- so the token itself never sits in shell history via a plaintext
-    -- curl arg. Deliberately a separate, simpler table from oauth_codes
-    -- above — no client_id/redirect_uri/PKCE, since there's no OAuth
-    -- client or browser redirect involved here, just "the signed-in
-    -- page handed you a code, now exchange it." Same single-use +
-    -- TTL + hash-keyed-storage shape as oauth_codes for the same
-    -- reasoning (see issue_install_code/redeem_install_code below).
+    -- curl arg. Separate from oauth_codes — no client_id/redirect_uri/
+    -- PKCE, since there's no OAuth client or browser redirect involved.
+    -- Same single-use + TTL + hash-keyed storage for the same reasons.
     CREATE TABLE IF NOT EXISTS install_codes (
         code_hash TEXT PRIMARY KEY,
         bearer_token TEXT,
@@ -122,15 +111,11 @@ def get_or_create_token(google_sub, email):
     sign-in. Idempotent per google_sub — re-running the sign-in flow
     returns the same token, not a new one.
 
-    A single atomic upsert, not a SELECT-then-INSERT — two concurrent
-    first-time sign-ins for the same brand-new google_sub (e.g. a user
-    double-clicking "Sign in with Google," or two server worker
-    processes handling near-simultaneous requests) would otherwise both
-    pass the "no existing row" check before either commits, and the
-    second INSERT would crash on the google_sub PRIMARY KEY constraint.
-    ON CONFLICT DO UPDATE makes the loser of the race a no-op update
-    instead of a crash, and the final SELECT always returns whichever
-    token actually won."""
+    A single atomic upsert, not a SELECT-then-INSERT: two concurrent
+    first-time sign-ins for the same brand-new google_sub would both
+    pass a "no existing row" check and the loser's INSERT would crash on
+    the PRIMARY KEY constraint. ON CONFLICT DO UPDATE makes the loser a
+    no-op, and the final SELECT returns whichever token won."""
     conn = _connect()
     conn.execute(
         "INSERT INTO mcp_users (google_sub, email, token, created_at) VALUES (?,?,?,?) "
@@ -325,11 +310,10 @@ def issue_install_code(bearer_token, ttl_seconds=local_setup.INSTALL_CODE_TTL_SE
     """Mints a one-time code for the /setup/install curl-able one-liner —
     the page hands this to a signed-in caller instead of embedding their
     real bearer token in plaintext (which would otherwise end up in shell
-    history forever). Stores bearer_token itself (not an identity to
-    re-derive it from later) — simplest correct contract, and works
-    identically for a per-user token or the shared owner token, neither
-    of which needs re-deriving. Returns the raw code (shown exactly
-    once); only its hash is stored, same reasoning as issue_oauth_code."""
+    history forever). Stores bearer_token itself rather than an identity
+    to re-derive it from, so this works identically for a per-user token
+    or the shared owner token. Returns the raw code (shown exactly once);
+    only its hash is stored, same reasoning as issue_oauth_code."""
     raw = secrets.token_urlsafe(32)
     now = time.time()
     conn = _connect()
