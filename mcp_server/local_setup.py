@@ -37,6 +37,18 @@ def build_settings_patch(base_url, bearer_token):
             "OTEL_EXPORTER_OTLP_HEADERS": "Authorization=Bearer " + bearer_token,
             "OTEL_LOG_RAW_API_BODIES": "1",
             "CLAUDE_CODE_OTEL_CONTENT_MAX_LENGTH": "1048576",
+            # Claude Code's exporter never sets service.name itself — the
+            # primary signal mcp_server/otlp/__init__.py's detect_vendor()
+            # matches on — so without this, every real session falls back
+            # to detect_vendor's session.id-presence check, which is itself
+            # opt-in and was silently missing both here and in what a real
+            # Claude Code session sends by default. Confirmed against a
+            # real captured session on 2026-08-25 (see docs/AUTH.md) that
+            # all four of these are what actually got a session to land.
+            "OTEL_RESOURCE_ATTRIBUTES": "service.name=claude-code",
+            "OTEL_METRICS_INCLUDE_SESSION_ID": "true",
+            "OTEL_LOGS_INCLUDE_SESSION_ID": "true",
+            "OTEL_LOGS_EXPORT_INTERVAL": "5000",
         },
     }
 
@@ -117,6 +129,10 @@ patch = {{
         "OTEL_EXPORTER_OTLP_HEADERS": "Authorization=Bearer " + BEARER_TOKEN,
         "OTEL_LOG_RAW_API_BODIES": "1",
         "CLAUDE_CODE_OTEL_CONTENT_MAX_LENGTH": "1048576",
+        "OTEL_RESOURCE_ATTRIBUTES": "service.name=claude-code",
+        "OTEL_METRICS_INCLUDE_SESSION_ID": "true",
+        "OTEL_LOGS_INCLUDE_SESSION_ID": "true",
+        "OTEL_LOGS_EXPORT_INTERVAL": "5000",
     }},
 }}
 
