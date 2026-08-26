@@ -43,6 +43,39 @@ def test_connect_page_has_otel_tabs_with_separate_optin_blocks(monkeypatch):
     assert 'id="copilot-otel-optin"' in body
 
 
+def test_claude_otel_snippet_includes_vendor_detection_vars(monkeypatch):
+    """Regression test for a bug found in review: the base Claude Code
+    OTel snippet used to omit OTEL_RESOURCE_ATTRIBUTES and the two
+    *_INCLUDE_SESSION_ID vars — the exact signals otlp/__init__.py's
+    detect_vendor() needs to recognize a session as claude_code at all
+    (see that module's _CLAUDE_CODE_SERVICE_NAMES / session.id fallback).
+    Without them, every session sent via this manual snippet lands in
+    recent_skipped, never the dashboard, even though local_setup.py's
+    installer scripts already carried all four. The rendered <pre> itself
+    is a JS template placeholder (`` ` + claudeOtelSnippet + ` ``), not
+    literal text — so this checks the claudeOtelSnippet array definition
+    in the page's embedded JS source directly, the same way the raw-body
+    opt-in separation check above relies on claudeOtelOptin being a
+    visually separate array/block, not the rendered <pre> content."""
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
+    app = server_module.server.streamable_http_app()
+    with TestClient(app) as client:
+        resp = client.get("/auth/login")
+
+    body = resp.text
+    snippet_def_start = body.index("const claudeOtelSnippet = [")
+    snippet_def_end = body.index("].join(", snippet_def_start)
+    claude_snippet_source = body[snippet_def_start:snippet_def_end]
+
+    for required_var in (
+        "OTEL_RESOURCE_ATTRIBUTES",
+        "OTEL_METRICS_INCLUDE_SESSION_ID",
+        "OTEL_LOGS_INCLUDE_SESSION_ID",
+        "OTEL_LOGS_EXPORT_INTERVAL",
+    ):
+        assert required_var in claude_snippet_source, f"{required_var} missing from the claudeOtelSnippet array"
+
+
 def test_claude_tab_still_default_active(monkeypatch):
     """Existing default-active tab behavior must be unchanged by adding
     the two new tabs after it."""

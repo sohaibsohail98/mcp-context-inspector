@@ -571,6 +571,19 @@ async def auth_login(request: Request):
       "export OTEL_EXPORTER_OTLP_PROTOCOL=http/json",
       "export OTEL_EXPORTER_OTLP_ENDPOINT=" + otlpUrl,
       'export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer ' + token + '"',
+      // Claude Code's exporter never sets service.name itself — the
+      // primary signal detect_vendor() matches on (see
+      // mcp_server/otlp/__init__.py) — so without this line, every real
+      // session falls back to detect_vendor's session.id-presence check,
+      // which is itself only populated by the two INCLUDE_SESSION_ID
+      // vars below. Omitting any of these four means every session from
+      // this snippet lands in recent_skipped, not your dashboard —
+      // found in review after local_setup.py's installer already
+      // carried all four but this manual snippet didn't.
+      "export OTEL_RESOURCE_ATTRIBUTES=service.name=claude-code",
+      "export OTEL_METRICS_INCLUDE_SESSION_ID=true",
+      "export OTEL_LOGS_INCLUDE_SESSION_ID=true",
+      "export OTEL_LOGS_EXPORT_INTERVAL=5000",
     ].join("\\n");
     const claudeOtelOptin = [
       "export OTEL_LOG_RAW_API_BODIES=1",

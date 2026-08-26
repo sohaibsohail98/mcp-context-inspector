@@ -646,6 +646,52 @@ def test_setup_install_script_is_valid_posix_shell(client):
     assert result.returncode == 0, result.stderr
 
 
+@pytest.mark.parametrize(
+    "malicious_token",
+    [
+        "ab$HOME-cd",  # shell variable expansion
+        "ab`id`cd",  # command substitution (backticks)
+        "ab$(id)cd",  # command substitution (modern form)
+        r"ab\$HOME-cd",  # literal backslash
+    ],
+)
+def test_setup_install_script_does_not_shell_expand_the_token(client, tmp_path, monkeypatch, malicious_token):
+    """Regression test for a shell-injection bug found in review: the
+    installer used to interpolate BEARER_TOKEN into a double-quoted
+    `python3 -c "..."` body, so a token containing `$`, backticks, or a
+    backslash was expanded/executed by `sh` before Python ever saw it —
+    confirmed to both silently corrupt the stored token (breaking every
+    OTLP export with an unexplained 401) and, for the backtick case,
+    execute arbitrary shell commands during install. The owner token
+    (MCP_AUTH_TOKEN) is operator-set and not guaranteed to avoid these
+    characters, unlike per-user tokens minted via secrets.token_urlsafe.
+    The fix passes the token through an env var with real POSIX sh
+    single-quoting, never through double-quoted string interpolation."""
+    import subprocess
+
+    from mcp_server.auth import store_sqlite
+
+    # Bypass the normal issue/redeem-code flow to control the exact
+    # bearer token value embedded in the script — the malicious payload
+    # needs to be the raw bearer token, not something that goes through
+    # JSON encoding first.
+    code = store_sqlite.issue_install_code(malicious_token)
+    script = client.get("/setup/install", params={"t": code}).text
+
+    result = subprocess.run(["sh", "-n"], input=script, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+    script_path = tmp_path / "install.sh"
+    script_path.write_text(script)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    result = subprocess.run(["sh", str(script_path)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+    written = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+    stored_auth_header = written["mcpServers"]["context-inspector"]["headers"]["Authorization"]
+    assert stored_auth_header == "Bearer " + malicious_token
+
+
 def test_setup_install_script_execution_applies_same_patch_as_local_script(client, tmp_path, monkeypatch):
     """The curl-installer must perform the identical settings.json merge
     as /setup/local-script's downloaded Python script — same keys, same

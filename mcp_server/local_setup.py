@@ -216,13 +216,23 @@ if ! command -v python3 >/dev/null 2>&1; then
     exit 1
 fi
 
+# BASE_URL/BEARER_TOKEN travel as environment variables, never
+# interpolated into the double-quoted python3 -c "..." body below --
+# found in review: a value containing $, a backtick, or a backslash
+# would otherwise be expanded/executed by sh before Python ever saw it
+# (verified: a token containing a backtick-wrapped command executed on
+# the way in). MCP_INSTALL_BASE_URL/MCP_INSTALL_BEARER_TOKEN are this
+# script's own private env vars, scoped to this one command only.
+MCP_INSTALL_BASE_URL={base_url_shell_quoted} \\
+MCP_INSTALL_BEARER_TOKEN={bearer_token_shell_quoted} \\
 python3 -c "
 import json
+import os
 import time
 from pathlib import Path
 
-BASE_URL = {base_url!r}
-BEARER_TOKEN = {bearer_token!r}
+BASE_URL = os.environ['MCP_INSTALL_BASE_URL']
+BEARER_TOKEN = os.environ['MCP_INSTALL_BEARER_TOKEN']
 SETTINGS_PATH = Path.home() / '.claude' / 'settings.json'
 
 patch = {{
@@ -285,8 +295,22 @@ echo "Then run one prompt and check \\"Test my connection\\" on the page."
 '''
 
 
+def _sh_single_quote(value):
+    """POSIX sh single-quoting: nothing is special inside '...' except a
+    literal single quote itself, which can't be escaped from inside the
+    quotes at all — the standard trick is to close the quote, emit an
+    escaped literal quote, then reopen: ' -> '\\''. This is what actually
+    closes the shell-injection gap found in review (see
+    INSTALL_SHELL_TEMPLATE's comment) — env-var assignment syntax
+    (`NAME=value cmd`) is still shell-parsed, so the value needs real
+    shell quoting, not just Python's repr()."""
+    return "'" + value.replace("'", "'\\''") + "'"
+
+
 def render_install_shell_script(base_url, bearer_token):
     return INSTALL_SHELL_TEMPLATE.format(
         base_url=base_url.rstrip("/"),
         bearer_token=bearer_token,
+        base_url_shell_quoted=_sh_single_quote(base_url.rstrip("/")),
+        bearer_token_shell_quoted=_sh_single_quote(bearer_token),
     )
