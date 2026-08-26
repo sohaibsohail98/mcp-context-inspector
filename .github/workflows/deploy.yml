@@ -10,6 +10,7 @@ on:
       - "scripts/**"
       - "demo/**"
       - "webapp/**"
+      - "docs-site/**"
       - "Dockerfile"
       - "pyproject.toml"
       - "cloudflare-proxy/**"

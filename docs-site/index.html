@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Lumen Docs</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="MCP server + live dashboard for real per-session cost, token, and Context Window Explorer telemetry.">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --bg: #faf9f6; --surface: #ffffff; --surface-sunken: #f1efe9;
+    --border: #e4e0d4; --border-soft: #ede9dd;
+    --text: #1c1a14; --text-dim: #5b5646; --text-dimmer: #8b8471;
+    --accent: #3f8f76; --accent-dim: #e5f2ee; --accent-ink: #2a6b56;
+    --warn: #b5793a; --warn-dim: #fbf0e2;
+    --shadow: 0 1px 2px rgba(28,26,20,0.04), 0 6px 20px rgba(28,26,20,0.05);
+    --radius: 10px;
+    --sidebar-w: 240px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17150f; --surface: #1f1c14; --surface-sunken: #262115;
+      --border: #322c1f; --border-soft: #241f16;
+      --text: #ece5d3; --text-dim: #b0a68b; --text-dimmer: #756c56;
+      --accent: #6cbfa4; --accent-dim: #1c2b23; --accent-ink: #8fdcc5;
+      --warn: #d9a45c; --warn-dim: #2e2314;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text-dim);
+    font-family: 'Inter', -apple-system, sans-serif;
+    font-size: 15.5px; line-height: 1.65;
+  }
+  ::selection { background: var(--accent-dim); color: var(--accent-ink); }
+
+  a { color: var(--accent-ink); }
+
+  /* ---- top bar ---- */
+  .topbar {
+    position: sticky; top: 0; z-index: 20;
+    display: flex; align-items: center; gap: 0.7rem;
+    padding: 0.85rem 1.5rem; background: var(--bg);
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .topbar .mark {
+    width: 1.65rem; height: 1.65rem; border-radius: 50%;
+    background: linear-gradient(135deg, #8ba3e0, var(--accent) 60%, #3f8f76);
+    flex-shrink: 0;
+  }
+  .topbar .brand {
+    font-family: 'Fraunces', serif; font-weight: 600; font-size: 1.08rem; color: var(--text);
+  }
+  .topbar .spacer { flex: 1; }
+  .topbar a.gh {
+    font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--text-dim);
+    text-decoration: none; padding: 0.4rem 0.75rem; border: 1px solid var(--border); border-radius: 7px;
+  }
+  .topbar a.gh:hover { border-color: var(--accent); color: var(--accent-ink); }
+
+  /* ---- layout ---- */
+  .layout { display: flex; max-width: 1180px; margin: 0 auto; }
+
+  .sidebar {
+    width: var(--sidebar-w); flex-shrink: 0;
+    position: sticky; top: 3.6rem; align-self: flex-start;
+    max-height: calc(100vh - 3.6rem); overflow-y: auto;
+    padding: 2.2rem 1rem 3rem 1.5rem;
+  }
+  .sidebar nav { display: flex; flex-direction: column; gap: 0.15rem; }
+  .sidebar .group-label {
+    font-family: 'JetBrains Mono', monospace; font-size: 0.66rem; letter-spacing: 0.07em;
+    text-transform: uppercase; color: var(--text-dimmer); margin: 1.1rem 0 0.4rem;
+  }
+  .sidebar .group-label:first-child { margin-top: 0; }
+  .sidebar a {
+    font-size: 0.87rem; color: var(--text-dim); text-decoration: none;
+    padding: 0.3rem 0.6rem; border-radius: 6px; border-left: 2px solid transparent;
+  }
+  .sidebar a:hover { color: var(--text); background: var(--surface-sunken); }
+  .sidebar a.active { color: var(--accent-ink); border-left-color: var(--accent); background: var(--accent-dim); font-weight: 600; }
+
+  main {
+    flex: 1; min-width: 0; padding: 2.4rem 2rem 6rem;
+    max-width: 760px;
+  }
+
+  @media (max-width: 900px) {
+    .sidebar { display: none; }
+    main { max-width: none; padding: 1.6rem 1.2rem 4rem; }
+  }
+
+  /* ---- typography ---- */
+  h1 {
+    font-family: 'Fraunces', serif; font-weight: 600; font-size: clamp(1.8rem, 4vw, 2.3rem);
+    color: var(--text); margin: 0 0 0.6rem; letter-spacing: -0.01em; text-wrap: balance;
+  }
+  .lede { font-size: 1.02rem; color: var(--text-dim); max-width: 58ch; margin: 0 0 2.2rem; }
+
+  section { scroll-margin-top: 4.2rem; margin-bottom: 3rem; }
+  section:last-child { margin-bottom: 0; }
+
+  h2 {
+    font-family: 'Fraunces', serif; font-weight: 600; font-size: 1.32rem;
+    color: var(--text); margin: 0 0 0.9rem; padding-top: 0.2rem;
+  }
+  h3 {
+    font-family: 'Inter', sans-serif; font-weight: 600; font-size: 0.98rem;
+    color: var(--text); margin: 1.5rem 0 0.6rem;
+  }
+
+  p { margin: 0 0 0.9rem; }
+  p:last-child { margin-bottom: 0; }
+
+  code {
+    font-family: 'JetBrains Mono', monospace; background: var(--surface-sunken);
+    border: 1px solid var(--border-soft); border-radius: 4px;
+    padding: 0.1em 0.4em; font-size: 0.87em; color: var(--text);
+  }
+  pre {
+    font-family: 'JetBrains Mono', monospace; font-size: 0.83rem; line-height: 1.6;
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    box-shadow: var(--shadow); padding: 0.95rem 1.1rem; overflow-x: auto; margin: 0.7rem 0 1.1rem;
+    color: var(--text-dim);
+  }
+  pre code { background: none; border: none; padding: 0; color: inherit; }
+
+  ul, ol { padding-left: 1.3rem; margin: 0 0 0.9rem; }
+  li { margin-bottom: 0.35rem; }
+  li:last-child { margin-bottom: 0; }
+
+  /* ---- components ---- */
+  .callout {
+    display: flex; gap: 0.65rem; align-items: flex-start;
+    background: var(--warn-dim); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 0.85rem 1.05rem; margin: 1rem 0; font-size: 0.9rem;
+  }
+  .callout .icon { flex-shrink: 0; color: var(--warn); font-size: 0.95rem; margin-top: 0.05rem; }
+
+  table {
+    width: 100%; border-collapse: collapse; margin: 0.7rem 0 1.1rem; font-size: 0.88rem;
+  }
+  th {
+    text-align: left; font-family: 'JetBrains Mono', monospace; font-size: 0.68rem;
+    letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-dimmer);
+    padding: 0.5rem 0.7rem; border-bottom: 1px solid var(--border);
+  }
+  td { padding: 0.6rem 0.7rem; border-bottom: 1px solid var(--border-soft); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  .table-wrap { overflow-x: auto; }
+
+  .step-list { list-style: none; padding: 0; margin: 1rem 0; counter-reset: step; }
+  .step-list li {
+    counter-increment: step; position: relative; padding-left: 2.3rem; margin-bottom: 1.1rem;
+  }
+  .step-list li::before {
+    content: counter(step); position: absolute; left: 0; top: 0;
+    width: 1.6rem; height: 1.6rem; border-radius: 50%; background: var(--accent-dim); color: var(--accent-ink);
+    font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  .card-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.9rem; margin: 1rem 0; }
+  @media (max-width: 640px) { .card-grid { grid-template-columns: 1fr; } }
+  .tool-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    box-shadow: var(--shadow); padding: 0.85rem 1rem;
+  }
+  .tool-card .name { font-family: 'JetBrains Mono', monospace; font-size: 0.83rem; color: var(--accent-ink); font-weight: 600; }
+  .tool-card p { font-size: 0.85rem; margin: 0.35rem 0 0; }
+
+  footer {
+    margin-top: 3.5rem; padding-top: 1.4rem; border-top: 1px solid var(--border-soft);
+    font-size: 0.83rem; color: var(--text-dimmer);
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="mark"></div>
+  <span class="brand">Lumen</span>
+  <div class="spacer"></div>
+  <a class="gh" href="https://github.com/sohaibsohail98/mcp-context-inspector" target="_blank" rel="noopener">GitHub ↗</a>
+</div>
+
+<div class="layout">
+  <aside class="sidebar">
+    <nav id="side-nav">
+      <span class="group-label">Get started</span>
+      <a href="#overview">Overview</a>
+      <a href="#try-it">Try it in 30 seconds</a>
+      <a href="#install">Installation</a>
+      <a href="#run-locally">Run it locally</a>
+
+      <span class="group-label">Usage</span>
+      <a href="#one-command">The one-command setup</a>
+      <a href="#claude-code">Claude Code CLI</a>
+      <a href="#claude-ai">claude.ai (Connectors)</a>
+      <a href="#live-telemetry">Live telemetry, by hand</a>
+      <a href="#tools">The 8 MCP tools</a>
+
+      <span class="group-label">Reference</span>
+      <a href="#auth-model">Auth model</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#storage-backends">Storage backends</a>
+      <a href="#deploying">Deploying your own</a>
+    </nav>
+  </aside>
+
+  <main>
+    <section id="overview">
+      <h1>Lumen</h1>
+      <p class="lede">
+        A drop-in MCP server that gives Claude Code, Bedrock-based agents, and other MCP/LLM
+        clients real per-session cost, token, and tool metrics — plus a full
+        <strong>Context Window Explorer</strong> — over a real MCP handshake.
+      </p>
+      <p>
+        Most agent observability tools re-show data your own UI already displays. Lumen shows
+        something you normally can't see at all: system prompt, tool specs, reasoning, tool calls
+        and results, and the final answer, in the order they actually entered context — measured
+        against the model's real context window, with each block marked as visible-to-the-user or
+        invisible overhead.
+      </p>
+    </section>
+
+    <section id="try-it">
+      <h2>Try it in 30 seconds</h2>
+      <p>
+        Live demo: <a href="https://mcp-inspector.sohaibsohail.workers.dev" target="_blank" rel="noopener">mcp-inspector.sohaibsohail.workers.dev</a>
+      </p>
+      <p>Seeded with fixture data — writes made behind Google sign-in don't survive a cold start on the demo, since it runs on SQLite.</p>
+      <p>Not yet published to PyPI, so run it from source:</p>
+      <pre><code>git clone https://github.com/sohaibsohail98/mcp-context-inspector
+cd mcp-context-inspector && uv run python -m mcp_server.server</code></pre>
+      <p>With no <code>MCP_AUTH_TOKEN</code> set, the server generates and prints one on startup — same trust model as a Jupyter server's printed token.</p>
+    </section>
+
+    <section id="install">
+      <h2>Installation</h2>
+      <p>Requires Python 3.11+.</p>
+      <pre><code>git clone https://github.com/sohaibsohail98/mcp-context-inspector
+cd mcp-context-inspector
+uv sync</code></pre>
+    </section>
+
+    <section id="run-locally">
+      <h2>Run it locally</h2>
+      <pre><code>export MCP_AUTH_TOKEN=local-test-owner-token
+export STORAGE_BACKEND=sqlite
+export METRICS_DB_PATH=/tmp/mci-local-test.db
+export MCP_SERVER_PORT=8787
+
+uv run python -m mcp_server.server</code></pre>
+      <p>
+        Open <code>http://localhost:8787</code> (use <code>localhost</code>, not
+        <code>127.0.0.1</code> — Google sign-in needs it) and use
+        <code>local-test-owner-token</code> as the bearer token for the config it generates.
+      </p>
+      <p>Run tests with <code>uv run pytest</code>, lint with <code>uv run ruff check .</code></p>
+    </section>
+
+    <section id="one-command">
+      <h2>The one-command setup</h2>
+      <p>
+        Sign in at <code>/auth/login</code> and the page hands you a single command to paste into
+        a terminal — it writes the MCP connection and telemetry config into your own
+        <code>~/.claude/settings.json</code> (backed up first, merged, never overwritten):
+      </p>
+      <pre><code>curl -fsSL https://mcp-inspector.sohaibsohail.workers.dev/setup/install?t=&lt;code&gt; | sh</code></pre>
+      <p>
+        The <code>?t=</code> code is single-use and short-lived — your real token is never in the
+        command itself.
+      </p>
+      <div class="callout">
+        <span class="icon">⚠</span>
+        <span>Close and reopen Claude Code afterward — env vars only load at process startup.
+        Run one prompt, then check "Test my connection" on the page.</span>
+      </div>
+    </section>
+
+    <section id="claude-code">
+      <h3 style="margin-top:0;">Claude Code CLI, by hand</h3>
+      <pre><code>{
+  "mcpServers": {
+    "context-inspector": {
+      "url": "https://mcp-inspector.sohaibsohail.workers.dev/mcp",
+      "headers": { "Authorization": "Bearer &lt;your-token&gt;" }
+    }
+  }
+}</code></pre>
+    </section>
+
+    <section id="claude-ai">
+      <h2>claude.ai (Connectors)</h2>
+      <p>claude.ai's Connectors feature speaks the MCP OAuth flow directly — no token to copy:</p>
+      <ol class="step-list">
+        <li><strong>claude.ai → Settings → Connectors → Add custom connector.</strong></li>
+        <li>Paste the MCP server URL. Leave OAuth Client ID/Secret blank — Lumen registers itself dynamically per the MCP spec.</li>
+        <li>claude.ai opens a Google sign-in prompt automatically. Sign in once.</li>
+        <li>All 8 tools are now available in any claude.ai chat.</li>
+      </ol>
+      <p>Once connected, ask it things like:</p>
+      <ul>
+        <li><em>"What did my last Claude Code session cost?"</em></li>
+        <li><em>"Show me the tool-call trace for session sess_..."</em></li>
+        <li><em>"Which of my recent sessions used the most tokens?"</em></li>
+      </ul>
+    </section>
+
+    <section id="live-telemetry">
+      <h2>Live telemetry, by hand</h2>
+      <p>Point Claude Code's own OpenTelemetry export at Lumen and sessions show up as they happen:</p>
+      <pre><code>export CLAUDE_CODE_ENABLE_TELEMETRY=1
+export OTEL_LOGS_EXPORTER=otlp
+export OTEL_METRICS_EXPORTER=otlp
+export OTEL_EXPORTER_OTLP_PROTOCOL=http/json
+export OTEL_EXPORTER_OTLP_ENDPOINT=https://mcp-inspector.sohaibsohail.workers.dev/otlp
+export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer &lt;your-token&gt;"
+export OTEL_RESOURCE_ATTRIBUTES=service.name=claude-code
+export OTEL_METRICS_INCLUDE_SESSION_ID=true
+export OTEL_LOGS_INCLUDE_SESSION_ID=true
+export OTEL_LOGS_EXPORT_INTERVAL=5000
+export OTEL_LOG_RAW_API_BODIES=1   # opt-in: needed for the Context Explorer</code></pre>
+      <p>
+        The <code>OTEL_RESOURCE_ATTRIBUTES</code>/<code>*_INCLUDE_SESSION_ID</code> lines are what
+        let Lumen recognize the session as Claude Code's at all — omit them and every session is
+        silently dropped.
+      </p>
+    </section>
+
+    <section id="tools">
+      <h2>The 8 MCP tools</h2>
+      <div class="table-wrap">
+      <table>
+        <tr><th>Tool</th><th>Returns</th><th>R/W</th></tr>
+        <tr><td><code>get_session_metrics</code></td><td>Session metadata + per-prompt tokens/latency/cost</td><td>Read</td></tr>
+        <tr><td><code>get_token_breakdown</code></td><td>Per-turn token/latency breakdown</td><td>Read</td></tr>
+        <tr><td><code>get_tool_metrics</code></td><td>Tool call counts by status</td><td>Read</td></tr>
+        <tr><td><code>get_agent_trace</code></td><td>Ordered tool-call sequence for one session</td><td>Read</td></tr>
+        <tr><td><code>get_cost_estimate</code></td><td>Estimated cost, one session or a time window</td><td>Read</td></tr>
+        <tr><td><code>get_recent_sessions</code></td><td>Most recent sessions, newest first</td><td>Read</td></tr>
+        <tr><td><code>get_context_timeline</code></td><td>Full context-window block breakdown</td><td>Read</td></tr>
+        <tr><td><code>record_session</code></td><td>Records one agent execution's metrics</td><td>Write</td></tr>
+      </table>
+      </div>
+      <p>Plain REST equivalents are exposed under <code>/api/*</code>.</p>
+    </section>
+
+    <section id="auth-model">
+      <h2>Auth model</h2>
+      <p>
+        A plain bearer token (the owner token, or a personal token from <code>/auth/login</code>)
+        works for clients you hand a token to directly — Claude Code's MCP config, curl. claude.ai's
+        Connectors UI instead speaks OAuth 2.1 and mints its own token on sign-in, kept separate so
+        disconnecting one doesn't invalidate the other.
+      </p>
+      <p>
+        Every session is attributed to whoever recorded it — a per-user token only ever sees,
+        queries, and records its own data. There's no way to read or list another user's sessions,
+        even by guessing an ID.
+      </p>
+    </section>
+
+    <section id="architecture">
+      <h2>Architecture</h2>
+      <p>
+        A Cloudflare Worker (a transparent reverse proxy, giving a short permanent public URL) sits
+        in front of a Cloud Run service running the Starlette + MCP server, backed by Firestore (or
+        DynamoDB, or SQLite for local dev).
+      </p>
+      <p>
+        One data-access layer, three entry points: a direct Python import for your own local agent,
+        the authenticated MCP tool/REST route for anyone else's remote agent, and
+        <code>/otlp/v1/{logs,metrics,traces}</code> for Claude Code's/Copilot's own native
+        OpenTelemetry export.
+      </p>
+    </section>
+
+    <section id="storage-backends">
+      <h2>Storage backends</h2>
+      <p>Three options, selected with <code>STORAGE_BACKEND</code>:</p>
+      <ul>
+        <li><strong>sqlite</strong> (default) — zero setup, good for local dev. Doesn't survive a Cloud Run cold start.</li>
+        <li><strong>dynamodb</strong> — durable, AWS-hosted.</li>
+        <li><strong>firestore</strong> — durable, GCP-hosted, the recommended choice for a real deployment with sign-in-backed writes.</li>
+      </ul>
+    </section>
+
+    <section id="deploying">
+      <h2>Deploying your own</h2>
+      <p>
+        Deployed to Cloud Run, fronted by a Cloudflare Worker reverse proxy for a short public URL.
+        GitHub Actions auto-deploys on push to <code>main</code> and always routes 100% of traffic
+        to the newly built revision.
+      </p>
+      <p>See the <a href="https://github.com/sohaibsohail98/mcp-context-inspector#deploying-your-own" target="_blank" rel="noopener">README's deploy section</a> for the full env var reference.</p>
+    </section>
+
+    <footer>
+      MIT licensed. Built by <a href="https://github.com/sohaibsohail98" target="_blank" rel="noopener">@sohaibsohail98</a> —
+      developed alongside <a href="https://github.com/sohaibsohail98/sre-investigation-agent" target="_blank" rel="noopener">sre-investigation-agent</a>.
+    </footer>
+  </main>
+</div>
+
+<script>
+  // Highlights the sidebar link for whichever section is currently in view.
+  const links = Array.from(document.querySelectorAll('#side-nav a'));
+  const sections = links
+    .map((a) => document.querySelector(a.getAttribute('href')))
+    .filter(Boolean);
+
+  const observer = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((entry) => {
+        const id = entry.target.id;
+        const link = links.find((a) => a.getAttribute('href') === '#' + id);
+        if (!link) return;
+        if (entry.isIntersecting) {
+          links.forEach((a) => a.classList.remove('active'));
+          link.classList.add('active');
+        }
+      });
+    },
+    { rootMargin: '-15% 0px -70% 0px' }
+  );
+  sections.forEach((s) => observer.observe(s));
+</script>
+
+</body>
+</html>

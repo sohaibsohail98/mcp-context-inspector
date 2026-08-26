@@ -20,10 +20,12 @@ COPY metrics/ ./metrics/
 COPY mci_common/ ./mci_common/
 RUN uv sync --frozen --no-dev
 
-# Static files for the mobile webapp (mcp_server/routes/webapp.py resolves
-# these relative to the repo root at runtime, not through the Python
-# package install above).
+# Static files for the mobile webapp and the /docs site
+# (mcp_server/routes/webapp.py and routes/docs.py resolve these relative
+# to the repo root at runtime, not through the Python package install
+# above).
 COPY webapp/ ./webapp/
+COPY docs-site/ ./docs-site/
 
 # Deterministic demo dataset (scripts/seed_demo_db.py) — only used when
 # the deploy sets DEMO_SEED_SRC + METRICS_DB_PATH (see README/docs); a

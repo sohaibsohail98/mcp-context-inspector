@@ -16,6 +16,9 @@
 
 Package/repo name on disk: `mcp-context-inspector`. The product is Lumen.
 
+**[Docs site →](https://mcp-inspector.sohaibsohail.workers.dev/docs)** — same content as this
+README, laid out as a proper single-page reference with section nav.
+
 ## Why this exists
 
 Most agent observability tools re-show data your own UI already displays.
