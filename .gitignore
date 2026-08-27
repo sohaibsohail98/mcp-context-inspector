@@ -32,9 +32,9 @@ data/mcp_auth.db
 cloudflare-proxy/.wrangler/
 
 # Demo capture build artefacts (see scripts/demo_capture.py, Makefile's
-# demo target), regenerated on demand, not shipped as source.
-docs/demo.mp4
-docs/demo.gif
+# demo target). docs/demo.mp4/.gif are now the shipped guided_tour
+# takes (see docs/internal/demo-takes.md) and are committed on purpose,
+# so only the raw/scratch working directories stay ignored here.
 docs/_raw/
 # Candidate takes from `make demo-candidates`, kept locally for review
 # but never committed; only the one chosen as docs/demo.mp4/.gif ships.
