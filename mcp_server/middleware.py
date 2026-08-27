@@ -11,6 +11,20 @@ from starlette.responses import JSONResponse
 from mcp_server.auth import store as auth_store
 from mcp_server.app import current_owner
 
+# Demo-capture bypass (see scripts/demo_capture.py and
+# mcp_server/routes/demo.py). A fixed, obviously-fake token rather than
+# something minted per run, since the whole point is a reproducible
+# recording against the seeded demo/metrics.db: a random token would
+# make the capture script's own auth setup non-deterministic for no
+# benefit. Only ever accepted when CTXWINDOW_DEMO_MODE=1, which is unset
+# in every real deployment, so this constant being public in source
+# control grants no access anywhere it matters.
+DEMO_TOKEN = "ctxwindow-demo-token-do-not-use-in-production"
+
+
+def _demo_mode_enabled():
+    return os.environ.get("CTXWINDOW_DEMO_MODE") == "1"
+
 
 def _public_origin(request):
     """The real, public-facing origin this server is reachable at. NOT
@@ -74,6 +88,12 @@ class MultiTokenAuthMiddleware(BaseHTTPMiddleware):
             header = request.headers.get("authorization", "")
             token = header.removeprefix("Bearer ") if header.startswith("Bearer ") else None
             if token == self.owner_token:
+                current_owner.set(None)
+            elif token == DEMO_TOKEN and _demo_mode_enabled():
+                # Same visibility as the owner token (current_owner=None),
+                # which is what the seeded demo rows need: seed_demo_db.py
+                # inserts them with owner=NULL, so a per-user token would
+                # see nothing (see metrics/store_sqlite.py's _visible()).
                 current_owner.set(None)
             elif token and auth_store.is_valid_token(token):
                 current_owner.set(auth_store.get_sub_for_token(token))
