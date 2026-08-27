@@ -41,6 +41,10 @@ _PAGE_STYLE = """
     --cat-system: #9d9377; --cat-tools: #b0a68b; --cat-user: #ece5d3;
     --cat-reasoning: #6cbfa4; --cat-thinking: #b0a68b; --cat-toolcall: #d9a45c;
     --cat-toolresult: #6cbfa4; --cat-answer: #8ba3e0;
+    /* harness-injected context (<system-reminder> etc.) and slash-command
+       machinery (<command-*>), split out of user/answer by the OTLP
+       mapper. Muted, near the system tone since that's what they are. */
+    --cat-injected: #7c7357; --cat-command: #8f7a52;
     --code-bg: #100e0a; --code-text: #8ba99a; --code-inline-bg: #1a160e;
     --shadow: 0 1px 3px rgba(0,0,0,0.4), 0 12px 30px -16px rgba(0,0,0,0.6);
     --radius: 16px; --radius-sm: 10px;
@@ -64,6 +68,7 @@ _PAGE_STYLE = """
       --cat-system: #8a7f63; --cat-tools: #b09a6a; --cat-user: #cdbf9f;
       --cat-reasoning: #2f9c7f; --cat-thinking: #b09a6a; --cat-toolcall: #b9782e;
       --cat-toolresult: #2f9c7f; --cat-answer: #5c78c9;
+      --cat-injected: #a8996f; --cat-command: #b09154;
       --code-bg: #f4efe2; --code-text: #3f6f5e; --code-inline-bg: #f0eadb;
       --shadow: 0 1px 2px rgba(43,38,23,0.06), 0 14px 34px -20px rgba(43,38,23,0.18);
     }
@@ -83,6 +88,7 @@ _PAGE_STYLE = """
     --cat-system: #8a7f63; --cat-tools: #b09a6a; --cat-user: #cdbf9f;
     --cat-reasoning: #2f9c7f; --cat-thinking: #b09a6a; --cat-toolcall: #b9782e;
     --cat-toolresult: #2f9c7f; --cat-answer: #5c78c9;
+    --cat-injected: #a8996f; --cat-command: #b09154;
     --code-bg: #f4efe2; --code-text: #3f6f5e; --code-inline-bg: #f0eadb;
     --shadow: 0 1px 2px rgba(43,38,23,0.06), 0 14px 34px -20px rgba(43,38,23,0.18);
   }
@@ -508,6 +514,32 @@ _PAGE_STYLE = """
     color: var(--text-dim); white-space: pre-wrap; word-break: break-word; max-height: 20rem; overflow-y: auto;
   }
   .block-detail.unavailable { font-family: inherit; font-style: italic; color: var(--text-dimmer); white-space: normal; }
+  /* Context Explorer: turn grouping + category filter. The legend row
+     doubles as a filter -- each swatch is a toggle. */
+  .ctx-legend span { cursor: pointer; user-select: none; padding: 0.1rem 0.3rem; border-radius: 6px; transition: opacity 0.12s ease, background 0.12s ease; }
+  .ctx-legend span:hover { background: var(--bg-raised-2); }
+  .ctx-legend span.off { opacity: 0.32; }
+  .ctx-legend .legend-actions { margin-left: auto; display: inline-flex; gap: 0.4rem; cursor: default; padding: 0; }
+  .ctx-legend .legend-actions:hover { background: none; }
+  .ctx-legend .legend-actions button {
+    font: inherit; font-size: 10px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--text-dim); background: var(--bg-raised-2); border: 1px solid var(--border-soft);
+    border-radius: 6px; padding: 0.12rem 0.5rem; cursor: pointer;
+  }
+  .ctx-legend .legend-actions button:hover { color: var(--text); border-color: var(--text-dimmer); }
+  .ctx-filter-summary { font-size: 10.5px; color: var(--text-dimmer); padding: 0 1.1rem 0.5rem; }
+  .turn-group { border-top: 1px solid var(--border-soft); }
+  .turn-group:first-child { border-top: none; }
+  .turn-head {
+    display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.7rem; cursor: pointer;
+    font-size: 11px; color: var(--text-dim); font-weight: 600;
+  }
+  .turn-head:hover { background: var(--bg-raised-2); }
+  .turn-head .turn-chev { color: var(--text-dimmer); font-size: 10px; width: 0.9rem; text-align: center; transition: transform 0.15s ease; }
+  .turn-group.collapsed .turn-chev { transform: rotate(-90deg); }
+  .turn-head .turn-meta { margin-left: auto; color: var(--text-dimmer); font-weight: 500; font-size: 10.5px; }
+  .turn-group.collapsed .turn-body { display: none; }
+  .block-run { font-size: 11px; color: var(--text-dimmer); padding: 0.4rem 0.7rem 0.4rem 2.1rem; font-style: italic; }
   .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; padding: 0 1.1rem 1.1rem; }
   @media (max-width: 760px) { .two-col { grid-template-columns: 1fr; } }
   .subpanel { border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--bg-raised-2); padding: 0.75rem 0.85rem; }
@@ -637,16 +669,17 @@ async def auth_login(request: Request):
     <div class="ctxwindow-demo-bar" id="ctxwindow-demo-bar">
       <div data-w="9" style="width:0%;background:var(--cat-system);"></div>
       <div data-w="16" style="width:0%;background:var(--cat-tools);"></div>
+      <div data-w="7" style="width:0%;background:var(--cat-injected);"></div>
       <div data-w="6" style="width:0%;background:var(--cat-user);"></div>
-      <div data-w="11" style="width:0%;background:var(--cat-reasoning);"></div>
       <div data-w="8" style="width:0%;background:var(--cat-toolcall);"></div>
       <div data-w="41" style="width:0%;background:var(--cat-toolresult);"></div>
-      <div data-w="9" style="width:0%;background:var(--cat-answer);"></div>
+      <div data-w="13" style="width:0%;background:var(--cat-answer);"></div>
     </div>
     <div class="ctxwindow-demo-legend">
       <span><i style="background:var(--cat-system);"></i>system</span>
       <span><i style="background:var(--cat-tools);"></i>tools</span>
-      <span><i style="background:var(--cat-reasoning);"></i>reasoning</span>
+      <span><i style="background:var(--cat-injected);"></i>injected</span>
+      <span><i style="background:var(--cat-user);"></i>user</span>
       <span><i style="background:var(--cat-toolcall);"></i>tool call</span>
       <span><i style="background:var(--cat-toolresult);"></i>tool result</span>
       <span><i style="background:var(--cat-answer);"></i>answer</span>
@@ -1350,9 +1383,32 @@ async def auth_login(request: Request):
 
   const CATEGORY_COLORS = {{
     system: "var(--cat-system)", tools: "var(--cat-tools)", user: "var(--cat-user)",
-    reasoning: "var(--cat-reasoning)", thinking: "var(--cat-thinking)",
+    injected: "var(--cat-injected)", command: "var(--cat-command)",
+    reasoning: "var(--cat-reasoning)", thinking: "var(--cat-reasoning)",
     tool_call: "var(--cat-toolcall)", tool_result: "var(--cat-toolresult)", answer: "var(--cat-answer)",
   }};
+  // Order + display name for the Context Explorer legend / filter. Every
+  // category the OTLP mappers can emit is here; `thinking` folds into
+  // `reasoning` (same colour, same meaning -- extended-thinking content
+  // that Claude Code redacts before export).
+  const CTX_CATEGORIES = [
+    ["system", "system"], ["tools", "tools"], ["user", "user"],
+    ["injected", "injected"], ["command", "command"], ["reasoning", "reasoning"],
+    ["tool_call", "tool call"], ["tool_result", "tool result"], ["answer", "answer"],
+  ];
+  const CTX_FILTER_KEY = "mci_ctx_hidden_cats";
+  function loadHiddenCats() {{
+    try {{
+      const raw = localStorage.getItem(CTX_FILTER_KEY);
+      return raw ? new Set(JSON.parse(raw)) : new Set();
+    }} catch (e) {{ return new Set(); }}
+  }}
+  function saveHiddenCats(set) {{
+    try {{ localStorage.setItem(CTX_FILTER_KEY, JSON.stringify([...set])); }} catch (e) {{}}
+  }}
+  let ctxHiddenCats = loadHiddenCats();
+  let ctxTimeline = [];
+  const ctxCollapsedTurns = new Set();
 
   const SRC_BADGE = {{
     claude_code: {{cls: "cc", label: "CC"}},
@@ -1555,11 +1611,18 @@ async def auth_login(request: Request):
       </div>`;
   }}
 
+  function ctxVisible(b) {{ return !ctxHiddenCats.has(b.category); }}
+
   function renderContextBar(timeline) {{
-    const total = timeline.length ? timeline[timeline.length - 1].cumulative_tokens : 0;
-    return timeline.map((b) => {{
+    // Bar always reflects the FILTERED view: hidden categories contribute
+    // no segment, and widths are re-normalised over what's shown, so the
+    // strip and the list agree.
+    const shown = timeline.filter(ctxVisible);
+    const total = shown.reduce((s, b) => s + (b.token_estimate || 0), 0);
+    if (!total) return '<div style="width:100%; background:var(--border-soft);"></div>';
+    return shown.map((b) => {{
       const color = CATEGORY_COLORS[b.category] || "var(--cat-system)";
-      const pct = total ? (b.token_estimate / total * 100) : 0;
+      const pct = b.token_estimate / total * 100;
       return '<div style="width:' + pct + '%; background:' + color + ';"></div>';
     }}).join("");
   }}
@@ -1603,27 +1666,143 @@ async def auth_login(request: Request):
       ` + detail;
   }}
 
+  // Collapse a run of 3+ consecutive same-category blocks (after
+  // filtering) into a single summary line; shorter runs render in full.
+  function renderBlockSequence(blocks) {{
+    let html = "";
+    let i = 0;
+    while (i < blocks.length) {{
+      let j = i;
+      while (j < blocks.length && blocks[j].b.category === blocks[i].b.category) j++;
+      const run = blocks.slice(i, j);
+      if (run.length >= 3) {{
+        const cat = run[0].b.category;
+        const toks = run.reduce((s, x) => s + (x.b.token_estimate || 0), 0);
+        const name = (CTX_CATEGORIES.find((c) => c[0] === cat) || [cat, cat])[1];
+        html += '<div class="block-run">' + run.length + ' &times; ' + escapeHtml(name)
+          + ' &middot; ' + fmtTokens(toks) + ' tok</div>';
+        html += run.map((x) => renderContextBlockRow(x.b, x.idx)).join("");
+      }} else {{
+        html += run.map((x) => renderContextBlockRow(x.b, x.idx)).join("");
+      }}
+      i = j;
+    }}
+    return html;
+  }}
+
+  function renderCtxLegend(timeline) {{
+    const counts = {{}};
+    timeline.forEach((b) => {{ counts[b.category] = (counts[b.category] || 0) + 1; }});
+    const present = CTX_CATEGORIES.filter(([key]) => counts[key]);
+    const swatches = present.map(([key, name]) => {{
+      const off = ctxHiddenCats.has(key) ? " off" : "";
+      return '<span class="' + off.trim() + '" onclick="toggleCtxCategory(\\'' + key + '\\')" '
+        + 'title="' + counts[key] + ' block(s) &mdash; click to ' + (off ? 'show' : 'hide') + '">'
+        + '<i style="background:' + (CATEGORY_COLORS[key] || 'var(--cat-system)') + ';"></i>' + name + '</span>';
+    }}).join("");
+    return '<div class="ctx-legend">' + swatches
+      + '<span class="legend-actions">'
+      + '<button onclick="ctxFilterAll()">All</button>'
+      + '<button onclick="ctxFilterNone()">None</button>'
+      + '</span></div>';
+  }}
+
+  function renderCtxFilterSummary(timeline) {{
+    const shown = timeline.filter(ctxVisible);
+    if (shown.length === timeline.length) return "";
+    const total = timeline.reduce((s, b) => s + (b.token_estimate || 0), 0) || 1;
+    const shownTok = shown.reduce((s, b) => s + (b.token_estimate || 0), 0);
+    const pct = (shownTok / total * 100).toFixed(1);
+    return '<div class="ctx-filter-summary">Showing ' + shown.length + ' of ' + timeline.length
+      + ' blocks &middot; ' + pct + '% of tokens</div>';
+  }}
+
+  function renderCtxBlocks(timeline) {{
+    // Group the FILTERED blocks by turn_n into collapsible sections.
+    const groups = new Map();
+    timeline.forEach((b, idx) => {{
+      if (!ctxVisible(b)) return;
+      const t = (b.turn_n == null) ? -1 : b.turn_n;
+      if (!groups.has(t)) groups.set(t, []);
+      groups.get(t).push({{ b, idx }});
+    }});
+    if (!groups.size) {{
+      return '<div class="ctx-filter-summary">Every category is hidden. Use "All" above to bring blocks back.</div>';
+    }}
+    const turnKeys = [...groups.keys()].sort((a, b) => a - b);
+    const lastTurn = turnKeys[turnKeys.length - 1];
+    return turnKeys.map((t) => {{
+      const items = groups.get(t);
+      const toks = items.reduce((s, x) => s + (x.b.token_estimate || 0), 0);
+      // Collapse everything except the newest turn by default (or if the
+      // user has toggled it).
+      const collapsed = ctxCollapsedTurns.has(t) || (t !== lastTurn && !ctxCollapsedTurns.has("open:" + t));
+      const heading = (t < 0) ? "Pre-conversation" : ("Turn " + t);
+      return '<div class="turn-group' + (collapsed ? " collapsed" : "") + '" data-turn="' + t + '">'
+        + '<div class="turn-head" onclick="toggleCtxTurn(' + t + ')">'
+        + '<span class="turn-chev">&#9662;</span>'
+        + '<span>' + heading + '</span>'
+        + '<span class="turn-meta">' + items.length + ' block(s) &middot; ' + fmtTokens(toks) + ' tok</span>'
+        + '</div>'
+        + '<div class="turn-body">' + renderBlockSequence(items) + '</div>'
+        + '</div>';
+    }}).join("");
+  }}
+
+  function rerenderCtxView() {{
+    const bar = document.getElementById("ctx-bar-wrap");
+    const legend = document.getElementById("ctx-legend-wrap");
+    const summary = document.getElementById("ctx-summary-wrap");
+    const list = document.getElementById("ctx-block-list");
+    if (bar) bar.innerHTML = renderContextBar(ctxTimeline);
+    if (legend) legend.innerHTML = renderCtxLegend(ctxTimeline);
+    if (summary) summary.innerHTML = renderCtxFilterSummary(ctxTimeline);
+    if (list) list.innerHTML = renderCtxBlocks(ctxTimeline);
+  }}
+
+  function toggleCtxCategory(key) {{
+    if (ctxHiddenCats.has(key)) ctxHiddenCats.delete(key);
+    else ctxHiddenCats.add(key);
+    saveHiddenCats(ctxHiddenCats);
+    rerenderCtxView();
+  }}
+  function ctxFilterAll() {{ ctxHiddenCats.clear(); saveHiddenCats(ctxHiddenCats); rerenderCtxView(); }}
+  function ctxFilterNone() {{
+    ctxHiddenCats = new Set(CTX_CATEGORIES.map(([k]) => k));
+    saveHiddenCats(ctxHiddenCats);
+    rerenderCtxView();
+  }}
+  function toggleCtxTurn(t) {{
+    // Track both directions explicitly so a turn the user opened stays
+    // open across a re-render, and one they collapsed stays collapsed.
+    if (ctxCollapsedTurns.has(t)) {{
+      ctxCollapsedTurns.delete(t);
+      ctxCollapsedTurns.add("open:" + t);
+    }} else if (ctxCollapsedTurns.has("open:" + t)) {{
+      ctxCollapsedTurns.delete("open:" + t);
+      ctxCollapsedTurns.add(t);
+    }} else {{
+      // was showing (newest turn) -> collapse it
+      ctxCollapsedTurns.add(t);
+    }}
+    rerenderCtxView();
+  }}
+
   function renderContextTab(timeline) {{
     if (!timeline.length) {{
       return '<p class="dash-empty">No context_blocks for this session: record_session was called without the optional field.</p>';
     }}
+    ctxTimeline = timeline;
+    ctxCollapsedTurns.clear();
     return `
       <div class="agent-tabs">
         <span class="agent-tab active">main<span class="a-tok">` + fmtTokens(timeline[timeline.length - 1].cumulative_tokens) + ` tok</span></span>
       </div>
-      <div class="ctx-bar">` + renderContextBar(timeline) + `</div>
-      <div class="ctx-legend">
-        <span><i style="background:var(--cat-system);"></i>system</span>
-        <span><i style="background:var(--cat-tools);"></i>tools</span>
-        <span><i style="background:var(--cat-user);"></i>user</span>
-        <span><i style="background:var(--cat-reasoning);"></i>reasoning</span>
-        <span><i style="background:var(--cat-thinking);"></i>thinking</span>
-        <span><i style="background:var(--cat-toolcall);"></i>tool call</span>
-        <span><i style="background:var(--cat-toolresult);"></i>tool result</span>
-        <span><i style="background:var(--cat-answer);"></i>answer</span>
-      </div>
+      <div class="ctx-bar" id="ctx-bar-wrap">` + renderContextBar(timeline) + `</div>
+      <div id="ctx-legend-wrap">` + renderCtxLegend(timeline) + `</div>
       <div class="section-heading">Context blocks</div>
-      <div class="block-list">` + timeline.map((b, i) => renderContextBlockRow(b, i)).join("") + `</div>
+      <div id="ctx-summary-wrap">` + renderCtxFilterSummary(timeline) + `</div>
+      <div class="block-list" id="ctx-block-list">` + renderCtxBlocks(timeline) + `</div>
     `;
   }}
 
