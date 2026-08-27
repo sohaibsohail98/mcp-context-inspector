@@ -20,11 +20,20 @@ from mcp_server.auth.google import InvalidGoogleToken, verify_credential
 
 
 _PAGE_STYLE = """
+  /* Palette: the warm/tan dark theme this project has always used, kept
+     as the default, plus a real light theme. Dark stays first so a
+     viewer with no preference (and older engines) still gets it. The
+     --cat-* context-window segment colors are shared by the hero demo
+     bar, the dashboard Context Explorer, and its legend, so they are
+     defined once here and only nudged per theme for contrast. The
+     spacing scale (--s-1..--s-6) and type scale (--t-xs..--t-2xl) are
+     new: the page used ad-hoc rem values everywhere before. */
   :root {
     --bg: #17150f; --bg-raised: #1f1c14; --bg-raised-2: #262115; --bg-sunken: #100e0a;
     --border: #322c1f; --border-soft: #241f16;
     --text: #ece5d3; --text-dim: #b0a68b; --text-dimmer: #8a8168;
     --accent: #6cbfa4; --accent-2: #8ba3e0; --accent-dim: #1c2b23;
+    --accent-glow: rgba(108,191,164,0.10);
     --warn: #d9a45c; --warn-dim: #2e2314; --warn-border: #4a3419;
     --ok: #6cbfa4; --ok-dim: #1c2b23;
     --err: #d9737a; --err-dim: #3a1a1c;
@@ -32,8 +41,50 @@ _PAGE_STYLE = """
     --cat-system: #9d9377; --cat-tools: #b0a68b; --cat-user: #ece5d3;
     --cat-reasoning: #6cbfa4; --cat-thinking: #b0a68b; --cat-toolcall: #d9a45c;
     --cat-toolresult: #6cbfa4; --cat-answer: #8ba3e0;
+    --code-bg: #100e0a; --code-text: #8ba99a; --code-inline-bg: #1a160e;
     --shadow: 0 1px 3px rgba(0,0,0,0.4), 0 12px 30px -16px rgba(0,0,0,0.6);
     --radius: 16px; --radius-sm: 10px;
+    --s-1: 0.375rem; --s-2: 0.625rem; --s-3: 1rem; --s-4: 1.5rem; --s-5: 2.25rem; --s-6: 3.5rem;
+    --t-xs: 0.78rem; --t-sm: 0.88rem; --t-md: 1rem; --t-lg: 1.28rem; --t-xl: 1.65rem;
+    --t-2xl: clamp(2rem, 5vw, 2.9rem);
+  }
+  /* Light theme: same warm hue family, paper-white ground. Applied when
+     the OS asks for light and the viewer has not forced dark. */
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #faf7ef; --bg-raised: #ffffff; --bg-raised-2: #f4efe2; --bg-sunken: #f0eadb;
+      --border: #e2d9c4; --border-soft: #ece4d3;
+      --text: #2b2617; --text-dim: #6b6350; --text-dimmer: #918872;
+      --accent: #2f9c7f; --accent-2: #5c78c9; --accent-dim: #e2f1ec;
+      --accent-glow: rgba(47,156,127,0.10);
+      --warn: #b9782e; --warn-dim: #f7eddc; --warn-border: #e6cfa6;
+      --ok: #2f9c7f; --ok-dim: #e2f1ec;
+      --err: #c0484f; --err-dim: #f7e4e5;
+      --thinking: #8a7f63; --thinking-dim: #efe9db;
+      --cat-system: #8a7f63; --cat-tools: #b09a6a; --cat-user: #cdbf9f;
+      --cat-reasoning: #2f9c7f; --cat-thinking: #b09a6a; --cat-toolcall: #b9782e;
+      --cat-toolresult: #2f9c7f; --cat-answer: #5c78c9;
+      --code-bg: #f4efe2; --code-text: #3f6f5e; --code-inline-bg: #f0eadb;
+      --shadow: 0 1px 2px rgba(43,38,23,0.06), 0 14px 34px -20px rgba(43,38,23,0.18);
+    }
+  }
+  /* Explicit override wins in both directions (the app has no toggle
+     today, but data-theme is respected if one is ever added). */
+  :root[data-theme="light"] {
+    --bg: #faf7ef; --bg-raised: #ffffff; --bg-raised-2: #f4efe2; --bg-sunken: #f0eadb;
+    --border: #e2d9c4; --border-soft: #ece4d3;
+    --text: #2b2617; --text-dim: #6b6350; --text-dimmer: #918872;
+    --accent: #2f9c7f; --accent-2: #5c78c9; --accent-dim: #e2f1ec;
+    --accent-glow: rgba(47,156,127,0.10);
+    --warn: #b9782e; --warn-dim: #f7eddc; --warn-border: #e6cfa6;
+    --ok: #2f9c7f; --ok-dim: #e2f1ec;
+    --err: #c0484f; --err-dim: #f7e4e5;
+    --thinking: #8a7f63; --thinking-dim: #efe9db;
+    --cat-system: #8a7f63; --cat-tools: #b09a6a; --cat-user: #cdbf9f;
+    --cat-reasoning: #2f9c7f; --cat-thinking: #b09a6a; --cat-toolcall: #b9782e;
+    --cat-toolresult: #2f9c7f; --cat-answer: #5c78c9;
+    --code-bg: #f4efe2; --code-text: #3f6f5e; --code-inline-bg: #f0eadb;
+    --shadow: 0 1px 2px rgba(43,38,23,0.06), 0 14px 34px -20px rgba(43,38,23,0.18);
   }
   * { box-sizing: border-box; }
   html { background: var(--bg); }
@@ -41,7 +92,7 @@ _PAGE_STYLE = """
     font-family: Archivo, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     min-height: 100vh;
     background:
-      radial-gradient(1200px 480px at 50% -10%, rgba(108,191,164,0.08), transparent 60%),
+      radial-gradient(1200px 520px at 50% -12%, var(--accent-glow), transparent 62%),
       var(--bg);
     color: var(--text); line-height: 1.6; -webkit-font-smoothing: antialiased;
   }
@@ -56,7 +107,7 @@ _PAGE_STYLE = """
     width: 2.1rem; height: 2.1rem; border-radius: 9px; flex-shrink: 0;
     background: linear-gradient(155deg, var(--accent), var(--accent-2));
     color: #12100a; font-size: 1.05rem; font-weight: 700;
-    box-shadow: 0 4px 16px -4px rgba(53,224,200,0.45);
+    box-shadow: 0 4px 16px -4px color-mix(in srgb, var(--accent) 45%, transparent);
   }
   h1 {
     font-size: 1.55rem; margin: 0; letter-spacing: -0.015em; font-weight: 650;
@@ -69,7 +120,7 @@ _PAGE_STYLE = """
     box-shadow: var(--shadow);
   }
   .card.security { border-color: var(--warn-border); background: linear-gradient(180deg, var(--warn-dim), var(--bg-raised) 60%); }
-  .card.accent { border-color: rgba(53,224,200,0.28); background: linear-gradient(165deg, var(--accent-dim), var(--bg-raised) 65%); }
+  .card.accent { border-color: color-mix(in srgb, var(--accent) 30%, transparent); background: linear-gradient(165deg, var(--accent-dim), var(--bg-raised) 65%); }
   .card-hint { margin-top: 0; color: var(--text-dim); font-size: 0.88rem; }
   ul.features { list-style: none; padding-left: 0; margin: 0.9rem 0 0; display: grid; gap: 0.75rem; }
   ul.features li { position: relative; padding-left: 1.3rem; font-size: 0.94rem; color: var(--text); }
@@ -78,10 +129,10 @@ _PAGE_STYLE = """
     background: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim);
   }
   code, pre {
-    background: #100e0a; border: 1px solid var(--border-soft); border-radius: 8px;
-    color: #8ba99a; font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    background: var(--code-bg); border: 1px solid var(--border-soft); border-radius: 8px;
+    color: var(--code-text); font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
   }
-  code { padding: 0.18rem 0.5rem; font-size: 0.85em; border-width: 0; background: #1a160e; }
+  code { padding: 0.18rem 0.5rem; font-size: 0.85em; border-width: 0; background: var(--code-inline-bg); }
   pre { padding: 1rem 1.1rem; overflow-x: auto; font-size: 0.8rem; white-space: pre-wrap; word-break: break-all; }
   a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
@@ -97,7 +148,7 @@ _PAGE_STYLE = """
     border: 1px solid var(--border); border-radius: 12px; padding: 0.85rem 1.1rem;
     margin: 0.6rem 0; background: var(--bg-raised); transition: border-color 0.15s ease;
   }
-  details:hover { border-color: #47402c; }
+  details:hover { border-color: var(--text-dimmer); }
   details summary {
     cursor: pointer; font-size: 0.9rem; color: var(--text-dim); font-weight: 500;
     list-style: none; display: flex; align-items: center; gap: 0.6rem;
@@ -157,7 +208,7 @@ _PAGE_STYLE = """
   .btn-primary { border: none; background: linear-gradient(155deg, var(--accent), var(--accent-2)); color: #12100a; }
   .btn-primary:hover { filter: brightness(1.08); }
   .btn-secondary { border: 1px solid var(--border); background: transparent; color: var(--text-dim); font-weight: 500; }
-  .btn-secondary:hover { border-color: #47402c; color: var(--text); }
+  .btn-secondary:hover { border-color: var(--text-dimmer); color: var(--text); }
   .success-banner { display: flex; align-items: center; gap: 0.9rem; margin-bottom: 1.5rem; }
   .success-banner .icon-circle { width: 2.7rem; height: 2.7rem; font-size: 1.15rem; }
   .success-banner h2 { margin: 0; font-size: 1.05rem; font-weight: 650; }
@@ -169,7 +220,7 @@ _PAGE_STYLE = """
   .kv-row:last-child { border-bottom: none; }
   .kv-label { font-size: 0.78rem; color: var(--text-dim); flex-shrink: 0; }
   .kv-value {
-    font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.78rem; color: #8ba99a;
+    font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.78rem; color: var(--code-text);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; text-align: right;
   }
   .tab-row { display: flex; gap: 0.4rem; flex-wrap: wrap; }
@@ -177,8 +228,8 @@ _PAGE_STYLE = """
     padding: 0.4rem 0.8rem; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-raised-2);
     color: var(--text-dim); font-size: 0.8rem; font-weight: 500; cursor: pointer; transition: all 0.15s ease;
   }
-  .tab-btn:hover { border-color: #47402c; color: var(--text); }
-  .tab-btn.active { background: var(--accent-dim); border-color: rgba(53,224,200,0.35); color: var(--accent); }
+  .tab-btn:hover { border-color: var(--text-dimmer); color: var(--text); }
+  .tab-btn.active { background: var(--accent-dim); border-color: color-mix(in srgb, var(--accent) 38%, transparent); color: var(--accent); }
   .tab-panel { display: none; margin-top: 1rem; }
   .tab-panel.active { display: block; }
   .otel-optin { margin-top: 0.9rem; padding: 0.8rem; border: 1px solid var(--warn-border); background: var(--warn-dim); border-radius: 8px; }
@@ -187,35 +238,45 @@ _PAGE_STYLE = """
      live-feeling recreation of the real Context Explorer bar + KPI
      tiles) rather than words about the product, mirroring the actual
      dashboard's own color semantics so the pitch and the product agree
-     with each other on sight. */
+     with each other on sight. The 2026 restyle keeps that idea and
+     tightens it to one vertical rhythm: kicker, headline, one-line
+     subhead, the live proof card, then a single primary CTA. Section
+     gaps run on the --s-* scale so the fold stays calm. */
+  .hero { padding-top: 0.5rem; }
   .ctxwindow-kicker {
-    display: inline-flex; align-items: center; gap: 0.5rem; font-size: 0.76rem; font-weight: 600;
-    color: var(--accent); letter-spacing: 0.03em; background: var(--accent-dim); padding: 0.32rem 0.8rem;
-    border-radius: 999px; margin-bottom: 1.3rem;
+    display: inline-flex; align-items: center; gap: 0.5rem; font-size: var(--t-xs); font-weight: 600;
+    color: var(--accent); letter-spacing: 0.02em; background: var(--accent-dim);
+    border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+    padding: 0.34rem 0.85rem; border-radius: 999px; margin-bottom: var(--s-4);
   }
   .ctxwindow-kicker .pulse { width: 6px; height: 6px; border-radius: 999px; background: var(--accent); display: inline-block; animation: ctxwindow-pulse 1.8s infinite; }
   @keyframes ctxwindow-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
   @media (prefers-reduced-motion: reduce) { .ctxwindow-kicker .pulse { animation: none; } }
   .ctxwindow-h1 {
-    font-size: clamp(1.75rem, 4.4vw, 2.35rem); font-weight: 700; letter-spacing: -0.015em;
-    line-height: 1.18; margin: 0 0 1rem; text-wrap: balance; max-width: 20ch;
+    font-size: var(--t-2xl); font-weight: 700; letter-spacing: -0.02em;
+    line-height: 1.12; margin: 0 0 var(--s-3); text-wrap: balance; max-width: 15ch;
   }
-  .ctxwindow-accent { color: var(--accent); }
-  .ctxwindow-sub { font-size: 1rem; color: var(--text-dim); max-width: 46ch; margin: 0 0 2rem; line-height: 1.65; }
+  .ctxwindow-accent {
+    color: var(--accent);
+    background: linear-gradient(120deg, var(--accent), var(--accent-2));
+    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .ctxwindow-sub { font-size: var(--t-md); color: var(--text-dim); max-width: 52ch; margin: 0 0 var(--s-4); line-height: 1.6; }
 
   .ctxwindow-demo {
     border: 1px solid var(--border); border-radius: 14px; background: var(--bg-raised);
-    box-shadow: var(--shadow); overflow: hidden; margin: 0 0 1.4rem;
+    box-shadow: var(--shadow); overflow: hidden; margin: 0 0 var(--s-4);
   }
   .ctxwindow-demo-head {
     display: flex; align-items: center; gap: 0.6rem; padding: 0.75rem 1rem; border-bottom: 1px solid var(--border-soft);
-    font-size: 0.76rem; color: var(--text-dimmer);
+    font-size: var(--t-xs); color: var(--text-dimmer);
   }
   .ctxwindow-dots { display: flex; gap: 0.35rem; }
   .ctxwindow-dots span { width: 7px; height: 7px; border-radius: 999px; background: var(--bg-raised-2); display: block; }
   .ctxwindow-demo-body { padding: 1.2rem 1.3rem 1.4rem; }
-  .ctxwindow-demo-bar { display: flex; height: 24px; width: 100%; border-radius: 7px; overflow: hidden; margin-bottom: 0.9rem; }
-  .ctxwindow-demo-legend { display: flex; flex-wrap: wrap; gap: 0.7rem 1.1rem; font-size: 0.74rem; color: var(--text-dim); margin-bottom: 1.1rem; }
+  .ctxwindow-demo-bar { display: flex; height: 26px; width: 100%; border-radius: 7px; overflow: hidden; margin-bottom: 0.9rem; }
+  .ctxwindow-demo-bar > div { transition: width 0.2s linear; }
+  .ctxwindow-demo-legend { display: flex; flex-wrap: wrap; gap: 0.55rem 1.1rem; font-size: 0.74rem; color: var(--text-dim); margin-bottom: 1.1rem; }
   .ctxwindow-demo-legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
   .ctxwindow-demo-legend i { width: 7px; height: 7px; border-radius: 999px; display: inline-block; }
   .ctxwindow-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.6rem; }
@@ -224,11 +285,47 @@ _PAGE_STYLE = """
   .ctxwindow-kpi .k-value { font-weight: 650; font-size: 0.98rem; font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace; }
   @media (max-width: 480px) { .ctxwindow-kpis { grid-template-columns: repeat(2, 1fr); } }
 
-  .byline { text-align: center; font-size: 0.82rem; color: var(--text-dimmer); margin: 2rem 0 0; }
+  /* Section rhythm below the hero. A thin heading kicker + generous top
+     margin gives each block its own air without a hard divider. */
+  .section { margin-top: var(--s-6); }
+  .section-kicker {
+    font-family: Archivo, sans-serif; font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.09em; color: var(--text-dimmer); margin: 0 0 var(--s-3);
+  }
+
+  /* "What you get": a 3-item feature block, inline-SVG glyphs, no
+     external assets. One accent color, hairline cards, hover lift. */
+  .feature-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.85rem; }
+  @media (max-width: 620px) { .feature-grid { grid-template-columns: 1fr; } }
+  .feature {
+    border: 1px solid var(--border); background: var(--bg-raised); border-radius: var(--radius-sm);
+    padding: 1.1rem 1.15rem 1.2rem; transition: border-color 0.15s ease, transform 0.15s ease;
+  }
+  .feature:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); transform: translateY(-2px); }
+  .feature-icon {
+    width: 2rem; height: 2rem; border-radius: 8px; display: flex; align-items: center; justify-content: center;
+    background: var(--accent-dim); color: var(--accent); margin-bottom: 0.75rem;
+  }
+  .feature-icon svg { width: 1.05rem; height: 1.05rem; fill: none; stroke: currentColor; stroke-width: 1.8; }
+  .feature h4 { font-family: "Source Serif 4", Georgia, serif; font-size: 0.98rem; font-weight: 650; margin: 0 0 0.35rem; color: var(--text); }
+  .feature p { font-size: 0.85rem; color: var(--text-dim); line-height: 1.55; margin: 0; }
+
+  /* Primary CTA that carries the hero: full-width call to sign in, with
+     the real Google button mounted directly under it. */
+  .cta-card {
+    border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
+    background: linear-gradient(165deg, var(--accent-dim), var(--bg-raised) 70%);
+    border-radius: var(--radius); padding: 1.5rem 1.6rem; margin-top: var(--s-5);
+    box-shadow: var(--shadow);
+  }
+  .cta-card h3 { margin: 0 0 0.3rem; }
+  .cta-card p { margin: 0 0 1rem; color: var(--text-dim); font-size: 0.9rem; }
+
+  .byline { text-align: center; font-size: 0.82rem; color: var(--text-dimmer); margin: var(--s-5) 0 0; }
   .byline a { color: var(--text-dim); }
   .compat-strip {
-    display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin: 1.1rem 0 1.6rem;
-    font-size: 0.78rem; color: var(--text-dimmer);
+    display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin: var(--s-4) 0 0;
+    font-size: var(--t-xs); color: var(--text-dimmer);
   }
   .compat-chip {
     border: 1px solid var(--border); border-radius: 999px; padding: 0.28rem 0.7rem;
@@ -482,10 +579,18 @@ async def auth_login(request: Request):
             '<script src="/demo-static/demo_transition.js"></script>'
             '<script src="/demo-static/demo_reveal.js"></script>'
         )
-    intro = """
-<div class="ctxwindow-kicker"><span class="pulse"></span> updates automatically as you work</div>
-<h1 class="ctxwindow-h1">Watch your agent's <span class="ctxwindow-accent">context window</span> fill up as you work.</h1>
-<p class="ctxwindow-sub">Every token that entered the model, in the order it loaded: system prompt, tool specs, injected reminders, tool results. Not a summary, the real breakdown, against real cost, over a real MCP connection. No rewritten agent loop, no wrapper.</p>
+    # The landing hero is split at the primary CTA: intro_hero is the
+    # above-the-fold pitch + live proof card, intro_rest is everything
+    # below the sign-in call to action. auth_login composes them with the
+    # real Google button between; the no-client-id 503 branch just
+    # concatenates the two with no button. Both halves are plain strings
+    # (no interpolation), so the f-string escaping stays confined to the
+    # route body.
+    intro_hero = """
+<div class="hero">
+<div class="ctxwindow-kicker"><span class="pulse"></span> live, updates as your agent works</div>
+<h1 class="ctxwindow-h1">See what's really in your agent's <span class="ctxwindow-accent">context window</span>.</h1>
+<p class="ctxwindow-sub">Every token that entered the model, in load order: system prompt, tool specs, injected reminders, tool results. Not a summary, the real breakdown, against real cost, over a real MCP connection. No rewritten agent loop, no wrapper.</p>
 
 <div class="ctxwindow-demo" id="ctxwindow-demo">
   <div class="ctxwindow-demo-head">
@@ -526,16 +631,32 @@ async def auth_login(request: Request):
   <span class="compat-chip">Bedrock agents</span>
   <span class="compat-chip">GitHub Copilot</span>
 </div>
-
-<div class="card">
-  <h3>What this gives your agent</h3>
-  <ul class="features">
-    <li>Real per-session cost, token, and tool-call metrics: 8 MCP tools, 7 read-only</li>
-    <li>The <strong>Context Window Explorer</strong>: exactly what entered the model's context window, block by block, with honest token estimates</li>
-    <li>Your own data, isolated from anyone else connected to this server. Sign in below and everything you record or query is scoped to your account</li>
-  </ul>
+</div>
+"""
+    intro_rest = """
+<div class="section">
+  <p class="section-kicker">What you get</p>
+  <div class="feature-grid">
+    <div class="feature">
+      <div class="feature-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg></div>
+      <h4>Real-time cost &amp; token metrics</h4>
+      <p>Per-session tokens, cache-hit rate, and dollar cost, updated within seconds of each turn. Eight MCP tools, seven read-only.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="4" rx="1"/><rect x="3" y="10" width="12" height="4" rx="1"/><rect x="3" y="16" width="16" height="4" rx="1"/></svg></div>
+      <h4>Full Context Window Explorer</h4>
+      <p>Exactly what entered the model's context window, block by block, in load order, with honest token estimates for every segment.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3v6a6 6 0 0 0 12 0V3"/><path d="M6 21v-6a6 6 0 0 1 12 0v6"/><path d="M4 3h16M4 21h16"/></svg></div>
+      <h4>Over a real MCP handshake</h4>
+      <p>Your agent connects with a genuine Model Context Protocol handshake and streams its own telemetry. Nothing mocked, no fake data.</p>
+    </div>
+  </div>
 </div>
 
+<div class="section">
+  <p class="section-kicker">Trust &amp; privacy</p>
 <div class="card trust-card">
   <h3>What CtxWindow stores, and what it never sees</h3>
   <p class="card-hint" style="margin-bottom:0.6rem;">Sign-in mints a bearer token tied to your Google account; CtxWindow never sees your Google password.
@@ -563,6 +684,7 @@ async def auth_login(request: Request):
   the same way, you only ever see, list, or query sessions you recorded. Even guessing another
   person's session ID reads back as "not found," identical to one that never existed.</p>
 </details>
+</div>
 
 <p class="byline">Built by <a href="https://github.com/sohaibsohail98" target="_blank" rel="noopener">@sohaibsohail98</a> &middot;
 <a href="https://github.com/sohaibsohail98/mcp-context-inspector" target="_blank" rel="noopener">source on GitHub</a></p>
@@ -619,10 +741,14 @@ async def auth_login(request: Request):
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&family=Archivo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
 <style>{_PAGE_STYLE}</style></head>
-<body>{landing_topbar}{intro}
+<body>{landing_topbar}
+<div class="narrow-page">
+{intro_hero}
 <div class="card security">
   <p>Google sign-in isn't configured on this server. <code>GOOGLE_OAUTH_CLIENT_ID</code>
   isn't set. Ask whoever's running it to set that up, or use the owner's shared token instead.</p>
+</div>
+{intro_rest}
 </div>
 </body></html>""", status_code=503)
 
@@ -635,13 +761,14 @@ async def auth_login(request: Request):
 </head><body>
 {landing_topbar}
 <div class="narrow-page">
-<div id="intro">{intro}
-<div class="card">
-  <h3>Sign in to get your token</h3>
-  <p style="margin-top:0; color: var(--text-dim); font-size: 0.9rem;">One click, no password, no account to create here.</p>
+<div id="intro">{intro_hero}
+<div class="cta-card">
+  <h3>Get your token and connect</h3>
+  <p>One click, no password, and no account to create here. Sign in with Google and your token, dashboard, and setup command are ready on the next screen.</p>
   <div id="g_id_onload" data-client_id="{client_id}" data-callback="onSignIn"></div>
-  <div class="g_id_signin" data-type="standard" data-theme="filled_black"></div>
+  <div class="g_id_signin" data-type="standard" data-theme="filled_black" data-size="large" data-shape="pill"></div>
 </div>
+{intro_rest}
 </div>
 <div id="landing" class="hidden"></div>
 </div>
