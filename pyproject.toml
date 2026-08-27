@@ -15,7 +15,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "ruff"]
+# playwright is demo-capture and CI only (see scripts/demo_capture.py),
+# never imported by the running server, so it stays out of the main
+# dependency list; ffmpeg is a separate system binary, not a Python
+# package, so it isn't listed here at all.
+dev = ["pytest", "ruff", "playwright"]
 
 [tool.ruff]
 line-length = 120

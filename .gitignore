@@ -30,3 +30,9 @@ data/mcp_auth.db
 
 # Wrangler local cache/state — regenerated per machine, not shipped
 cloudflare-proxy/.wrangler/
+
+# Demo capture build artefacts (see scripts/demo_capture.py, Makefile's
+# demo target), regenerated on demand, not shipped as source.
+docs/demo.mp4
+docs/demo.gif
+docs/_raw/
