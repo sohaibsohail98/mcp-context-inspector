@@ -17,6 +17,7 @@ _backend = os.environ.get("STORAGE_BACKEND", "sqlite")
 if _backend == "dynamodb":
     from mcp_server.auth.store_dynamodb import (
         get_oauth_client,
+        get_or_create_device_token,
         get_or_create_token,
         get_sub_for_token,
         is_valid_token,
@@ -24,6 +25,7 @@ if _backend == "dynamodb":
         issue_oauth_code,
         list_oauth_clients,
         list_oauth_tokens,
+        list_tokens,
         list_users,
         mint_oauth_token,
         redeem_install_code,
@@ -32,10 +34,13 @@ if _backend == "dynamodb":
         revoke,
         revoke_oauth_client,
         revoke_oauth_token,
+        revoke_token,
+        touch_token,
     )
 elif _backend == "firestore":
     from mcp_server.auth.store_firestore import (
         get_oauth_client,
+        get_or_create_device_token,
         get_or_create_token,
         get_sub_for_token,
         is_valid_token,
@@ -43,6 +48,7 @@ elif _backend == "firestore":
         issue_oauth_code,
         list_oauth_clients,
         list_oauth_tokens,
+        list_tokens,
         list_users,
         mint_oauth_token,
         redeem_install_code,
@@ -51,10 +57,13 @@ elif _backend == "firestore":
         revoke,
         revoke_oauth_client,
         revoke_oauth_token,
+        revoke_token,
+        touch_token,
     )
 else:
     from mcp_server.auth.store_sqlite import (
         get_oauth_client,
+        get_or_create_device_token,
         get_or_create_token,
         get_sub_for_token,
         is_valid_token,
@@ -62,6 +71,7 @@ else:
         issue_oauth_code,
         list_oauth_clients,
         list_oauth_tokens,
+        list_tokens,
         list_users,
         mint_oauth_token,
         redeem_install_code,
@@ -70,10 +80,13 @@ else:
         revoke,
         revoke_oauth_client,
         revoke_oauth_token,
+        revoke_token,
+        touch_token,
     )
 
 __all__ = [
     "get_oauth_client",
+    "get_or_create_device_token",
     "get_or_create_token",
     "get_sub_for_token",
     "is_valid_token",
@@ -81,6 +94,7 @@ __all__ = [
     "issue_oauth_code",
     "list_oauth_clients",
     "list_oauth_tokens",
+    "list_tokens",
     "list_users",
     "mint_oauth_token",
     "redeem_install_code",
@@ -89,4 +103,6 @@ __all__ = [
     "revoke",
     "revoke_oauth_client",
     "revoke_oauth_token",
+    "revoke_token",
+    "touch_token",
 ]

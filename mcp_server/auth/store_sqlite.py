@@ -24,8 +24,17 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from mcp_server import local_setup
+from mcp_server.auth.device_label import UNKNOWN_DEVICE, label_for_user_agent
 
 DB_PATH = Path(__file__).parent.parent / "data" / "mcp_auth.db"
+
+# last_seen_at is only rewritten when it's older than this, so a busy
+# token doesn't cause a DB write on every single authenticated request.
+# An hour is precise enough for a "last seen" column a human reads in a
+# device list, and keeps write amplification identical across all three
+# backends (Firestore/DynamoDB would otherwise pay a write per request).
+# See touch_token().
+LAST_SEEN_REFRESH_SECONDS = 3600
 
 _SCHEMA = """
     CREATE TABLE IF NOT EXISTS mcp_users (
@@ -33,6 +42,34 @@ _SCHEMA = """
         email TEXT,
         token TEXT UNIQUE,
         created_at REAL
+    );
+
+    -- Per-device / per-session sign-in tokens. One row per (google_sub,
+    -- device): signing in from a new browser or a new machine mints a
+    -- fresh row here, so a user can later revoke exactly one device
+    -- ("revoke my work laptop") without touching the others. SEPARATE
+    -- from mcp_users.token, which stays as the single shared account
+    -- token for backwards compatibility (tokens pasted into an MCP
+    -- client config before this table existed still validate via
+    -- mcp_users; they just show as "Unknown device" in the UI since they
+    -- have no row here).
+    --
+    -- token_id (a SHA-256 prefix of the token) is the stable public
+    -- handle used by list_tokens/revoke_token; the raw token is never
+    -- the id, same reasoning as hashing an OAuth code. device_key is
+    -- SHA-256(google_sub | user_agent): re-signing-in from the same
+    -- browser reuses that device's row and token rather than piling up a
+    -- new token per page load.
+    CREATE TABLE IF NOT EXISTS device_tokens (
+        token TEXT PRIMARY KEY,
+        token_id TEXT UNIQUE,
+        google_sub TEXT,
+        email TEXT,
+        device_key TEXT,
+        label TEXT,
+        created_at REAL,
+        last_seen_at REAL,
+        UNIQUE (google_sub, device_key)
     );
 
     -- OAuth clients registered via POST /oauth/register (RFC 7591 Dynamic
@@ -78,7 +115,17 @@ _SCHEMA = """
         google_sub TEXT,
         email TEXT,
         client_name TEXT,
-        created_at REAL
+        created_at REAL,
+        -- Per-session metadata, mirrored from device_tokens' columns so
+        -- list_tokens() can present connector sessions and direct-sign-in
+        -- devices in one unified list. token_id is a SHA-256 prefix used
+        -- as the public revoke handle; label is User-Agent-derived at
+        -- mint time; last_seen_at is refreshed at most hourly (see
+        -- touch_token). All three are nullable: a token minted before
+        -- these columns existed reads back as "Unknown device".
+        token_id TEXT,
+        label TEXT,
+        last_seen_at REAL
     );
 
     -- One-time install codes: the short-lived code /setup/install's
@@ -102,8 +149,23 @@ def _connect():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.executescript(_SCHEMA)
+    _migrate(conn)
     conn.commit()
     return conn
+
+
+def _migrate(conn):
+    """Additive column backfill for a pre-existing data/mcp_auth.db.
+    `CREATE TABLE IF NOT EXISTS` in _SCHEMA leaves an already-created
+    oauth_tokens untouched, so the per-session metadata columns added
+    for the device list are ADDed here if missing. Cheap (one PRAGMA per
+    connect), a no-op on a fresh DB where _SCHEMA already made the
+    columns. Old rows keep NULL in the new columns and read back as
+    "Unknown device"."""
+    have = {r["name"] for r in conn.execute("PRAGMA table_info(oauth_tokens)")}
+    for col in ("token_id", "label", "last_seen_at"):
+        if col not in have:
+            conn.execute(f"ALTER TABLE oauth_tokens ADD COLUMN {col}")
 
 
 def get_or_create_token(google_sub, email):
@@ -129,14 +191,17 @@ def get_or_create_token(google_sub, email):
 
 
 def is_valid_token(token):
-    """True for either a direct Google-sign-in token (mcp_users) or a
-    token minted through the OAuth flow for a Connector-style client
-    (oauth_tokens). Both are equally valid bearer credentials from the
-    caller's perspective; only their provenance differs."""
+    """True for a direct Google-sign-in token (the shared mcp_users
+    token OR a per-device row in device_tokens) or a token minted
+    through the OAuth flow for a Connector-style client (oauth_tokens).
+    All are equally valid bearer credentials from the caller's
+    perspective; only their provenance differs."""
     conn = _connect()
     row = conn.execute(
-        "SELECT 1 FROM mcp_users WHERE token=? UNION SELECT 1 FROM oauth_tokens WHERE token=?",
-        (token, token),
+        "SELECT 1 FROM mcp_users WHERE token=? "
+        "UNION SELECT 1 FROM device_tokens WHERE token=? "
+        "UNION SELECT 1 FROM oauth_tokens WHERE token=?",
+        (token, token, token),
     ).fetchone()
     conn.close()
     return row is not None
@@ -145,11 +210,13 @@ def is_valid_token(token):
 def get_sub_for_token(token):
     """The google_sub that owns this token, used to attribute data
     (record/filter by owner) to whoever's actually connected, not just to
-    check "is this token valid at all." Checks both mcp_users and
-    oauth_tokens (see is_valid_token). Returns None if the token doesn't
+    check "is this token valid at all." Checks mcp_users, device_tokens
+    and oauth_tokens (see is_valid_token). Returns None if the token doesn't
     belong to any signed-in user (e.g. it's the owner token, or invalid)."""
     conn = _connect()
     row = conn.execute("SELECT google_sub FROM mcp_users WHERE token=?", (token,)).fetchone()
+    if row is None:
+        row = conn.execute("SELECT google_sub FROM device_tokens WHERE token=?", (token,)).fetchone()
     if row is None:
         row = conn.execute("SELECT google_sub FROM oauth_tokens WHERE token=?", (token,)).fetchone()
     conn.close()
@@ -168,13 +235,176 @@ def list_users():
 
 
 def revoke(google_sub):
-    """Deletes a user's token, so they'd need to sign in again to get a
-    new one. No graceful in-place rotation; revocation is intentionally
-    blunt for a personal-scale token store."""
+    """Account-wide revoke: kills EVERY sign-in credential this user has
+    ever minted, so they'd need to sign in again on every device to get
+    new ones. That's the shared mcp_users token, every per-device row in
+    device_tokens, AND every OAuth-issued access token for the sub.
+    Deliberately blunt; revoke_token() is the surgical single-device
+    version. OAuth CLIENT registrations are left alone (they're not
+    credentials, and are shared across users)."""
     conn = _connect()
     conn.execute("DELETE FROM mcp_users WHERE google_sub=?", (google_sub,))
+    conn.execute("DELETE FROM device_tokens WHERE google_sub=?", (google_sub,))
+    conn.execute("DELETE FROM oauth_tokens WHERE google_sub=?", (google_sub,))
     conn.commit()
     conn.close()
+
+
+# --- Per-device / per-session tokens ----------------------------------
+# device_tokens rows are minted at Google sign-in (routes/auth.py's
+# auth_verify); OAuth-flow tokens land in oauth_tokens with the same
+# metadata columns. list_tokens/revoke_token present and act on both as
+# one list, always scoped by google_sub so a user can only ever see or
+# revoke their own.
+
+
+def _token_id(token):
+    """Stable public handle for a token: a SHA-256 hex prefix. Never the
+    raw token (this value appears in URLs, logs, and the dashboard DOM),
+    long enough that a collision across one account's handful of devices
+    is not a practical concern."""
+    return hashlib.sha256(token.encode()).hexdigest()[:16]
+
+
+def get_or_create_device_token(google_sub, email, user_agent):
+    """Returns a per-device sign-in token for (google_sub, this device),
+    minting one on first sign-in from that device. "Device" is keyed on
+    SHA-256(google_sub | user_agent): re-signing-in from the same
+    browser/CLI returns the SAME token (so a config already pasted
+    elsewhere isn't invalidated by a page reload), a new User-Agent gets
+    its own token and its own row in the device list.
+
+    Atomic upsert on the (google_sub, device_key) unique constraint,
+    same race reasoning as get_or_create_token: two concurrent
+    first-time sign-ins from one device both try to INSERT, the loser's
+    ON CONFLICT DO UPDATE is a harmless no-op, and the final SELECT
+    returns the winning token."""
+    device_key = hashlib.sha256(f"{google_sub}|{user_agent or ''}".encode()).hexdigest()
+    label = label_for_user_agent(user_agent)
+    new_token = secrets.token_urlsafe(32)
+    now = time.time()
+    conn = _connect()
+    conn.execute(
+        "INSERT INTO device_tokens "
+        "(token, token_id, google_sub, email, device_key, label, created_at, last_seen_at) "
+        "VALUES (?,?,?,?,?,?,?,?) "
+        "ON CONFLICT(google_sub, device_key) DO UPDATE SET email=excluded.email, last_seen_at=excluded.last_seen_at",
+        (new_token, _token_id(new_token), google_sub, email, device_key, label, now, now),
+    )
+    conn.commit()
+    row = conn.execute(
+        "SELECT token FROM device_tokens WHERE google_sub=? AND device_key=?", (google_sub, device_key)
+    ).fetchone()
+    conn.close()
+    return row["token"]
+
+
+def touch_token(token):
+    """Best-effort refresh of last_seen_at for whichever device/OAuth
+    token this is. Called on the successful-auth path, so it's
+    rate-limited: the write only happens when the stored last_seen_at is
+    already more than LAST_SEEN_REFRESH_SECONDS old. A no-op for the
+    shared mcp_users token and the owner token (neither has a
+    last_seen_at column / row). Never raises: a failed touch must not
+    fail the request it's decorating."""
+    now = time.time()
+    cutoff = now - LAST_SEEN_REFRESH_SECONDS
+    try:
+        conn = _connect()
+        conn.execute(
+            "UPDATE device_tokens SET last_seen_at=? "
+            "WHERE token=? AND (last_seen_at IS NULL OR last_seen_at < ?)",
+            (now, token, cutoff),
+        )
+        conn.execute(
+            "UPDATE oauth_tokens SET last_seen_at=? "
+            "WHERE token=? AND (last_seen_at IS NULL OR last_seen_at < ?)",
+            (now, token, cutoff),
+        )
+        conn.commit()
+        conn.close()
+    except sqlite3.Error:
+        pass
+
+
+def list_tokens(google_sub, current_token=None):
+    """Every active sign-in/session token for this account, newest
+    first: the per-device sign-in tokens (device_tokens) and the
+    connector sessions (oauth_tokens), as one unified list. Each entry:
+    {token_id, label, created_at, last_seen_at, is_current, kind}. Never
+    returns a raw token. is_current marks the row matching current_token
+    (the token the caller is holding right now), so the UI can label
+    "This device" and refuse to let it revoke itself by accident.
+
+    The shared mcp_users token is intentionally NOT listed: it has no
+    per-device identity to show, and revoking it belongs to the
+    account-wide control, not this list."""
+    current_id = _token_id(current_token) if current_token else None
+    conn = _connect()
+    device_rows = conn.execute(
+        "SELECT token_id, label, created_at, last_seen_at FROM device_tokens "
+        "WHERE google_sub=? ORDER BY created_at DESC",
+        (google_sub,),
+    ).fetchall()
+    oauth_rows = conn.execute(
+        "SELECT token_id, label, client_name, created_at, last_seen_at FROM oauth_tokens "
+        "WHERE google_sub=? ORDER BY created_at DESC",
+        (google_sub,),
+    ).fetchall()
+    conn.close()
+
+    out = []
+    for r in device_rows:
+        out.append(
+            {
+                "token_id": r["token_id"],
+                "label": r["label"] or UNKNOWN_DEVICE,
+                "created_at": r["created_at"],
+                "last_seen_at": r["last_seen_at"],
+                "is_current": current_id is not None and r["token_id"] == current_id,
+                "kind": "device",
+            }
+        )
+    for r in oauth_rows:
+        # A pre-metadata oauth_tokens row has no token_id; fall back to a
+        # freshly derived label so it's still shown (and revocable by the
+        # account-wide control), just unlabelled.
+        label = r["label"] or (f"{r['client_name']} (connector)" if r["client_name"] else UNKNOWN_DEVICE)
+        out.append(
+            {
+                "token_id": r["token_id"],
+                "label": label,
+                "created_at": r["created_at"],
+                "last_seen_at": r["last_seen_at"],
+                "is_current": current_id is not None and r["token_id"] is not None and r["token_id"] == current_id,
+                "kind": "connector",
+            }
+        )
+    return out
+
+
+def revoke_token(google_sub, token_id):
+    """Revoke exactly one device/session token by its public token_id,
+    scoped to google_sub so a user can never revoke someone else's.
+    Idempotent: revoking an already-gone or never-existed token_id is a
+    silent no-op, not an error. Leaves every other token for this
+    account (and every other account) untouched. Returns True if a row
+    was actually deleted, False otherwise (useful for a 404-vs-200
+    decision in the route, though the route treats both as success)."""
+    if not token_id:
+        return False
+    conn = _connect()
+    cur = conn.execute(
+        "DELETE FROM device_tokens WHERE google_sub=? AND token_id=?", (google_sub, token_id)
+    )
+    deleted = cur.rowcount
+    cur = conn.execute(
+        "DELETE FROM oauth_tokens WHERE google_sub=? AND token_id=?", (google_sub, token_id)
+    )
+    deleted += cur.rowcount
+    conn.commit()
+    conn.close()
+    return deleted > 0
 
 
 # --- OAuth 2.1 + PKCE authorization server ------------------------------
@@ -420,18 +650,28 @@ def revoke_oauth_token(token):
     conn.close()
 
 
-def mint_oauth_token(google_sub, email, client_name):
+def mint_oauth_token(google_sub, email, client_name, user_agent=None):
     """A fresh access token for one (user, OAuth client) pair. Deliberately
     not the same token get_or_create_token returns, so disconnecting this
     client later doesn't also invalidate the user's direct MCP client
     config. Always mints a new token, unlike get_or_create_token: a second
     OAuth authorization for the same client is a re-consent, not a replay,
-    and each grant gets its own revocable credential."""
+    and each grant gets its own revocable credential.
+
+    Records the per-session metadata (token_id, User-Agent-derived
+    label, last_seen_at) so this grant shows up in list_tokens() next to
+    the direct-sign-in devices. user_agent is optional and best-effort:
+    the OAuth /oauth/token caller is a server (claude.ai's backend), so
+    the label usually resolves via client_name, not the UA."""
     token = secrets.token_urlsafe(32)
+    now = time.time()
+    ua_label = label_for_user_agent(user_agent)
+    label = ua_label if ua_label != UNKNOWN_DEVICE else (f"{client_name} (connector)" if client_name else UNKNOWN_DEVICE)
     conn = _connect()
     conn.execute(
-        "INSERT INTO oauth_tokens (token, google_sub, email, client_name, created_at) VALUES (?,?,?,?,?)",
-        (token, google_sub, email, client_name, time.time()),
+        "INSERT INTO oauth_tokens (token, token_id, google_sub, email, client_name, label, created_at, last_seen_at) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (token, _token_id(token), google_sub, email, client_name, label, now, now),
     )
     conn.commit()
     conn.close()

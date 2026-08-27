@@ -68,7 +68,7 @@ def isolated_firestore_auth_store():
     prefix = f"test{uuid.uuid4().hex[:8]}_"
     original_collections = {
         name: getattr(auth_store_firestore, name)
-        for name in ("_users", "_clients", "_codes", "_tokens")
+        for name in ("_users", "_clients", "_codes", "_tokens", "_device_tokens")
     }
 
     def _mk(collection_name):
@@ -81,6 +81,7 @@ def isolated_firestore_auth_store():
     auth_store_firestore._clients = _mk("oauth_clients")
     auth_store_firestore._codes = _mk("oauth_codes")
     auth_store_firestore._tokens = _mk("oauth_tokens")
+    auth_store_firestore._device_tokens = _mk("device_tokens")
     try:
         yield auth_store_firestore
     finally:

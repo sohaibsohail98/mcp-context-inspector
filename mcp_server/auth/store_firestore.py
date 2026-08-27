@@ -49,6 +49,14 @@ from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 from mcp_server import local_setup
+from mcp_server.auth.device_label import UNKNOWN_DEVICE, label_for_user_agent
+
+# last_seen_at is only rewritten when it's older than this. On Firestore
+# every touch is a document write, so refreshing on every authenticated
+# request would multiply write cost by request rate for a field a human
+# reads as an approximate "last seen"; an hour's granularity is plenty.
+# Kept identical to the SQLite backend's constant so behaviour matches.
+LAST_SEEN_REFRESH_SECONDS = 3600
 
 _client = None
 
@@ -80,6 +88,10 @@ def _codes():
 
 def _tokens():
     return _db().collection("oauth_tokens")
+
+
+def _device_tokens():
+    return _db().collection("device_tokens")
 
 
 def _install_codes():
@@ -128,15 +140,17 @@ def get_or_create_token(google_sub, email):
 
 
 def is_valid_token(token):
-    """True for either a direct Google-sign-in token (mcp_users, looked
-    up by its `token` field via a query since the doc ID there is
-    google_sub, not the token) or a token minted through the OAuth flow
-    for a Connector-style client (oauth_tokens, looked up by doc ID
-    directly since the token IS the ID there). Both are equally valid
-    bearer credentials from the caller's perspective; only their
-    provenance differs."""
+    """True for a direct Google-sign-in token (the shared mcp_users
+    token, looked up by its `token` field via a query since the doc ID
+    there is google_sub; OR a per-device row in device_tokens, keyed by
+    the token itself) or a token minted through the OAuth flow for a
+    Connector-style client (oauth_tokens, also keyed by the token). All
+    are equally valid bearer credentials from the caller's perspective;
+    only their provenance differs."""
     matches = list(_users().where(filter=FieldFilter("token", "==", token)).limit(1).stream())
     if matches:
+        return True
+    if _device_tokens().document(token).get().exists:
         return True
     return _tokens().document(token).get().exists
 
@@ -150,6 +164,9 @@ def get_sub_for_token(token):
     matches = list(_users().where(filter=FieldFilter("token", "==", token)).limit(1).stream())
     if matches:
         return matches[0].id  # doc ID IS google_sub in mcp_users
+    snapshot = _device_tokens().document(token).get()
+    if snapshot.exists:
+        return snapshot.to_dict()["google_sub"]
     snapshot = _tokens().document(token).get()
     return snapshot.to_dict()["google_sub"] if snapshot.exists else None
 
@@ -162,10 +179,156 @@ def list_users():
 
 
 def revoke(google_sub):
-    """Deletes a user's token, so they'd need to sign in again to get a
-    new one. No graceful in-place rotation; revocation is intentionally
-    blunt for a personal-scale token store."""
+    """Account-wide revoke: kills EVERY sign-in credential this user has
+    minted, matching the SQLite backend. That's the shared mcp_users
+    doc, every per-device doc in device_tokens, and every OAuth-issued
+    access token for the sub. revoke_token() is the single-device
+    version. OAuth client registrations are left alone."""
     _users().document(google_sub).delete()
+    for d in _device_tokens().where(filter=FieldFilter("google_sub", "==", google_sub)).stream():
+        d.reference.delete()
+    for d in _tokens().where(filter=FieldFilter("google_sub", "==", google_sub)).stream():
+        d.reference.delete()
+
+
+# --- Per-device / per-session tokens ----------------------------------
+
+
+def _token_id(token):
+    """Stable public handle for a token: a SHA-256 hex prefix, never the
+    raw token (it appears in URLs / logs / the dashboard DOM)."""
+    return hashlib.sha256(token.encode()).hexdigest()[:16]
+
+
+def get_or_create_device_token(google_sub, email, user_agent):
+    """Per-device sign-in token for (google_sub, this device), minting
+    one on first sign-in from that device and returning the existing one
+    on repeat sign-ins from the same User-Agent. Same contract as the
+    SQLite backend.
+
+    "Device" is a deterministic doc ID: <google_sub>:<sha256(UA)[:16]>,
+    so the get-or-create is a single transactional read+write on one
+    document (Firestore serialises concurrent transactions on the same
+    doc, so a first-sign-in race resolves to one winning token, same as
+    SQLite's ON CONFLICT)."""
+    ua = user_agent or ""
+    device_hash = hashlib.sha256(ua.encode()).hexdigest()[:16]
+    doc_id = f"{google_sub}:{device_hash}"
+    doc_ref = _device_tokens().document(doc_id)
+    label = label_for_user_agent(user_agent)
+    new_token = secrets.token_urlsafe(32)
+    now = time.time()
+
+    @firestore.transactional
+    def _txn(transaction):
+        snapshot = doc_ref.get(transaction=transaction)
+        if snapshot.exists:
+            existing = snapshot.to_dict()
+            updates = {}
+            if existing.get("email") != email:
+                updates["email"] = email
+            if updates:
+                transaction.update(doc_ref, updates)
+            return existing["token"]
+        transaction.set(
+            doc_ref,
+            {
+                "token": new_token,
+                "token_id": _token_id(new_token),
+                "google_sub": google_sub,
+                "email": email,
+                "device_key": device_hash,
+                "label": label,
+                "created_at": now,
+                "last_seen_at": now,
+            },
+        )
+        return new_token
+
+    transaction = _db().transaction()
+    return _txn(transaction)
+
+
+def touch_token(token):
+    """Best-effort hourly refresh of last_seen_at for a device/OAuth
+    token. Skips the write when the stored value is newer than
+    LAST_SEEN_REFRESH_SECONDS. Never raises."""
+    now = time.time()
+    cutoff = now - LAST_SEEN_REFRESH_SECONDS
+    try:
+        snap = _device_tokens().document(token).get()
+        if snap.exists:
+            if (snap.to_dict().get("last_seen_at") or 0) < cutoff:
+                snap.reference.update({"last_seen_at": now})
+            return
+        snap = _tokens().document(token).get()
+        if snap.exists and (snap.to_dict().get("last_seen_at") or 0) < cutoff:
+            snap.reference.update({"last_seen_at": now})
+    except Exception:  # noqa: BLE001, S110 - a failed "last seen" refresh must not fail the request it decorates
+        pass
+
+
+def list_tokens(google_sub, current_token=None):
+    """Every active per-device sign-in token and connector session for
+    this account, newest first, as one unified list. Entry shape:
+    {token_id, label, created_at, last_seen_at, is_current, kind}. Never
+    returns a raw token. The shared mcp_users token is not listed (no
+    per-device identity; account-wide revoke owns it)."""
+    current_id = _token_id(current_token) if current_token else None
+    out = []
+    device_docs = _device_tokens().where(filter=FieldFilter("google_sub", "==", google_sub)).stream()
+    for d in device_docs:
+        t = d.to_dict()
+        out.append(
+            {
+                "token_id": t.get("token_id"),
+                "label": t.get("label") or UNKNOWN_DEVICE,
+                "created_at": t.get("created_at"),
+                "last_seen_at": t.get("last_seen_at"),
+                "is_current": current_id is not None and t.get("token_id") == current_id,
+                "kind": "device",
+            }
+        )
+    oauth_docs = _tokens().where(filter=FieldFilter("google_sub", "==", google_sub)).stream()
+    for d in oauth_docs:
+        t = d.to_dict()
+        label = t.get("label") or (
+            f"{t.get('client_name')} (connector)" if t.get("client_name") else UNKNOWN_DEVICE
+        )
+        out.append(
+            {
+                "token_id": t.get("token_id"),
+                "label": label,
+                "created_at": t.get("created_at"),
+                "last_seen_at": t.get("last_seen_at"),
+                "is_current": current_id is not None and t.get("token_id") is not None and t.get("token_id") == current_id,
+                "kind": "connector",
+            }
+        )
+    out.sort(key=lambda r: r.get("created_at") or 0, reverse=True)
+    return out
+
+
+def revoke_token(google_sub, token_id):
+    """Revoke exactly one device/session token by its public token_id,
+    scoped to google_sub so a user can never revoke another user's.
+    Idempotent (no-op if already gone). Returns True if a doc was
+    deleted. Firestore has no unique secondary index here, so this is a
+    filtered query + delete, fine at personal-project scale like every
+    other query in this module."""
+    if not token_id:
+        return False
+    deleted = False
+    for coll in (_device_tokens(), _tokens()):
+        docs = (
+            coll.where(filter=FieldFilter("google_sub", "==", google_sub))
+            .where(filter=FieldFilter("token_id", "==", token_id))
+            .stream()
+        )
+        for d in docs:
+            d.reference.delete()
+            deleted = True
+    return deleted
 
 
 # --- OAuth 2.1 + PKCE authorization server ------------------------------
@@ -408,20 +571,30 @@ def revoke_oauth_token(token):
     _tokens().document(token).delete()
 
 
-def mint_oauth_token(google_sub, email, client_name):
+def mint_oauth_token(google_sub, email, client_name, user_agent=None):
     """A fresh access token for one (user, OAuth client) pair. Deliberately
     not the same token get_or_create_token returns, so disconnecting this
     client later doesn't also invalidate the user's direct MCP client
     config. Always mints a new token, unlike get_or_create_token: a second
     OAuth authorization for the same client is a re-consent, not a replay,
-    and each grant gets its own revocable credential."""
+    and each grant gets its own revocable credential.
+
+    Records per-session metadata (token_id, label, last_seen_at) so this
+    grant appears in list_tokens() alongside direct-sign-in devices; see
+    the SQLite backend's docstring for why user_agent is best-effort."""
     token = secrets.token_urlsafe(32)
+    now = time.time()
+    ua_label = label_for_user_agent(user_agent)
+    label = ua_label if ua_label != UNKNOWN_DEVICE else (f"{client_name} (connector)" if client_name else UNKNOWN_DEVICE)
     _tokens().document(token).set(
         {
+            "token_id": _token_id(token),
             "google_sub": google_sub,
             "email": email,
             "client_name": client_name,
-            "created_at": time.time(),
+            "label": label,
+            "created_at": now,
+            "last_seen_at": now,
         }
     )
     return token
