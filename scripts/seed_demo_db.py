@@ -34,6 +34,55 @@ HAIKU = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
 _TOOLS = ["list_services", "get_service_metrics", "search_logs", "get_recent_deployments", "get_cost_breakdown"]
 
+# Full tool-spec JSON, fixed rather than generated from a live schema, so
+# expanding the "Tool specs" block in the Context Window Explorer demo
+# (see scripts/demo_capture.py's choreography) shows something real
+# instead of the "content wasn't captured" placeholder every other
+# session's blocks fall back to. This is the block the brief specifically
+# wants expanded, since most viewers never think about tool specs as a
+# context cost until they see the actual bytes.
+_TOOL_SPECS_CONTENT = json.dumps(
+    [
+        {
+            "name": "list_services",
+            "description": "List every service this agent has visibility into, with its current health status.",
+            "input_schema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "get_service_metrics",
+            "description": "Fetch latency, error rate, and throughput for one service over a time window.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "service": {"type": "string"},
+                    "window_minutes": {"type": "integer", "default": 60},
+                },
+                "required": ["service"],
+            },
+        },
+        {
+            "name": "search_logs",
+            "description": "Full-text search over a service's recent logs.",
+            "input_schema": {
+                "type": "object",
+                "properties": {"service": {"type": "string"}, "query": {"type": "string"}},
+                "required": ["service", "query"],
+            },
+        },
+        {
+            "name": "get_recent_deployments",
+            "description": "List deployments to a service in the last 24 hours, with build hash and rollback state.",
+            "input_schema": {"type": "object", "properties": {"service": {"type": "string"}}, "required": ["service"]},
+        },
+        {
+            "name": "get_cost_breakdown",
+            "description": "Break down this month's spend by service.",
+            "input_schema": {"type": "object", "properties": {}},
+        },
+    ],
+    indent=2,
+)
+
 
 def _context_blocks(turns, trace, answer_text, answer_label="Final answer"):
     blocks = [
@@ -44,6 +93,7 @@ def _context_blocks(turns, trace, answer_text, answer_label="Final answer"):
             "char_count": 2600,
             "token_estimate": 650,
             "turn_n": None,
+            "content": _TOOL_SPECS_CONTENT,
         },
         {"category": "user", "label": "User prompt", "char_count": 80, "token_estimate": 20, "turn_n": 0},
     ]
