@@ -158,6 +158,25 @@ _SAMPLE_TOOL_RESULT_CONTENT = json.dumps(
 )
 
 
+# Harness-injected context the OTLP mapper now splits out of the user's
+# first message (a <system-reminder> carrying CLAUDE.md / date / env) and
+# a slash-command block, so the demo Context Explorer shows the
+# `injected` and `command` categories the same way a real Claude Code
+# session does. Kept short; real reminders are much longer, but the demo
+# only needs one of each to render the colour + the filter chip.
+_INJECTED_CONTENT = (
+    "<system-reminder>\n"
+    "# currentDate\nToday's date is 2026-08-27.\n"
+    "# claudeMd\nContents of CLAUDE.md: prefer concise answers; the SRE "
+    "runbook lives in docs/oncall.md.\n"
+    "</system-reminder>"
+)
+_COMMAND_CONTENT = (
+    "<command-name>/investigate</command-name>\n"
+    "            <command-args>checkout-api p99</command-args>"
+)
+
+
 def _context_blocks(turns, trace, prompt, answer_text, answer_label="Final answer"):
     blocks = [
         {
@@ -175,6 +194,22 @@ def _context_blocks(turns, trace, prompt, answer_text, answer_label="Final answe
             "token_estimate": 650,
             "turn_n": None,
             "content": _TOOL_SPECS_CONTENT,
+        },
+        {
+            "category": "injected",
+            "label": "Injected context",
+            "char_count": len(_INJECTED_CONTENT),
+            "token_estimate": max(1, round(len(_INJECTED_CONTENT) / 4)),
+            "turn_n": 0,
+            "content": _INJECTED_CONTENT,
+        },
+        {
+            "category": "command",
+            "label": "Slash command",
+            "char_count": len(_COMMAND_CONTENT),
+            "token_estimate": max(1, round(len(_COMMAND_CONTENT) / 4)),
+            "turn_n": 0,
+            "content": _COMMAND_CONTENT,
         },
         {
             "category": "user",
