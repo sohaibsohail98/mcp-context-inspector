@@ -940,6 +940,10 @@ async def auth_login(request: Request):
           matter how correct the file on disk now is.
         </p>
 
+        <div class="tab-row" style="margin-bottom:0.55rem;">
+          <button class="tab-btn active" id="os-tab-unix" onclick="setInstallOs('unix')">macOS / Linux</button>
+          <button class="tab-btn" id="os-tab-win" onclick="setInstallOs('windows')">Windows (PowerShell)</button>
+        </div>
         <pre id="install-cmd">fetching your install command&hellip;</pre>
         <div style="display:flex; gap:0.5rem;">
           <button class="copy" onclick="copyText('install-cmd')" id="install-copy-btn">Copy command</button>
@@ -1296,6 +1300,20 @@ async def auth_login(request: Request):
   // same command; see CTXWINDOW_LAUNCH_PLAN.md §1.2. The code is single-use
   // and expires in a few minutes, so this re-mints on every call rather
   // than caching, so "New command" (and page reload) always gets a live one.
+  // Auto-detect once; the toggle above overrides. navigator.platform is
+  // deprecated but still the most reliable Windows signal in every
+  // current browser; the UA regex is the fallback in the same test.
+  let installOs = /win/i.test((navigator.platform || "") + " " + (navigator.userAgent || "")) ? "windows" : "unix";
+
+  function setInstallOs(os) {{
+    installOs = os;
+    const u = document.getElementById("os-tab-unix");
+    const w = document.getElementById("os-tab-win");
+    if (u) u.classList.toggle("active", os === "unix");
+    if (w) w.classList.toggle("active", os === "windows");
+    refreshInstallCommand();
+  }}
+
   async function refreshInstallCommand() {{
     const cmdEl = document.getElementById("install-cmd");
     const inspectEl = document.getElementById("install-cmd-inspect");
@@ -1309,11 +1327,22 @@ async def auth_login(request: Request):
       }});
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
-      const installUrl = window.location.origin + "/setup/install?t=" + encodeURIComponent(data.code);
-      cmdEl.textContent = "curl -fsSL " + installUrl + " | sh";
-      if (inspectEl) {{
-        inspectEl.textContent = "curl -fsSL " + installUrl + " -o install.sh\\nless install.sh"
-          + "        # read exactly what it's about to do\\nsh install.sh";
+      const codeParam = "t=" + encodeURIComponent(data.code);
+      if (installOs === "windows") {{
+        const url = window.location.origin + "/setup/install?os=windows&" + codeParam;
+        cmdEl.textContent = 'irm "' + url + '" | iex';
+        if (inspectEl) {{
+          inspectEl.textContent = 'irm "' + url + '" -OutFile install.ps1\\n'
+            + 'Get-Content install.ps1        # read exactly what it will do\\n'
+            + '.\\\\install.ps1';
+        }}
+      }} else {{
+        const url = window.location.origin + "/setup/install?" + codeParam;
+        cmdEl.textContent = "curl -fsSL " + url + " | sh";
+        if (inspectEl) {{
+          inspectEl.textContent = "curl -fsSL " + url + " -o install.sh\\nless install.sh"
+            + "        # read exactly what it's about to do\\nsh install.sh";
+        }}
       }}
     }} catch (err) {{
       cmdEl.textContent = "Couldn't fetch an install command: " + err.message + ". Click \\"New command\\" to retry.";

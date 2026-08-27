@@ -822,6 +822,101 @@ def test_setup_install_script_execution_applies_same_patch_as_local_script(clien
     assert written["env"]["OTEL_RESOURCE_ATTRIBUTES"] == "service.name=claude-code"
 
 
+# --- /setup/install PowerShell variant (?os=windows) --------------------
+
+
+def test_setup_install_serves_powershell_for_os_windows(client):
+    code = client.post(
+        "/setup/issue-install-code", headers={"Authorization": "Bearer owner-secret"}
+    ).json()["code"]
+    resp = client.get("/setup/install", params={"t": code, "os": "windows"})
+    assert resp.status_code == 200
+    assert "owner-secret" in resp.text
+    assert "/mcp" in resp.text and "/otlp" in resp.text
+    assert "$env:MCP_INSTALL_BEARER_TOKEN" in resp.text
+    assert not resp.text.startswith("#!/bin/sh")
+    assert "text/plain" in resp.headers["content-type"]
+    assert resp.headers.get("cache-control") == "no-store"
+
+
+def test_setup_install_still_serves_sh_without_os_param(client):
+    code = client.post(
+        "/setup/issue-install-code", headers={"Authorization": "Bearer owner-secret"}
+    ).json()["code"]
+    resp = client.get("/setup/install", params={"t": code})
+    assert resp.status_code == 200
+    assert resp.text.startswith("#!/bin/sh")
+
+
+def test_setup_install_powershell_still_requires_a_valid_code(client):
+    resp = client.get("/setup/install", params={"t": "bogus", "os": "windows"})
+    assert resp.status_code == 400
+    assert "Write-Error" in resp.text  # PS-flavoured error, not `echo ... >&2`
+
+
+def test_setup_install_powershell_code_is_single_use(client):
+    code = client.post(
+        "/setup/issue-install-code", headers={"Authorization": "Bearer owner-secret"}
+    ).json()["code"]
+    first = client.get("/setup/install", params={"t": code, "os": "windows"})
+    second = client.get("/setup/install", params={"t": code, "os": "windows"})
+    assert first.status_code == 200
+    assert second.status_code == 400
+
+
+def test_setup_install_ua_sniff_defaults_powershell(client):
+    code = client.post(
+        "/setup/issue-install-code", headers={"Authorization": "Bearer owner-secret"}
+    ).json()["code"]
+    resp = client.get(
+        "/setup/install",
+        params={"t": code},
+        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0) WindowsPowerShell/5.1.19041.1"},
+    )
+    assert not resp.text.startswith("#!/bin/sh")
+    assert "$env:MCP_INSTALL_BEARER_TOKEN" in resp.text
+
+
+def test_setup_install_powershell_embedded_python_applies_same_patch(client, tmp_path, monkeypatch):
+    """The PowerShell script's embedded `python -c` body must perform the
+    identical settings.json merge as the sh installer (it is the same
+    body). Extract and run it directly (no PowerShell needed on CI)."""
+    import subprocess
+    import sys
+
+    code = client.post(
+        "/setup/issue-install-code", headers={"Authorization": "Bearer owner-secret"}
+    ).json()["code"]
+    script = client.get("/setup/install", params={"t": code, "os": "windows"}).text
+
+    body = script.split('& $py -c "', 1)[1].rsplit('\n"\n', 1)[0]
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setenv("MCP_INSTALL_BASE_URL", "https://ctxwindow.uk")
+    monkeypatch.setenv("MCP_INSTALL_BEARER_TOKEN", "owner-secret")
+    result = subprocess.run([sys.executable, "-c", body], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+    written = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+    assert written["mcpServers"]["context-inspector"]["url"] == "https://ctxwindow.uk/mcp"
+    assert written["mcpServers"]["context-inspector"]["headers"]["Authorization"] == "Bearer owner-secret"
+    assert written["env"]["CLAUDE_CODE_ENABLE_TELEMETRY"] == "1"
+
+    # idempotent: a second run backs up (merge, not overwrite) and leaves
+    # the same result
+    result2 = subprocess.run([sys.executable, "-c", body], capture_output=True, text=True)
+    assert result2.returncode == 0, result2.stderr
+    assert list((tmp_path / ".claude").glob("settings.json.bak-*"))
+
+
+def test_render_powershell_single_quote_escaping():
+    from mcp_server import local_setup
+
+    out = local_setup.render_install_powershell_script("https://x.uk", "a'b")
+    assert "'a''b'" in out  # PowerShell doubled-quote escaping
+    assert "https://x.uk" in out
+
+
 def test_local_script_execution_applies_same_patch_as_apply_local_config(client, tmp_path, monkeypatch):
     """The downloaded script must perform the identical settings.json
     merge as the in-process route (same keys, same values), since it's
