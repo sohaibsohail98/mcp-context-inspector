@@ -72,6 +72,20 @@ export default {
     const response = await fetch(target.toString(), init);
 
     const outHeaders = new Headers(response.headers);
+    // `new Headers(source)` can fold multiple Set-Cookie headers into one
+    // comma-joined value, which corrupts every cookie after the first
+    // (and would silently break the browser session). Re-emit each
+    // Set-Cookie as its own header from the runtime's structured
+    // accessor. No-op when the origin sends none.
+    if (typeof response.headers.getSetCookie === "function") {
+      const cookies = response.headers.getSetCookie();
+      if (cookies.length) {
+        outHeaders.delete("set-cookie");
+        for (const cookie of cookies) {
+          outHeaders.append("set-cookie", cookie);
+        }
+      }
+    }
     outHeaders.set("content-security-policy", CSP);
     // Companion headers the CSP doesn't cover. frame-ancestors above
     // already blocks framing on modern browsers; X-Frame-Options is the
