@@ -34,7 +34,9 @@ Scan with an sk filter. Fine at personal-project scale, same tradeoff
 already accepted in metrics/store_dynamodb.py.
 """
 
+import hashlib
 import os
+import secrets
 import time
 import uuid
 
@@ -42,6 +44,14 @@ import boto3
 
 from mci_common.config import DEFAULT_REGION
 from mcp_server import local_setup
+from mcp_server.auth.device_label import UNKNOWN_DEVICE, label_for_user_agent
+
+# last_seen_at is only rewritten when older than this. On DynamoDB every
+# touch is an update_item (a billed write); refreshing per authenticated
+# request would tie write cost to request rate for a field a human reads
+# as an approximate "last seen". An hour's granularity is enough, and
+# keeps write amplification identical to the other two backends.
+LAST_SEEN_REFRESH_SECONDS = 3600
 
 TABLE_NAME = os.environ.get("AUTH_TABLE", "mcp-context-auth")
 REGION = os.environ.get("AWS_REGION", DEFAULT_REGION)
@@ -67,6 +77,23 @@ def _code_key(code_hash):
 
 def _oauth_token_key(token):
     return {"pk": f"TOKEN#{token}", "sk": "ACCESS_TOKEN"}
+
+
+def _device_token_key(token):
+    return {"pk": f"DEVICETOKEN#{token}", "sk": "DEVICE_TOKEN"}
+
+
+def _device_ref_key(google_sub, device_hash):
+    # Reverse index (google_sub, device) -> token, so a repeat sign-in
+    # from the same User-Agent finds and reuses its existing device
+    # token instead of a Scan. Same mirror pattern as USERTOKEN#.
+    return {"pk": f"USERDEVICE#{google_sub}#{device_hash}", "sk": "DEVICE_REF"}
+
+
+def _token_id(token):
+    """Stable public handle for a token: a SHA-256 hex prefix, never the
+    raw token (it appears in URLs / logs / the dashboard DOM)."""
+    return hashlib.sha256(token.encode()).hexdigest()[:16]
 
 
 def _install_code_key(code_hash):
@@ -109,19 +136,25 @@ def get_or_create_token(google_sub, email):
 
 
 def is_valid_token(token):
-    """True for either a direct Google-sign-in token (USERTOKEN# mirror)
-    or a token minted through the OAuth flow (its own TOKEN# item).
-    Same either-source contract as the SQLite version."""
+    """True for a direct Google-sign-in token (the shared USERTOKEN#
+    mirror OR a per-device DEVICETOKEN# item) or a token minted through
+    the OAuth flow (its own TOKEN# item). Same either-source contract as
+    the SQLite version."""
     if _table.get_item(Key=_user_token_key(token)).get("Item"):
+        return True
+    if _table.get_item(Key=_device_token_key(token)).get("Item"):
         return True
     return bool(_table.get_item(Key=_oauth_token_key(token)).get("Item"))
 
 
 def get_sub_for_token(token):
-    """The google_sub that owns this token, checking both sources; see
-    is_valid_token. Returns None if the token doesn't belong to any
+    """The google_sub that owns this token, checking all three sources;
+    see is_valid_token. Returns None if the token doesn't belong to any
     signed-in user."""
     item = _table.get_item(Key=_user_token_key(token)).get("Item")
+    if item:
+        return item["google_sub"]
+    item = _table.get_item(Key=_device_token_key(token)).get("Item")
     if item:
         return item["google_sub"]
     item = _table.get_item(Key=_oauth_token_key(token)).get("Item")
@@ -139,16 +172,170 @@ def list_users():
 
 
 def revoke(google_sub):
-    """Deletes a user's token, so they'd need to sign in again to get a
-    new one. Reads the PROFILE item first to find the matching
-    USERTOKEN# mirror so both are removed; a crash between the two
-    deletes could leave an orphaned, still-valid USERTOKEN# item behind
-    (rare, and the next revoke() call for the same account cleans it up
-    too, since the read-then-delete is idempotent on a missing item)."""
+    """Account-wide revoke: kills EVERY sign-in credential this user has
+    minted, matching the SQLite/Firestore backends. That's the shared
+    PROFILE + its USERTOKEN# mirror, every per-device DEVICETOKEN# item
+    (and its USERDEVICE# ref), and every OAuth-issued ACCESS_TOKEN for
+    the sub. revoke_token() is the single-device version. A crash
+    mid-loop leaves at most a few orphaned items that the next revoke()
+    for the same account mops up (each delete is idempotent on a missing
+    item)."""
     profile = _table.get_item(Key=_user_key(google_sub)).get("Item")
     _table.delete_item(Key=_user_key(google_sub))
     if profile and profile.get("token"):
         _table.delete_item(Key=_user_token_key(profile["token"]))
+
+    for item in _scan_by_sk("DEVICE_TOKEN"):
+        if item.get("google_sub") == google_sub:
+            _table.delete_item(Key={"pk": item["pk"], "sk": item["sk"]})
+            if item.get("device_key"):
+                _table.delete_item(Key=_device_ref_key(google_sub, item["device_key"]))
+    for item in _scan_by_sk("ACCESS_TOKEN"):
+        if item.get("google_sub") == google_sub:
+            _table.delete_item(Key={"pk": item["pk"], "sk": item["sk"]})
+
+
+# --- Per-device / per-session tokens ----------------------------------
+
+
+def get_or_create_device_token(google_sub, email, user_agent):
+    """Per-device sign-in token for (google_sub, this device), minting
+    one on first sign-in from that device and returning the existing one
+    on repeat sign-ins from the same User-Agent. Same contract as the
+    SQLite backend.
+
+    "Device" is SHA-256(user_agent)[:16]. A USERDEVICE# ref item points
+    (google_sub, device) -> token; a first-sign-in race is resolved with
+    a conditional put on that ref (attribute_not_exists(pk)): the loser
+    catches ConditionalCheckFailedException, re-reads the ref, and
+    returns the winner's token, the DynamoDB analogue of SQLite's ON
+    CONFLICT."""
+    from botocore.exceptions import ClientError
+
+    device_hash = hashlib.sha256((user_agent or "").encode()).hexdigest()[:16]
+    ref_key = _device_ref_key(google_sub, device_hash)
+
+    existing_ref = _table.get_item(Key=ref_key).get("Item")
+    if existing_ref:
+        return existing_ref["token"]
+
+    token = secrets.token_urlsafe(32)
+    now = time.time()
+    label = label_for_user_agent(user_agent)
+    try:
+        _table.put_item(
+            Item={**ref_key, "token": token, "google_sub": google_sub},
+            ConditionExpression="attribute_not_exists(pk)",
+        )
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+            return _table.get_item(Key=ref_key).get("Item")["token"]
+        raise
+
+    _table.put_item(
+        Item={
+            **_device_token_key(token),
+            "token_id": _token_id(token),
+            "google_sub": google_sub,
+            "email": email,
+            "device_key": device_hash,
+            "label": label,
+            "created_at": now,
+            "last_seen_at": now,
+        }
+    )
+    return token
+
+
+def touch_token(token):
+    """Best-effort hourly refresh of last_seen_at for a device/OAuth
+    token. Conditional update so the write is skipped when the stored
+    value is newer than LAST_SEEN_REFRESH_SECONDS. Never raises."""
+    from botocore.exceptions import ClientError
+
+    now = time.time()
+    cutoff = now - LAST_SEEN_REFRESH_SECONDS
+    for key in (_device_token_key(token), _oauth_token_key(token)):
+        try:
+            if not _table.get_item(Key=key).get("Item"):
+                continue
+            _table.update_item(
+                Key=key,
+                UpdateExpression="SET last_seen_at = :now",
+                ConditionExpression="attribute_not_exists(last_seen_at) OR last_seen_at < :cutoff",
+                ExpressionAttributeValues={":now": now, ":cutoff": cutoff},
+            )
+            return
+        except ClientError:
+            # ConditionalCheckFailed just means "seen recently, skip";
+            # anything else must not fail the request being decorated.
+            return
+        except Exception:  # noqa: BLE001
+            return
+
+
+def list_tokens(google_sub, current_token=None):
+    """Every active per-device sign-in token and connector session for
+    this account, newest first, as one unified list. Entry shape:
+    {token_id, label, created_at, last_seen_at, is_current, kind}. Never
+    returns a raw token. Two Scans (DEVICE_TOKEN, ACCESS_TOKEN) filtered
+    to this google_sub, fine at personal-project scale like every other
+    Scan here. The shared PROFILE token is not listed."""
+    current_id = _token_id(current_token) if current_token else None
+    out = []
+    for item in _scan_by_sk("DEVICE_TOKEN"):
+        if item.get("google_sub") != google_sub:
+            continue
+        out.append(
+            {
+                "token_id": item.get("token_id"),
+                "label": item.get("label") or UNKNOWN_DEVICE,
+                "created_at": item.get("created_at"),
+                "last_seen_at": item.get("last_seen_at"),
+                "is_current": current_id is not None and item.get("token_id") == current_id,
+                "kind": "device",
+            }
+        )
+    for item in _scan_by_sk("ACCESS_TOKEN"):
+        if item.get("google_sub") != google_sub:
+            continue
+        label = item.get("label") or (
+            f"{item.get('client_name')} (connector)" if item.get("client_name") else UNKNOWN_DEVICE
+        )
+        out.append(
+            {
+                "token_id": item.get("token_id"),
+                "label": label,
+                "created_at": item.get("created_at"),
+                "last_seen_at": item.get("last_seen_at"),
+                "is_current": current_id is not None and item.get("token_id") is not None and item.get("token_id") == current_id,
+                "kind": "connector",
+            }
+        )
+    out.sort(key=lambda r: r.get("created_at") or 0, reverse=True)
+    return out
+
+
+def revoke_token(google_sub, token_id):
+    """Revoke exactly one device/session token by its public token_id,
+    scoped to google_sub so a user can never revoke another user's.
+    Idempotent (no-op if already gone). Returns True if an item was
+    deleted. Scan+filter since token_id isn't a key; personal-scale, as
+    with the other Scans in this module."""
+    if not token_id:
+        return False
+    deleted = False
+    for item in _scan_by_sk("DEVICE_TOKEN"):
+        if item.get("google_sub") == google_sub and item.get("token_id") == token_id:
+            _table.delete_item(Key={"pk": item["pk"], "sk": item["sk"]})
+            if item.get("device_key"):
+                _table.delete_item(Key=_device_ref_key(google_sub, item["device_key"]))
+            deleted = True
+    for item in _scan_by_sk("ACCESS_TOKEN"):
+        if item.get("google_sub") == google_sub and item.get("token_id") == token_id:
+            _table.delete_item(Key={"pk": item["pk"], "sk": item["sk"]})
+            deleted = True
+    return deleted
 
 
 # --- OAuth 2.1 + PKCE authorization server ------------------------------
@@ -332,19 +519,28 @@ def redeem_install_code(code):
     return row["bearer_token"]
 
 
-def mint_oauth_token(google_sub, email, client_name):
+def mint_oauth_token(google_sub, email, client_name, user_agent=None):
     """A fresh access token for one (user, OAuth client) pair. Always a
-    new token, same contract as the SQLite version."""
+    new token, same contract as the SQLite version. Records per-session
+    metadata (token_id, label, last_seen_at) so the grant appears in
+    list_tokens() next to direct-sign-in devices; user_agent is
+    best-effort (see the SQLite backend's docstring)."""
     import secrets
 
     token = secrets.token_urlsafe(32)
+    now = time.time()
+    ua_label = label_for_user_agent(user_agent)
+    label = ua_label if ua_label != UNKNOWN_DEVICE else (f"{client_name} (connector)" if client_name else UNKNOWN_DEVICE)
     _table.put_item(
         Item={
             **_oauth_token_key(token),
+            "token_id": _token_id(token),
             "google_sub": google_sub,
             "email": email,
             "client_name": client_name,
-            "created_at": time.time(),
+            "label": label,
+            "created_at": now,
+            "last_seen_at": now,
         }
     )
     return token

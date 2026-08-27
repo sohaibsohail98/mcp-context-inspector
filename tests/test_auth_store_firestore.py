@@ -285,3 +285,105 @@ def test_revoke_oauth_token_invalidates_it_without_touching_sign_in_token(isolat
     store.revoke_oauth_token(oauth_token)
     assert store.is_valid_token(oauth_token) is False
     assert store.is_valid_token(sign_in_token) is True
+
+
+# --- Per-device / per-session tokens ---------------------------------
+
+_CHROME_MAC = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+_FIREFOX_WIN = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0"
+
+
+def test_device_token_mints_validates_and_lists(isolated_firestore_auth_store):
+    store = isolated_firestore_auth_store
+    token = store.get_or_create_device_token("sub123", "a@example.com", _CHROME_MAC)
+    assert store.is_valid_token(token)
+    assert store.get_sub_for_token(token) == "sub123"
+    rows = store.list_tokens("sub123")
+    assert len(rows) == 1
+    assert rows[0]["label"] == "Chrome on macOS"
+    assert token not in rows[0].values()
+
+
+def test_device_token_idempotent_per_user_agent(isolated_firestore_auth_store):
+    store = isolated_firestore_auth_store
+    first = store.get_or_create_device_token("sub123", "a@example.com", _CHROME_MAC)
+    again = store.get_or_create_device_token("sub123", "a@example.com", _CHROME_MAC)
+    other = store.get_or_create_device_token("sub123", "a@example.com", _FIREFOX_WIN)
+    assert first == again
+    assert other != first
+    assert len(store.list_tokens("sub123")) == 2
+
+
+def test_list_tokens_marks_current_and_is_scoped(isolated_firestore_auth_store):
+    store = isolated_firestore_auth_store
+    laptop = store.get_or_create_device_token("alice", "alice@example.com", _CHROME_MAC)
+    store.get_or_create_device_token("alice", "alice@example.com", _FIREFOX_WIN)
+    store.get_or_create_device_token("bob", "bob@example.com", _CHROME_MAC)
+    alice_rows = store.list_tokens("alice", current_token=laptop)
+    assert len(alice_rows) == 2
+    assert sum(1 for r in alice_rows if r["is_current"]) == 1
+    assert len(store.list_tokens("bob")) == 1
+
+
+def test_revoke_token_kills_exactly_one(isolated_firestore_auth_store):
+    store = isolated_firestore_auth_store
+    laptop = store.get_or_create_device_token("sub123", "a@example.com", _CHROME_MAC)
+    work = store.get_or_create_device_token("sub123", "a@example.com", _FIREFOX_WIN)
+    work_id = next(r["token_id"] for r in store.list_tokens("sub123", current_token=work) if r["is_current"])
+    store.revoke_token("sub123", work_id)
+    assert store.is_valid_token(work) is False
+    assert store.is_valid_token(laptop) is True
+    assert len(store.list_tokens("sub123")) == 1
+
+
+def test_revoke_token_cannot_touch_another_users_token(isolated_firestore_auth_store):
+    store = isolated_firestore_auth_store
+    alice = store.get_or_create_device_token("alice", "alice@example.com", _CHROME_MAC)
+    bob = store.get_or_create_device_token("bob", "bob@example.com", _FIREFOX_WIN)
+    bob_id = store.list_tokens("bob")[0]["token_id"]
+    store.revoke_token("alice", bob_id)
+    assert store.is_valid_token(bob) is True
+    assert store.is_valid_token(alice) is True
+
+
+def test_revoke_token_is_idempotent(isolated_firestore_auth_store):
+    store = isolated_firestore_auth_store
+    token = store.get_or_create_device_token("sub123", "a@example.com", _CHROME_MAC)
+    token_id = store.list_tokens("sub123")[0]["token_id"]
+    assert store.revoke_token("sub123", token_id) is True
+    assert store.revoke_token("sub123", token_id) is False
+    assert store.revoke_token("sub123", "never-existed") is False
+    assert store.is_valid_token(token) is False
+
+
+def test_account_wide_revoke_nukes_devices_and_oauth_tokens(isolated_firestore_auth_store):
+    store = isolated_firestore_auth_store
+    shared = store.get_or_create_token("sub123", "a@example.com")
+    laptop = store.get_or_create_device_token("sub123", "a@example.com", _CHROME_MAC)
+    connector = store.mint_oauth_token("sub123", "a@example.com", "claude.ai")
+    store.revoke("sub123")
+    for t in (shared, laptop, connector):
+        assert store.is_valid_token(t) is False
+    assert store.list_tokens("sub123") == []
+
+
+def test_oauth_token_lists_as_connector_and_is_individually_revocable(isolated_firestore_auth_store):
+    store = isolated_firestore_auth_store
+    sign_in = store.get_or_create_device_token("sub123", "a@example.com", _CHROME_MAC)
+    connector = store.mint_oauth_token("sub123", "a@example.com", "claude.ai")
+    connector_id = next(r["token_id"] for r in store.list_tokens("sub123") if r["kind"] == "connector")
+    store.revoke_token("sub123", connector_id)
+    assert store.is_valid_token(connector) is False
+    assert store.is_valid_token(sign_in) is True
+
+
+def test_touch_token_hourly_and_safe_on_unknown(isolated_firestore_auth_store, monkeypatch):
+    store = isolated_firestore_auth_store
+    token = store.get_or_create_device_token("sub123", "a@example.com", _CHROME_MAC)
+    first_seen = store.list_tokens("sub123")[0]["last_seen_at"]
+    store.touch_token(token)  # within the hour: no-op
+    assert store.list_tokens("sub123")[0]["last_seen_at"] == first_seen
+    monkeypatch.setattr(store.time, "time", lambda: first_seen + store.LAST_SEEN_REFRESH_SECONDS + 60)
+    store.touch_token(token)
+    assert store.list_tokens("sub123")[0]["last_seen_at"] > first_seen
+    store.touch_token("not-a-real-token")  # must not raise

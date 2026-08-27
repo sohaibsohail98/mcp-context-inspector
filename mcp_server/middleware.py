@@ -97,6 +97,11 @@ class MultiTokenAuthMiddleware(BaseHTTPMiddleware):
                 current_owner.set(None)
             elif token and auth_store.is_valid_token(token):
                 current_owner.set(auth_store.get_sub_for_token(token))
+                # Best-effort "last seen" for the device/session list (see
+                # auth_store.list_tokens). Rate-limited inside touch_token
+                # to at most one write per hour per token, and it never
+                # raises, so this can't slow down or break a real request.
+                auth_store.touch_token(token)
             else:
                 # WWW-Authenticate here is what lets an MCP client do OAuth
                 # discovery (RFC 9728 §5.1): on a 401 with no/invalid token,

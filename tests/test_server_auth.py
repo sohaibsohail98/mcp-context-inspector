@@ -844,3 +844,94 @@ def test_local_script_execution_applies_same_patch_as_apply_local_config(client,
     assert written["mcpServers"]["context-inspector"]["headers"]["Authorization"] == "Bearer owner-secret"
     assert written["env"]["CLAUDE_CODE_ENABLE_TELEMETRY"] == "1"
     assert written["env"]["CLAUDE_CODE_OTEL_CONTENT_MAX_LENGTH"] == "1048576"
+
+
+# --- /auth/devices and /auth/revoke-device ---------------------------
+
+def _sign_in(client, monkeypatch, sub="sub123", email="a@example.com"):
+    """Drive the real /auth/verify flow and return the minted per-device
+    token (TestClient sends a constant User-Agent, so this is stable)."""
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
+    monkeypatch.setattr(
+        routes_auth, "verify_credential", lambda credential, client_id: {"sub": sub, "email": email}
+    )
+    resp = client.post("/auth/verify", json={"credential": "fake-jwt"})
+    assert resp.status_code == 200
+    return resp.json()["mcp_token"]
+
+
+def test_auth_devices_requires_a_valid_token(client):
+    assert client.get("/auth/devices").status_code == 401
+    assert client.get("/auth/devices", headers={"Authorization": "Bearer nope"}).status_code == 401
+
+
+def test_auth_devices_lists_the_callers_own_devices(client, monkeypatch, isolated_auth_store):
+    token = _sign_in(client, monkeypatch)
+    resp = client.get("/auth/devices", headers={"Authorization": "Bearer " + token})
+    assert resp.status_code == 200
+    devices = resp.json()["devices"]
+    assert len(devices) == 1
+    assert devices[0]["is_current"] is True
+    assert devices[0]["label"]  # some label, never blank
+    # never leaks the raw token
+    assert token not in str(devices)
+
+
+def test_auth_devices_only_shows_your_own(client, monkeypatch, isolated_auth_store):
+    alice_token = _sign_in(client, monkeypatch, sub="alice", email="alice@example.com")
+    # A second device for alice, minted directly with a different UA.
+    isolated_auth_store.get_or_create_device_token("alice", "alice@example.com", "curl/8.0")
+    isolated_auth_store.get_or_create_device_token("bob", "bob@example.com", "curl/8.0")
+
+    devices = client.get("/auth/devices", headers={"Authorization": "Bearer " + alice_token}).json()["devices"]
+    assert len(devices) == 2  # alice's two, not bob's
+
+
+def test_auth_revoke_device_requires_a_valid_token(client):
+    assert client.post("/auth/revoke-device", json={"token_id": "x"}).status_code == 401
+
+
+def test_auth_revoke_device_revokes_one_and_only_one(client, monkeypatch, isolated_auth_store):
+    current = _sign_in(client, monkeypatch)
+    other = isolated_auth_store.get_or_create_device_token("sub123", "a@example.com", "curl/8.0")
+    devices = client.get("/auth/devices", headers={"Authorization": "Bearer " + current}).json()["devices"]
+    other_id = next(d["token_id"] for d in devices if not d["is_current"])
+
+    resp = client.post(
+        "/auth/revoke-device",
+        headers={"Authorization": "Bearer " + current},
+        json={"token_id": other_id},
+    )
+    assert resp.status_code == 200
+    assert isolated_auth_store.is_valid_token(other) is False
+    assert isolated_auth_store.is_valid_token(current) is True
+
+
+def test_auth_revoke_device_cannot_revoke_another_users_token(client, monkeypatch, isolated_auth_store):
+    alice_token = _sign_in(client, monkeypatch, sub="alice", email="alice@example.com")
+    bob_device = isolated_auth_store.get_or_create_device_token("bob", "bob@example.com", "curl/8.0")
+    bob_id = isolated_auth_store.list_tokens("bob")[0]["token_id"]
+
+    resp = client.post(
+        "/auth/revoke-device",
+        headers={"Authorization": "Bearer " + alice_token},
+        json={"token_id": bob_id},
+    )
+    assert resp.status_code == 200  # scoped query matched nothing, still a clean 200
+    assert isolated_auth_store.is_valid_token(bob_device) is True
+
+
+def test_auth_revoke_device_is_idempotent(client, monkeypatch, isolated_auth_store):
+    token = _sign_in(client, monkeypatch)
+    dev_id = isolated_auth_store.list_tokens("sub123")[0]["token_id"]
+    first = client.post("/auth/revoke-device", headers={"Authorization": "Bearer " + token}, json={"token_id": dev_id})
+    # token is now revoked, so a second call authenticates with a dead token -> 401
+    assert first.status_code == 200
+    second = client.post("/auth/revoke-device", headers={"Authorization": "Bearer " + token}, json={"token_id": dev_id})
+    assert second.status_code == 401
+
+
+def test_auth_revoke_device_missing_token_id_is_a_400(client, monkeypatch, isolated_auth_store):
+    token = _sign_in(client, monkeypatch)
+    resp = client.post("/auth/revoke-device", headers={"Authorization": "Bearer " + token}, json={})
+    assert resp.status_code == 400

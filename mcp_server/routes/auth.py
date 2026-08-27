@@ -298,6 +298,42 @@ _PAGE_STYLE = """
   .identity-dropdown button:hover { background: var(--bg-raised-2); }
   .identity-dropdown button.danger { color: var(--err); }
   .identity-dropdown button.danger:hover { background: var(--err-dim); }
+
+  /* Devices & sessions overlay: a light modal over the dashboard, same
+     card language as .panel. Reachable from the identity menu. */
+  .devices-backdrop {
+    position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,0.5);
+    display: flex; align-items: flex-start; justify-content: center; padding: 6vh 1.2rem 2rem;
+  }
+  .devices-modal {
+    width: 100%; max-width: 30rem; background: var(--bg-raised); border: 1px solid var(--border);
+    border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; padding: 1.1rem 1.2rem 1.3rem;
+  }
+  .devices-modal-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 0.6rem;
+    font-size: 13px; font-weight: 650; color: var(--text); margin-bottom: 0.5rem;
+  }
+  .devices-close {
+    background: none; border: none; color: var(--text-dimmer); font-size: 1.2rem; line-height: 1;
+    cursor: pointer; padding: 0.1rem 0.3rem;
+  }
+  .devices-close:hover { color: var(--text); }
+  .devices-hint { font-size: 11.5px; color: var(--text-dim); margin: 0 0 0.9rem; line-height: 1.5; }
+  .device-row {
+    display: flex; align-items: center; gap: 0.75rem; padding: 0.65rem 0;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .device-row:last-child { border-bottom: none; }
+  .device-row-main { flex: 1; min-width: 0; }
+  .device-label { font-size: 12.5px; font-weight: 550; color: var(--text); display: flex; align-items: center; gap: 0.4rem; }
+  .device-current {
+    font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+    padding: 0.1rem 0.4rem; border-radius: 5px; background: var(--accent-dim); color: var(--accent);
+  }
+  .device-meta { font-size: 10.5px; color: var(--text-dimmer); margin-top: 0.15rem; }
+  .device-revoke { flex-shrink: 0; }
+  .device-revoke:hover { border-color: var(--err); color: var(--err); background: var(--err-dim); }
+  .device-noid { font-size: 10.5px; color: var(--text-dimmer); flex-shrink: 0; }
   .layout { display: grid; grid-template-columns: 1fr; gap: 1rem; padding: 1.4rem 1.5rem 4rem; max-width: 1320px; margin: 0 auto; }
   .kpi-strip { display: grid; grid-template-columns: repeat(6, 1fr); gap: 0.7rem; }
   @media (max-width: 1100px) { .kpi-strip { grid-template-columns: repeat(3, 1fr); } }
@@ -919,6 +955,7 @@ async def auth_login(request: Request):
             <button onclick="closeIdentityMenu(); backToConnect();">&larr; Token &amp; config</button>
             <button onclick="closeIdentityMenu(); copyCurrentToken();">&#9112; Copy token</button>
             <button onclick="closeIdentityMenu(); refreshDashboard(currentToken);">&#8635; Refresh now</button>
+            <button onclick="openDevices();">&#128421; Devices &amp; sessions</button>
             <button class="danger" onclick="closeIdentityMenu(); signOut();">Sign out</button>
           </div>
         </div>
@@ -968,6 +1005,97 @@ async def auth_login(request: Request):
 
   function copyCurrentToken() {{
     if (currentToken) navigator.clipboard.writeText(currentToken);
+  }}
+
+  // --- Devices & sessions -------------------------------------------------
+  // Lists every per-device sign-in token and connector session for this
+  // account (GET /auth/devices), each with a Revoke button (POST
+  // /auth/revoke-device with its token_id). The row for the token this
+  // browser is holding is marked "This device"; revoking it signs this
+  // browser out. Rendered as a lightweight overlay appended to the
+  // dashboard screen, dismissed on backdrop click or Esc.
+  function devicesOverlayHtml() {{
+    return `
+      <div class="devices-backdrop" id="devices-backdrop" onclick="closeDevices(event)">
+        <div class="devices-modal" role="dialog" aria-label="Devices and sessions" onclick="event.stopPropagation()">
+          <div class="devices-modal-head">
+            <span>Devices &amp; sessions</span>
+            <button class="devices-close" onclick="closeDevices()" aria-label="Close">&times;</button>
+          </div>
+          <p class="devices-hint">Each device you sign in from, and each connected app, holds its own
+          token. Revoke one to disconnect just that device &mdash; the others stay signed in.</p>
+          <div id="devices-list"><p class="dash-empty">Loading&hellip;</p></div>
+        </div>
+      </div>
+    `;
+  }}
+
+  async function openDevices() {{
+    closeIdentityMenu();
+    const screen = document.getElementById("dashboard-screen");
+    if (!document.getElementById("devices-backdrop")) {{
+      screen.insertAdjacentHTML("beforeend", devicesOverlayHtml());
+      document.addEventListener("keydown", devicesEscHandler);
+    }}
+    await loadDevices();
+  }}
+
+  function devicesEscHandler(e) {{ if (e.key === "Escape") closeDevices(); }}
+
+  function closeDevices(evt) {{
+    if (evt && evt.target && evt.target.id !== "devices-backdrop" && evt.type === "click") return;
+    const bd = document.getElementById("devices-backdrop");
+    if (bd) bd.remove();
+    document.removeEventListener("keydown", devicesEscHandler);
+  }}
+
+  async function loadDevices() {{
+    const list = document.getElementById("devices-list");
+    if (!list) return;
+    try {{
+      const data = await apiGet(currentToken, "/auth/devices");
+      const devices = (data && data.devices) || [];
+      if (!devices.length) {{
+        list.innerHTML = '<p class="dash-empty">No other devices or sessions.</p>';
+        return;
+      }}
+      list.innerHTML = devices.map(function (d) {{
+        const seen = d.last_seen_at ? timeAgo(d.last_seen_at) : "not seen yet";
+        const added = d.created_at ? timeAgo(d.created_at) : "";
+        const current = d.is_current
+          ? '<span class="device-current">This device</span>' : "";
+        const kind = d.kind === "connector" ? "Connector session" : "Sign-in";
+        const revoke = d.token_id
+          ? '<button class="icon-btn device-revoke" onclick="revokeDevice(\\'' + escapeHtml(d.token_id) + '\\', ' + (d.is_current ? 'true' : 'false') + ')">Revoke</button>'
+          : '<span class="device-noid">no id</span>';
+        return '<div class="device-row">'
+          + '<div class="device-row-main">'
+          + '<div class="device-label">' + escapeHtml(d.label || "Unknown device") + ' ' + current + '</div>'
+          + '<div class="device-meta">' + kind + ' &middot; last seen ' + escapeHtml(seen)
+          + (added ? ' &middot; added ' + escapeHtml(added) : '') + '</div>'
+          + '</div>' + revoke + '</div>';
+      }}).join("");
+    }} catch (err) {{
+      list.innerHTML = '<p class="dash-error">Could not load devices: ' + escapeHtml(err.message) + '</p>';
+    }}
+  }}
+
+  async function revokeDevice(tokenId, isCurrent) {{
+    if (isCurrent && !confirm("This is the device you're using now. Revoking it signs you out here. Continue?")) return;
+    try {{
+      const res = await fetch("/auth/revoke-device", {{
+        method: "POST",
+        headers: {{ "Content-Type": "application/json", Authorization: "Bearer " + currentToken }},
+        body: JSON.stringify({{ token_id: tokenId }}),
+      }});
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      if (isCurrent) {{ closeDevices(); signOut(); return; }}
+      await loadDevices();
+    }} catch (err) {{
+      const list = document.getElementById("devices-list");
+      if (list) list.insertAdjacentHTML("afterbegin",
+        '<p class="dash-error">Revoke failed: ' + escapeHtml(err.message) + '</p>');
+    }}
   }}
 
   function copyText(id) {{
@@ -1943,7 +2071,71 @@ async def auth_verify(request: Request):
     except InvalidGoogleToken as e:
         return JSONResponse({"error": f"invalid Google credential: {e}"}, status_code=401)
 
-    token = auth_store.get_or_create_token(identity["sub"], identity["email"])
+    # Keep the shared account row (mcp_users) so admin list_users() still
+    # shows this account and any pre-existing pasted token keeps working,
+    # but hand the caller a PER-DEVICE token: one row per browser/machine
+    # in device_tokens, so they can later revoke just one device from the
+    # dashboard's "Devices" list without signing out everywhere. Repeat
+    # sign-ins from the same User-Agent return the same device token, so
+    # a config already pasted elsewhere isn't invalidated by a reload.
+    auth_store.get_or_create_token(identity["sub"], identity["email"])
+    user_agent = request.headers.get("user-agent", "")
+    token = auth_store.get_or_create_device_token(identity["sub"], identity["email"], user_agent)
     return JSONResponse({"mcp_token": token, "email": identity["email"]})
+
+
+def _caller_token(request):
+    """The bearer token on this request, or None. /auth/* is outside
+    MultiTokenAuthMiddleware's protected prefixes (it's the pre-auth
+    flow), so the two device-management routes below authenticate
+    themselves against auth_store here."""
+    header = request.headers.get("authorization", "")
+    return header.removeprefix("Bearer ") if header.startswith("Bearer ") else None
+
+
+@server.custom_route("/auth/devices", methods=["GET"])
+async def auth_devices(request: Request):
+    """The signed-in caller's own active devices/sessions: every
+    per-device sign-in token plus every connector session, as one list.
+    Requires a valid bearer token and only ever returns rows for the
+    account that token belongs to (list_tokens is scoped by google_sub),
+    so it can't be used to enumerate another user's devices. Never
+    returns a raw token, only the token_id revoke handle."""
+    token = _caller_token(request)
+    if not token or not auth_store.is_valid_token(token):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    google_sub = auth_store.get_sub_for_token(token)
+    if not google_sub:
+        # A valid token with no google_sub is the shared owner token;
+        # it has no per-device identity and no device list to show.
+        return JSONResponse({"devices": []})
+    devices = auth_store.list_tokens(google_sub, current_token=token)
+    return JSONResponse({"devices": devices})
+
+
+@server.custom_route("/auth/revoke-device", methods=["POST"])
+async def auth_revoke_device(request: Request):
+    """Revoke exactly one of the caller's own devices/sessions by its
+    token_id. Ownership is enforced two ways: the caller must present a
+    valid bearer token, and revoke_token is scoped to that token's
+    google_sub, so passing another user's token_id simply matches
+    nothing. Idempotent: revoking an already-gone token_id is still a
+    200. Revoking the token_id the caller is currently holding is
+    allowed (it's their device) and effectively signs this browser
+    out."""
+    token = _caller_token(request)
+    if not token or not auth_store.is_valid_token(token):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    google_sub = auth_store.get_sub_for_token(token)
+    if not google_sub:
+        return JSONResponse({"error": "this token has no revocable devices"}, status_code=400)
+    try:
+        body = await request.json()
+    except ValueError:
+        return JSONResponse({"error": "malformed JSON body"}, status_code=400)
+    if not isinstance(body, dict) or not body.get("token_id"):
+        return JSONResponse({"error": "missing token_id"}, status_code=400)
+    auth_store.revoke_token(google_sub, body["token_id"])
+    return JSONResponse({"ok": True})
 
 

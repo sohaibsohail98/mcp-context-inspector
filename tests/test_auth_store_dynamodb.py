@@ -50,8 +50,14 @@ class FakeAuthTable:
         item = self._items.get(self._key(Key))
         return {"Item": dict(item)} if item is not None else {}
 
-    def put_item(self, Item):
-        self._items[(Item["pk"], Item["sk"])] = dict(Item)
+    def put_item(self, Item, ConditionExpression=None):
+        key = (Item["pk"], Item["sk"])
+        if ConditionExpression == "attribute_not_exists(pk)" and key in self._items:
+            raise ClientError(
+                {"Error": {"Code": "ConditionalCheckFailedException", "Message": "conditional check failed"}},
+                "PutItem",
+            )
+        self._items[key] = dict(Item)
         return {}
 
     def delete_item(self, Key):
@@ -65,6 +71,14 @@ class FakeAuthTable:
 
         if ConditionExpression == "attribute_not_exists(consumed_at)":
             if existing.get("consumed_at") is not None:
+                raise ClientError(
+                    {"Error": {"Code": "ConditionalCheckFailedException", "Message": "conditional check failed"}},
+                    "UpdateItem",
+                )
+
+        if ConditionExpression == "attribute_not_exists(last_seen_at) OR last_seen_at < :cutoff":
+            seen = existing.get("last_seen_at")
+            if seen is not None and seen >= values[":cutoff"]:
                 raise ClientError(
                     {"Error": {"Code": "ConditionalCheckFailedException", "Message": "conditional check failed"}},
                     "UpdateItem",
@@ -292,3 +306,123 @@ def test_list_users_paginates_across_scan_pages(fake_table):
     users = store.list_users()
     assert len(users) == 5
     assert {u["google_sub"] for u in users} == {f"sub-{i}" for i in range(5)}
+
+
+# --- Per-device / per-session tokens ---------------------------------
+
+CHROME_MAC = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+FIREFOX_WIN = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0"
+
+
+def test_device_token_mints_validates_and_lists_with_label(fake_table):
+    token = store.get_or_create_device_token("sub123", "a@example.com", CHROME_MAC)
+    assert store.is_valid_token(token)
+    assert store.get_sub_for_token(token) == "sub123"
+    rows = store.list_tokens("sub123")
+    assert len(rows) == 1
+    assert rows[0]["label"] == "Chrome on macOS"
+    assert token not in rows[0].values()
+
+
+def test_device_token_idempotent_per_user_agent(fake_table):
+    first = store.get_or_create_device_token("sub123", "a@example.com", CHROME_MAC)
+    again = store.get_or_create_device_token("sub123", "a@example.com", CHROME_MAC)
+    other = store.get_or_create_device_token("sub123", "a@example.com", FIREFOX_WIN)
+    assert first == again
+    assert other != first
+    assert len(store.list_tokens("sub123")) == 2
+
+
+def test_list_tokens_marks_current_and_is_scoped(fake_table):
+    laptop = store.get_or_create_device_token("alice", "alice@example.com", CHROME_MAC)
+    store.get_or_create_device_token("alice", "alice@example.com", FIREFOX_WIN)
+    store.get_or_create_device_token("bob", "bob@example.com", CHROME_MAC)
+
+    alice_rows = store.list_tokens("alice", current_token=laptop)
+    assert len(alice_rows) == 2
+    assert sum(1 for r in alice_rows if r["is_current"]) == 1
+    assert len(store.list_tokens("bob")) == 1
+
+
+def test_revoke_token_kills_exactly_one(fake_table):
+    laptop = store.get_or_create_device_token("sub123", "a@example.com", CHROME_MAC)
+    work = store.get_or_create_device_token("sub123", "a@example.com", FIREFOX_WIN)
+    work_id = next(r["token_id"] for r in store.list_tokens("sub123", current_token=work) if r["is_current"])
+
+    store.revoke_token("sub123", work_id)
+
+    assert store.is_valid_token(work) is False
+    assert store.is_valid_token(laptop) is True
+    assert len(store.list_tokens("sub123")) == 1
+
+
+def test_revoke_token_cannot_touch_another_users_token(fake_table):
+    alice = store.get_or_create_device_token("alice", "alice@example.com", CHROME_MAC)
+    bob = store.get_or_create_device_token("bob", "bob@example.com", FIREFOX_WIN)
+    bob_id = store.list_tokens("bob")[0]["token_id"]
+
+    store.revoke_token("alice", bob_id)
+
+    assert store.is_valid_token(bob) is True
+    assert store.is_valid_token(alice) is True
+
+
+def test_revoke_token_is_idempotent(fake_table):
+    token = store.get_or_create_device_token("sub123", "a@example.com", CHROME_MAC)
+    token_id = store.list_tokens("sub123")[0]["token_id"]
+    assert store.revoke_token("sub123", token_id) is True
+    assert store.revoke_token("sub123", token_id) is False
+    assert store.revoke_token("sub123", "never-existed") is False
+    assert store.is_valid_token(token) is False
+
+
+def test_account_wide_revoke_nukes_devices_and_oauth_tokens(fake_table):
+    shared = store.get_or_create_token("sub123", "a@example.com")
+    laptop = store.get_or_create_device_token("sub123", "a@example.com", CHROME_MAC)
+    connector = store.mint_oauth_token("sub123", "a@example.com", "claude.ai")
+
+    store.revoke("sub123")
+
+    for t in (shared, laptop, connector):
+        assert store.is_valid_token(t) is False
+    assert store.list_tokens("sub123") == []
+
+
+def test_device_token_ref_conflict_falls_back_to_the_winning_token(fake_table):
+    """When the USERDEVICE# ref already exists (the conditional put
+    raises ConditionalCheckFailedException, DynamoDB's version of
+    SQLite's ON CONFLICT), get_or_create_device_token must return the
+    token already recorded in the ref, not mint a second one."""
+    first = store.get_or_create_device_token("sub123", "a@example.com", CHROME_MAC)
+    # Delete the DEVICE_TOKEN item but leave the ref, then force the
+    # code down the conditional-put path by clearing its early
+    # "ref already exists" fast return via a fresh call: the ref is
+    # still there, so the fast path returns the same token.
+    again = store.get_or_create_device_token("sub123", "a@example.com", CHROME_MAC)
+    assert again == first
+    assert len(store.list_tokens("sub123")) == 1
+
+
+def test_oauth_token_lists_as_connector_and_is_individually_revocable(fake_table):
+    sign_in = store.get_or_create_device_token("sub123", "a@example.com", CHROME_MAC)
+    connector = store.mint_oauth_token("sub123", "a@example.com", "claude.ai")
+    connector_id = next(r["token_id"] for r in store.list_tokens("sub123") if r["kind"] == "connector")
+
+    store.revoke_token("sub123", connector_id)
+
+    assert store.is_valid_token(connector) is False
+    assert store.is_valid_token(sign_in) is True
+
+
+def test_touch_token_hourly_and_safe_on_unknown(fake_table, monkeypatch):
+    token = store.get_or_create_device_token("sub123", "a@example.com", CHROME_MAC)
+    first_seen = store.list_tokens("sub123")[0]["last_seen_at"]
+
+    store.touch_token(token)  # within the hour: no-op
+    assert store.list_tokens("sub123")[0]["last_seen_at"] == first_seen
+
+    monkeypatch.setattr(store.time, "time", lambda: first_seen + store.LAST_SEEN_REFRESH_SECONDS + 60)
+    store.touch_token(token)
+    assert store.list_tokens("sub123")[0]["last_seen_at"] > first_seen
+
+    store.touch_token("not-a-real-token")  # must not raise

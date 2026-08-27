@@ -421,7 +421,9 @@ async def oauth_token(request: Request):
 
     client = auth_store.get_oauth_client(client_id)
     client_name = (client or {}).get("client_name") or "OAuth client"
-    token = auth_store.mint_oauth_token(google_sub, email, client_name)
+    token = auth_store.mint_oauth_token(
+        google_sub, email, client_name, user_agent=request.headers.get("user-agent", "")
+    )
     return _oauth_cors_json({
         "access_token": token,
         "token_type": "Bearer",
