@@ -36,3 +36,6 @@ cloudflare-proxy/.wrangler/
 docs/demo.mp4
 docs/demo.gif
 docs/_raw/
+# Candidate takes from `make demo-candidates`, kept locally for review
+# but never committed; only the one chosen as docs/demo.mp4/.gif ships.
+docs/_scratch/
