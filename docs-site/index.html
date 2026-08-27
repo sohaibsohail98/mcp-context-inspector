@@ -47,8 +47,10 @@
     border-bottom: 1px solid var(--border-soft);
   }
   .topbar .mark {
-    width: 1.65rem; height: 1.65rem; border-radius: 50%;
-    background: linear-gradient(135deg, #8ba3e0, var(--accent) 60%, #3f8f76);
+    display: flex; align-items: center; justify-content: center;
+    width: 1.65rem; height: 1.65rem; border-radius: 6px;
+    background: linear-gradient(155deg, var(--accent), #8ba3e0);
+    color: #12100a; font-size: 0.85rem; font-weight: 700;
     flex-shrink: 0;
   }
   .topbar .brand {
@@ -181,7 +183,7 @@
 <body>
 
 <div class="topbar">
-  <div class="mark"></div>
+  <div class="mark">&#9670;</div>
   <span class="brand">CtxWindow</span>
   <div class="spacer"></div>
   <a class="gh" href="https://github.com/sohaibsohail98/mcp-context-inspector" target="_blank" rel="noopener">GitHub ↗</a>
