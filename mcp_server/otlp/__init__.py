@@ -70,6 +70,7 @@ def debug_snapshot(owner):
         "recent_skipped": list(_recent_skipped[key]),
     }
 
+
 # Candidate service.name values for each vendor. Claude Code's telemetry
 # docs don't spell out the exact resource attribute value; "claude-code"
 # is the reasonable default given every other Claude Code env var/metric
@@ -123,9 +124,7 @@ def handle_logs_payload(payload, owner):
         attrs = resource_attrs_dict(resource_logs.get("resource", {}))
         vendor = detect_vendor(attrs)
         log_records = [
-            record
-            for scope_logs in resource_logs.get("scopeLogs", [])
-            for record in scope_logs.get("logRecords", [])
+            record for scope_logs in resource_logs.get("scopeLogs", []) for record in scope_logs.get("logRecords", [])
         ]
         if vendor == "claude_code":
             claude_code.handle_logs(attrs, log_records, owner)
@@ -179,11 +178,7 @@ def handle_traces_payload(payload, owner):
     for resource_spans in payload.get("resourceSpans", []):
         attrs = resource_attrs_dict(resource_spans.get("resource", {}))
         vendor = detect_vendor(attrs)
-        spans = [
-            span
-            for scope_spans in resource_spans.get("scopeSpans", [])
-            for span in scope_spans.get("spans", [])
-        ]
+        spans = [span for scope_spans in resource_spans.get("scopeSpans", []) for span in scope_spans.get("spans", [])]
         if vendor == "copilot":
             copilot.handle_traces(attrs, spans, owner)
             counts["copilot"] += len(spans)

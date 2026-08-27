@@ -30,8 +30,8 @@ def test_webapp_index_serves_shell_html():
     assert "text/html" in resp.headers["content-type"]
     assert "CtxWindow" in resp.text
     assert 'id="app"' in resp.text
-    assert '/m/app.js' in resp.text
-    assert '/m/styles.css' in resp.text
+    assert "/m/app.js" in resp.text
+    assert "/m/styles.css" in resp.text
 
 
 def test_webapp_serves_app_js():

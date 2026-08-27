@@ -28,7 +28,5 @@ def test_protected_prefix_rejects_missing_token(client, prefix):
 
 @pytest.mark.parametrize("prefix", ["/api/sessions", "/otlp/v1/logs", "/mcp"])
 def test_protected_prefix_rejects_invalid_token(client, prefix):
-    resp = client._request(
-        "GET", prefix, headers={"Authorization": "Bearer definitely-not-a-real-token"}, auth=False
-    )
+    resp = client._request("GET", prefix, headers={"Authorization": "Bearer definitely-not-a-real-token"}, auth=False)
     assert resp.status == 401

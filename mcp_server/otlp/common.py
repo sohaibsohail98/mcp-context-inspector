@@ -405,9 +405,7 @@ def _otlp_value(value_obj, _depth=0):
             v = value_obj[key]
             return int(v) if key == "intValue" and isinstance(v, str) else v
     if "arrayValue" in value_obj:
-        return [
-            _otlp_value(v, _depth + 1) for v in value_obj["arrayValue"].get("values", [])
-        ]
+        return [_otlp_value(v, _depth + 1) for v in value_obj["arrayValue"].get("values", [])]
     if "kvlistValue" in value_obj:
         return attrs_list_to_dict(value_obj["kvlistValue"].get("values", []), _depth + 1)
     return None

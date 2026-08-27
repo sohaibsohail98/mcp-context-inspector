@@ -76,7 +76,7 @@ def test_refresh_controls_present(monkeypatch):
 
     body = resp.text
     for marker in (
-        "class=\"refresh-controls\"",
+        'class="refresh-controls"',
         'id="manual-refresh-btn"',
         "function manualRefresh()",
         "function toggleAutoRefresh()",

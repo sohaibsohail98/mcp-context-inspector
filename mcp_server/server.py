@@ -84,9 +84,7 @@ if __name__ == "__main__":
     if not mcp_auth_token:
         mcp_auth_token = secrets.token_urlsafe(24)
         print(
-            "\n─── No MCP_AUTH_TOKEN set, generated one for this run "
-            + "─" * 10
-            + f"\n\n    {mcp_auth_token}\n\n"
+            "\n─── No MCP_AUTH_TOKEN set, generated one for this run " + "─" * 10 + f"\n\n    {mcp_auth_token}\n\n"
             "This is YOUR (owner) token. Paste it into your MCP-config-based "
             "client (Claude Code, curl) to authenticate. The chat "
             "UI's own MCP panel uses Google sign-in instead, not this token.\n",
@@ -103,7 +101,9 @@ if __name__ == "__main__":
         # JavaScript origin. Console setup (README) uses localhost too.
         print(f"Google sign-in enabled. Friends can get their own token at http://localhost:{server_port}/auth/login\n")
     else:
-        print("GOOGLE_OAUTH_CLIENT_ID not set: /auth/login will report sign-in as unavailable; only the owner token above works.\n")
+        print(
+            "GOOGLE_OAUTH_CLIENT_ID not set: /auth/login will report sign-in as unavailable; only the owner token above works.\n"
+        )
 
     # server.run(transport="streamable-http") doesn't expose the
     # underlying Starlette app for CORS configuration, and a browser-side

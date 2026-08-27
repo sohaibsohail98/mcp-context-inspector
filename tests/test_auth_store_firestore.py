@@ -157,8 +157,12 @@ def test_redeem_oauth_code_success_returns_identity(isolated_firestore_auth_stor
     store = isolated_firestore_auth_store
     client_id = store.register_oauth_client(["https://example.com/cb"])
     verifier, challenge = _pkce_pair()
-    code = store.issue_oauth_code(client_id, "sub123", "a@example.com", "https://example.com/cb", challenge, "https://server/mcp")
-    google_sub, email = store.redeem_oauth_code(code, client_id, "https://example.com/cb", verifier, "https://server/mcp")
+    code = store.issue_oauth_code(
+        client_id, "sub123", "a@example.com", "https://example.com/cb", challenge, "https://server/mcp"
+    )
+    google_sub, email = store.redeem_oauth_code(
+        code, client_id, "https://example.com/cb", verifier, "https://server/mcp"
+    )
     assert (google_sub, email) == ("sub123", "a@example.com")
 
 
@@ -166,7 +170,9 @@ def test_redeem_oauth_code_rejects_wrong_pkce_verifier(isolated_firestore_auth_s
     store = isolated_firestore_auth_store
     client_id = store.register_oauth_client(["https://example.com/cb"])
     verifier, challenge = _pkce_pair()
-    code = store.issue_oauth_code(client_id, "sub123", "a@example.com", "https://example.com/cb", challenge, "https://server/mcp")
+    code = store.issue_oauth_code(
+        client_id, "sub123", "a@example.com", "https://example.com/cb", challenge, "https://server/mcp"
+    )
     with pytest.raises(ValueError, match="PKCE"):
         store.redeem_oauth_code(code, client_id, "https://example.com/cb", "wrong-verifier", "https://server/mcp")
 
@@ -175,7 +181,9 @@ def test_redeem_oauth_code_rejects_reuse(isolated_firestore_auth_store):
     store = isolated_firestore_auth_store
     client_id = store.register_oauth_client(["https://example.com/cb"])
     verifier, challenge = _pkce_pair()
-    code = store.issue_oauth_code(client_id, "sub123", "a@example.com", "https://example.com/cb", challenge, "https://server/mcp")
+    code = store.issue_oauth_code(
+        client_id, "sub123", "a@example.com", "https://example.com/cb", challenge, "https://server/mcp"
+    )
     store.redeem_oauth_code(code, client_id, "https://example.com/cb", verifier, "https://server/mcp")
     with pytest.raises(ValueError, match="already used"):
         store.redeem_oauth_code(code, client_id, "https://example.com/cb", verifier, "https://server/mcp")
@@ -196,7 +204,9 @@ def test_redeem_oauth_code_rejects_mismatched_redirect_uri(isolated_firestore_au
     store = isolated_firestore_auth_store
     client_id = store.register_oauth_client(["https://example.com/cb"])
     verifier, challenge = _pkce_pair()
-    code = store.issue_oauth_code(client_id, "sub123", "a@example.com", "https://example.com/cb", challenge, "https://server/mcp")
+    code = store.issue_oauth_code(
+        client_id, "sub123", "a@example.com", "https://example.com/cb", challenge, "https://server/mcp"
+    )
     with pytest.raises(ValueError, match="does not match"):
         store.redeem_oauth_code(code, client_id, "https://different.example.com/cb", verifier, "https://server/mcp")
 
@@ -205,7 +215,9 @@ def test_redeem_oauth_code_rejects_mismatched_resource(isolated_firestore_auth_s
     store = isolated_firestore_auth_store
     client_id = store.register_oauth_client(["https://example.com/cb"])
     verifier, challenge = _pkce_pair()
-    code = store.issue_oauth_code(client_id, "sub123", "a@example.com", "https://example.com/cb", challenge, "https://server/mcp")
+    code = store.issue_oauth_code(
+        client_id, "sub123", "a@example.com", "https://example.com/cb", challenge, "https://server/mcp"
+    )
     with pytest.raises(ValueError, match="resource does not match"):
         store.redeem_oauth_code(code, client_id, "https://example.com/cb", verifier, "https://different-server/mcp")
 
@@ -250,7 +262,9 @@ def test_revoke_oauth_client_removes_registration_and_unconsumed_codes(isolated_
     store = isolated_firestore_auth_store
     client_id = store.register_oauth_client(["https://example.com/cb"])
     verifier, challenge = _pkce_pair("v")
-    code = store.issue_oauth_code(client_id, "sub123", "a@example.com", "https://example.com/cb", challenge, "https://server/mcp")
+    code = store.issue_oauth_code(
+        client_id, "sub123", "a@example.com", "https://example.com/cb", challenge, "https://server/mcp"
+    )
 
     store.revoke_oauth_client(client_id)
 
@@ -289,7 +303,9 @@ def test_revoke_oauth_token_invalidates_it_without_touching_sign_in_token(isolat
 
 # --- Per-device / per-session tokens ---------------------------------
 
-_CHROME_MAC = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+_CHROME_MAC = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+)
 _FIREFOX_WIN = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0"
 
 

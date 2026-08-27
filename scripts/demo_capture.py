@@ -96,7 +96,10 @@ REVEAL_MODE_HOLD_MS = {
 # demo_terminal.html's own per-character delay via the ?speed= param.
 TERMINAL_MS_PER_CHAR = {
     ("guided_tour", "full"): 24,
-    ("guided_tour", "short"): 16,  # the short cut is glanced at, not read closely, so the opening typing beat can move faster
+    (
+        "guided_tour",
+        "short",
+    ): 16,  # the short cut is glanced at, not read closely, so the opening typing beat can move faster
     ("cost_reveal", "full"): 20,  # quickest typing: this take is the most numbers-first, wants to get to the KPIs fast
     ("surprise", "full"): 28,
     ("multi_turn", "full"): 24,
@@ -146,10 +149,7 @@ async def capture(server_url, out_dir, headless=True, reveal_mode="guided_tour",
         # satisfied by the terminal chrome rather than the dashboard).
         terminal_page = await context.new_page()
         ms_per_char = TERMINAL_MS_PER_CHAR[(reveal_mode, cut)]
-        terminal_url = (
-            f"{server_url}/demo-static/demo_terminal.html"
-            f"?prompt={quote(prompt)}&speed={ms_per_char}"
-        )
+        terminal_url = f"{server_url}/demo-static/demo_terminal.html?prompt={quote(prompt)}&speed={ms_per_char}"
         await terminal_page.goto(terminal_url, wait_until="networkidle")
         await terminal_page.evaluate("document.fonts.ready")
         # Waits on the page's own typing promise rather than a fixed
@@ -164,7 +164,9 @@ async def capture(server_url, out_dir, headless=True, reveal_mode="guided_tour",
         # simulated with a CSS transition on one page.
         dashboard_page = await context.new_page()
         recording_started_at = time.monotonic()
-        await dashboard_page.goto(f"{server_url}/auth/login?demo=1&reveal={reveal_mode}&cut={cut}", wait_until="networkidle")
+        await dashboard_page.goto(
+            f"{server_url}/auth/login?demo=1&reveal={reveal_mode}&cut={cut}", wait_until="networkidle"
+        )
         await dashboard_page.evaluate("document.fonts.ready")
         # demo_transition.js has already painted a full-screen overlay in
         # the shared background colour by this point (it runs inline,
@@ -244,7 +246,9 @@ async def capture(server_url, out_dir, headless=True, reveal_mode="guided_tour",
     # recording is always the longer one) rather than assumed sorted.
     recorded = sorted(video_dir.glob("*.webm"), key=lambda f: f.stat().st_size)
     if len(recorded) != 2:
-        raise RuntimeError(f"expected exactly two recorded videos (terminal, dashboard) in {video_dir}, found {len(recorded)}")
+        raise RuntimeError(
+            f"expected exactly two recorded videos (terminal, dashboard) in {video_dir}, found {len(recorded)}"
+        )
     terminal_video, dashboard_video = recorded[0], recorded[1]
     return terminal_video, dashboard_video, trim_start_seconds
 

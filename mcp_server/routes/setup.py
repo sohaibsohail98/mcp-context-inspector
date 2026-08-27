@@ -45,11 +45,13 @@ async def apply_local_config(request: Request):
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=409)
 
-    return JSONResponse({
-        "ok": True,
-        "path": written_path,
-        "backed_up_to": backed_up_to,
-    })
+    return JSONResponse(
+        {
+            "ok": True,
+            "path": written_path,
+            "backed_up_to": backed_up_to,
+        }
+    )
 
 
 @server.custom_route("/setup/local-script", methods=["GET"])
@@ -163,5 +165,3 @@ async def setup_install(request: Request):
         media_type="text/x-shellscript",
         headers={"Cache-Control": "no-store"},
     )
-
-

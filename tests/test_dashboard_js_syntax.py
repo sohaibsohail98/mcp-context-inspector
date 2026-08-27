@@ -37,7 +37,5 @@ def test_rendered_dashboard_script_is_valid_javascript(monkeypatch, tmp_path):
     js_file = tmp_path / "extracted.js"
     js_file.write_text("\n".join(scripts))
 
-    result = subprocess.run(
-        ["node", "--check", str(js_file)], capture_output=True, text=True, timeout=10
-    )
+    result = subprocess.run(["node", "--check", str(js_file)], capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, f"dashboard JS has a syntax error:\n{result.stderr}"

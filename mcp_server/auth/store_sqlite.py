@@ -227,9 +227,7 @@ def list_users():
     """Admin visibility: who has ever signed in. Never returns tokens
     themselves, only enough to identify an account for revocation."""
     conn = _connect()
-    rows = conn.execute(
-        "SELECT google_sub, email, created_at FROM mcp_users ORDER BY created_at"
-    ).fetchall()
+    rows = conn.execute("SELECT google_sub, email, created_at FROM mcp_users ORDER BY created_at").fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -312,13 +310,11 @@ def touch_token(token):
     try:
         conn = _connect()
         conn.execute(
-            "UPDATE device_tokens SET last_seen_at=? "
-            "WHERE token=? AND (last_seen_at IS NULL OR last_seen_at < ?)",
+            "UPDATE device_tokens SET last_seen_at=? WHERE token=? AND (last_seen_at IS NULL OR last_seen_at < ?)",
             (now, token, cutoff),
         )
         conn.execute(
-            "UPDATE oauth_tokens SET last_seen_at=? "
-            "WHERE token=? AND (last_seen_at IS NULL OR last_seen_at < ?)",
+            "UPDATE oauth_tokens SET last_seen_at=? WHERE token=? AND (last_seen_at IS NULL OR last_seen_at < ?)",
             (now, token, cutoff),
         )
         conn.commit()
@@ -394,13 +390,9 @@ def revoke_token(google_sub, token_id):
     if not token_id:
         return False
     conn = _connect()
-    cur = conn.execute(
-        "DELETE FROM device_tokens WHERE google_sub=? AND token_id=?", (google_sub, token_id)
-    )
+    cur = conn.execute("DELETE FROM device_tokens WHERE google_sub=? AND token_id=?", (google_sub, token_id))
     deleted = cur.rowcount
-    cur = conn.execute(
-        "DELETE FROM oauth_tokens WHERE google_sub=? AND token_id=?", (google_sub, token_id)
-    )
+    cur = conn.execute("DELETE FROM oauth_tokens WHERE google_sub=? AND token_id=?", (google_sub, token_id))
     deleted += cur.rowcount
     conn.commit()
     conn.close()
@@ -479,7 +471,17 @@ def issue_oauth_code(client_id, google_sub, email, redirect_uri, code_challenge,
         "INSERT INTO oauth_codes "
         "(code_hash, client_id, google_sub, email, redirect_uri, code_challenge, resource, created_at, expires_at, consumed_at) "
         "VALUES (?,?,?,?,?,?,?,?,?,NULL)",
-        (_sha256_hex(raw), client_id, google_sub, email, redirect_uri, code_challenge, resource, now, now + ttl_seconds),
+        (
+            _sha256_hex(raw),
+            client_id,
+            google_sub,
+            email,
+            redirect_uri,
+            code_challenge,
+            resource,
+            now,
+            now + ttl_seconds,
+        ),
     )
     conn.commit()
     conn.close()
@@ -666,7 +668,9 @@ def mint_oauth_token(google_sub, email, client_name, user_agent=None):
     token = secrets.token_urlsafe(32)
     now = time.time()
     ua_label = label_for_user_agent(user_agent)
-    label = ua_label if ua_label != UNKNOWN_DEVICE else (f"{client_name} (connector)" if client_name else UNKNOWN_DEVICE)
+    label = (
+        ua_label if ua_label != UNKNOWN_DEVICE else (f"{client_name} (connector)" if client_name else UNKNOWN_DEVICE)
+    )
     conn = _connect()
     conn.execute(
         "INSERT INTO oauth_tokens (token, token_id, google_sub, email, client_name, label, created_at, last_seen_at) "

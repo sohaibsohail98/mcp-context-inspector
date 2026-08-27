@@ -97,7 +97,7 @@ def apply_settings_patch(patch, settings_path=SETTINGS_PATH):
 # importing this module, since the downloaded file has to run standalone
 # on the user's machine with no mcp_context_inspector package installed:
 # stdlib only (json, time, pathlib).
-LOCAL_SCRIPT_TEMPLATE = '''#!/usr/bin/env python3
+LOCAL_SCRIPT_TEMPLATE = """#!/usr/bin/env python3
 # This script contains your personal mcp-context-inspector token. Treat it
 # like a password: don't share this file, and delete it after running.
 #
@@ -174,7 +174,7 @@ print("Restart any running Claude Code sessions to pick it up.")
 print()
 print("This script has no further use and still contains your token. Delete it now:")
 print(f"    rm {{__file__}}")
-'''
+"""
 
 
 def render_local_script(base_url, bearer_token, script_name="mcp-context-inspector-setup.py"):
@@ -199,7 +199,7 @@ def render_local_script(base_url, bearer_token, script_name="mcp-context-inspect
 # (piped-curl and downloaded-script) execute the literal same Python.
 # python3 is a stated dependency, not a silent assumption: the script
 # checks for it first and fails with a clear message otherwise.
-INSTALL_SHELL_TEMPLATE = '''#!/bin/sh
+INSTALL_SHELL_TEMPLATE = """#!/bin/sh
 # mcp-context-inspector installer. Safe to re-run (idempotent merge of
 # your ~/.claude/settings.json, never a plain overwrite; your existing
 # file is backed up first). Not comfortable piping into a shell? Save
@@ -292,7 +292,7 @@ echo "integrations) and open a fresh one. Env vars only load once at"
 echo "process startup, so an already-open session won't pick this up."
 echo ""
 echo "Then run one prompt and check \\"Test my connection\\" on the page."
-'''
+"""
 
 
 def _sh_single_quote(value):
@@ -333,7 +333,7 @@ def render_install_shell_script(base_url, bearer_token):
 # against for sh). The two values are emitted as single-quoted
 # PowerShell literals; the only metacharacter inside a PowerShell
 # single-quoted string is `'` itself, escaped by doubling it.
-INSTALL_POWERSHELL_TEMPLATE = r'''# mcp-context-inspector installer (Windows / PowerShell).
+INSTALL_POWERSHELL_TEMPLATE = r"""# mcp-context-inspector installer (Windows / PowerShell).
 # Safe to re-run: idempotent merge of your %USERPROFILE%\.claude\settings.json,
 # never a plain overwrite; your existing file is backed up first.
 # Not comfortable piping into iex? Download and read it first:
@@ -422,7 +422,7 @@ Write-Host "integrations) and open a fresh one. Env vars only load once at"
 Write-Host "process startup, so an already-open session won't pick this up."
 Write-Host ""
 Write-Host "Then run one prompt and check 'Test my connection' on the page."
-'''
+"""
 
 
 def _ps_single_quote(value):

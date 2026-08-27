@@ -11,7 +11,6 @@ user/answer rule, runs the migration, and asserts:
   * a second --apply run is a no-op (idempotence).
 """
 
-
 import pytest
 
 from mcp_server.otlp.common import estimate_tokens
@@ -194,9 +193,7 @@ def test_apply_is_idempotent(seeded):
 
     conn = store._connect()
     first = {s: _rows(conn, s) for s in ("sessA", "sessB", "sessC")}
-    prompts_first = dict(
-        conn.execute("SELECT session_id, prompt FROM sessions").fetchall()
-    )
+    prompts_first = dict(conn.execute("SELECT session_id, prompt FROM sessions").fetchall())
     conn.close()
 
     touched_2nd = mig.run(apply=True)
@@ -204,9 +201,7 @@ def test_apply_is_idempotent(seeded):
 
     conn = store._connect()
     second = {s: _rows(conn, s) for s in ("sessA", "sessB", "sessC")}
-    prompts_second = dict(
-        conn.execute("SELECT session_id, prompt FROM sessions").fetchall()
-    )
+    prompts_second = dict(conn.execute("SELECT session_id, prompt FROM sessions").fetchall())
     conn.close()
     assert first == second
     assert prompts_first == prompts_second

@@ -279,9 +279,7 @@ def get_cost_estimate(session_id=None, period_seconds=None, owner=None):
             )
         )
     else:
-        items = _clean(
-            _scan_all(FilterExpression="sk = :sk", ExpressionAttributeValues={":sk": "SESSION"})
-        )
+        items = _clean(_scan_all(FilterExpression="sk = :sk", ExpressionAttributeValues={":sk": "SESSION"}))
     since = time.time() - period_seconds if period_seconds else 0
     return sum(i["estimated_cost"] for i in items if i["timestamp"] >= since)
 
@@ -299,9 +297,7 @@ def get_recent_sessions(limit=10, owner=None, include_test_sessions=False):
             )
         )
     else:
-        items = _clean(
-            _scan_all(FilterExpression="sk = :sk", ExpressionAttributeValues={":sk": "SESSION"})
-        )
+        items = _clean(_scan_all(FilterExpression="sk = :sk", ExpressionAttributeValues={":sk": "SESSION"}))
 
     if not include_test_sessions:
         items = [i for i in items if not i["session_id"].startswith("api-tests-")]
@@ -557,9 +553,7 @@ def close_session(session_id, final_totals=None, owner=None):
     if final_totals:
         _table.update_item(
             Key={"session_id": session_id, "sk": "SESSION"},
-            UpdateExpression=(
-                "SET input_tokens = :i, output_tokens = :o, total_tokens = :t, latency_ms = :l"
-            ),
+            UpdateExpression=("SET input_tokens = :i, output_tokens = :o, total_tokens = :t, latency_ms = :l"),
             ExpressionAttributeValues={
                 ":i": final_totals["input_tokens"],
                 ":o": final_totals["output_tokens"],

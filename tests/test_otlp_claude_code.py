@@ -340,8 +340,7 @@ def test_shape_shift_does_not_triple_user_message_blocks(isolated_sqlite_db):
             {
                 "role": "user",
                 "content": (
-                    "<system-reminder>\nSome injected context here.\n</system-reminder>\n\n"
-                    "What's the deploy process?"
+                    "<system-reminder>\nSome injected context here.\n</system-reminder>\n\nWhat's the deploy process?"
                 ),
             },
             {"role": "user", "content": "<session>\nWhat's the deploy process?\n</session>"},
@@ -389,7 +388,10 @@ def test_third_identical_resend_appends_nothing(isolated_sqlite_db):
 
     request_body = {
         "messages": [
-            {"role": "user", "content": "<system-reminder>\nSome injected context here.\n</system-reminder>\n\nWhat's the deploy process?"},
+            {
+                "role": "user",
+                "content": "<system-reminder>\nSome injected context here.\n</system-reminder>\n\nWhat's the deploy process?",
+            },
             {"role": "user", "content": "<session>\nWhat's the deploy process?\n</session>"},
         ],
     }

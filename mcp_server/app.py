@@ -31,6 +31,7 @@ def _log_tool_errors(fn):
 
     return wrapper
 
+
 # Set by MultiTokenAuthMiddleware once per request: the caller's Google
 # `sub` if they connected with a per-user token, or None if they used the
 # owner token (which sees everything). A plain contextvar rather than a

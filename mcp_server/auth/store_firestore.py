@@ -175,7 +175,10 @@ def list_users():
     """Admin visibility: who has ever signed in. Never returns tokens
     themselves, only enough to identify an account for revocation."""
     docs = _users().order_by("created_at").stream()
-    return [{"google_sub": d.id, "email": d.to_dict().get("email"), "created_at": d.to_dict().get("created_at")} for d in docs]
+    return [
+        {"google_sub": d.id, "email": d.to_dict().get("email"), "created_at": d.to_dict().get("created_at")}
+        for d in docs
+    ]
 
 
 def revoke(google_sub):
@@ -292,16 +295,16 @@ def list_tokens(google_sub, current_token=None):
     oauth_docs = _tokens().where(filter=FieldFilter("google_sub", "==", google_sub)).stream()
     for d in oauth_docs:
         t = d.to_dict()
-        label = t.get("label") or (
-            f"{t.get('client_name')} (connector)" if t.get("client_name") else UNKNOWN_DEVICE
-        )
+        label = t.get("label") or (f"{t.get('client_name')} (connector)" if t.get("client_name") else UNKNOWN_DEVICE)
         out.append(
             {
                 "token_id": t.get("token_id"),
                 "label": label,
                 "created_at": t.get("created_at"),
                 "last_seen_at": t.get("last_seen_at"),
-                "is_current": current_id is not None and t.get("token_id") is not None and t.get("token_id") == current_id,
+                "is_current": current_id is not None
+                and t.get("token_id") is not None
+                and t.get("token_id") == current_id,
                 "kind": "connector",
             }
         )
@@ -585,7 +588,9 @@ def mint_oauth_token(google_sub, email, client_name, user_agent=None):
     token = secrets.token_urlsafe(32)
     now = time.time()
     ua_label = label_for_user_agent(user_agent)
-    label = ua_label if ua_label != UNKNOWN_DEVICE else (f"{client_name} (connector)" if client_name else UNKNOWN_DEVICE)
+    label = (
+        ua_label if ua_label != UNKNOWN_DEVICE else (f"{client_name} (connector)" if client_name else UNKNOWN_DEVICE)
+    )
     _tokens().document(token).set(
         {
             "token_id": _token_id(token),

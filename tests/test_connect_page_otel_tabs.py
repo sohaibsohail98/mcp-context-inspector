@@ -86,5 +86,5 @@ def test_claude_tab_still_default_active(monkeypatch):
 
     body = resp.text
     claude_btn_start = body.index('data-tab="claude"')
-    claude_btn_line = body[max(0, claude_btn_start - 40):claude_btn_start]
+    claude_btn_line = body[max(0, claude_btn_start - 40) : claude_btn_start]
     assert "active" in claude_btn_line

@@ -36,9 +36,7 @@ def test_seed_shape(tmp_path):
     failed = conn.execute("SELECT COUNT(*) c FROM tool_calls WHERE status='error'").fetchone()["c"]
     assert failed > 0
 
-    turn_limit_answer = conn.execute(
-        "SELECT prompt FROM sessions WHERE session_id='demo-session-12'"
-    ).fetchone()
+    turn_limit_answer = conn.execute("SELECT prompt FROM sessions WHERE session_id='demo-session-12'").fetchone()
     assert turn_limit_answer is not None
 
     for row in sessions:

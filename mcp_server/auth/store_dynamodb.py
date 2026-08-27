@@ -308,7 +308,9 @@ def list_tokens(google_sub, current_token=None):
                 "label": label,
                 "created_at": item.get("created_at"),
                 "last_seen_at": item.get("last_seen_at"),
-                "is_current": current_id is not None and item.get("token_id") is not None and item.get("token_id") == current_id,
+                "is_current": current_id is not None
+                and item.get("token_id") is not None
+                and item.get("token_id") == current_id,
                 "kind": "connector",
             }
         )
@@ -530,7 +532,9 @@ def mint_oauth_token(google_sub, email, client_name, user_agent=None):
     token = secrets.token_urlsafe(32)
     now = time.time()
     ua_label = label_for_user_agent(user_agent)
-    label = ua_label if ua_label != UNKNOWN_DEVICE else (f"{client_name} (connector)" if client_name else UNKNOWN_DEVICE)
+    label = (
+        ua_label if ua_label != UNKNOWN_DEVICE else (f"{client_name} (connector)" if client_name else UNKNOWN_DEVICE)
+    )
     _table.put_item(
         Item={
             **_oauth_token_key(token),

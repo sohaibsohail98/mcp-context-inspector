@@ -172,8 +172,7 @@ _INJECTED_CONTENT = (
     "</system-reminder>"
 )
 _COMMAND_CONTENT = (
-    "<command-name>/investigate</command-name>\n"
-    "            <command-args>checkout-api p99</command-args>"
+    "<command-name>/investigate</command-name>\n            <command-args>checkout-api p99</command-args>"
 )
 
 
@@ -320,17 +319,89 @@ def _trace(*pairs):
 def build_sessions():
     sessions = []
     prompts = [
-        ("why is checkout-api p99 latency elevated?", SONNET, _trace(("list_services", "ok"), ("get_service_metrics", "ok"), ("search_logs", "ok")), [1800, 2100, 1600], "checkout-api's p99 latency rose after the 14:02 deploy; logs show connection pool exhaustion against the payments-api dependency."),
-        ("is payments-api healthy right now?", HAIKU, _trace(("get_service_metrics", "ok")), [900, 700], "payments-api is healthy: error rate 0.1%, p99 within baseline."),
-        ("what deployed to auth-api in the last 24 hours?", SONNET, _trace(("get_recent_deployments", "ok")), [1200, 950], "One deployment to auth-api 6 hours ago (build a91f3c2), no rollback since."),
-        ("compare error rates across all services this week", SONNET, _trace(("list_services", "ok"), ("get_service_metrics", "ok"), ("get_service_metrics", "ok"), ("get_service_metrics", "ok"), ("get_service_metrics", "ok")), [1900, 2200, 2000, 2100, 1700, 1300], "checkout-api and notifications both show elevated error rates this week; auth-api and payments-api are within baseline."),
-        ("why did search_logs fail for checkout-api?", HAIKU, _trace(("search_logs", "error")), [800, 650], "search_logs failed: the log index for checkout-api's most recent window hadn't finished ingesting yet; retry after a minute."),
-        ("is notifications healthy?", HAIKU, _trace(("get_service_metrics", "ok")), [750, 600], "notifications is healthy: no active incidents, latency and error rate both within baseline."),
-        ("what's driving the cost increase this month?", SONNET, _trace(("get_cost_breakdown", "ok"), ("list_services", "ok")), [2000, 1600, 1400], "The increase is driven by checkout-api's higher request volume, not a pricing or efficiency regression."),
-        ("compare checkout-api and payments-api tail latency", SONNET, _trace(("get_service_metrics", "ok"), ("get_service_metrics", "ok")), [1700, 1500, 1300], "checkout-api's p99 is roughly 3x payments-api's, consistent with the connection-pool issue found in an earlier investigation."),
-        ("did the last checkout-api deploy cause the regression?", SONNET, _trace(("get_recent_deployments", "ok"), ("get_service_metrics", "ok"), ("search_logs", "error")), [1900, 2000, 1700, 1200], "Timing lines up with the 14:02 deploy, but search_logs couldn't confirm via logs, so treat this as likely, not certain."),
-        ("list all services and their current status", HAIKU, _trace(("list_services", "ok")), [850], "5 services tracked: checkout-api, payments-api, auth-api, notifications, and search. All reporting except search, which returned no recent data."),
-        ("what tools are available to this agent?", HAIKU, _trace(), [500], "5 tools: list_services, get_service_metrics, search_logs, get_recent_deployments, get_cost_breakdown."),
+        (
+            "why is checkout-api p99 latency elevated?",
+            SONNET,
+            _trace(("list_services", "ok"), ("get_service_metrics", "ok"), ("search_logs", "ok")),
+            [1800, 2100, 1600],
+            "checkout-api's p99 latency rose after the 14:02 deploy; logs show connection pool exhaustion against the payments-api dependency.",
+        ),
+        (
+            "is payments-api healthy right now?",
+            HAIKU,
+            _trace(("get_service_metrics", "ok")),
+            [900, 700],
+            "payments-api is healthy: error rate 0.1%, p99 within baseline.",
+        ),
+        (
+            "what deployed to auth-api in the last 24 hours?",
+            SONNET,
+            _trace(("get_recent_deployments", "ok")),
+            [1200, 950],
+            "One deployment to auth-api 6 hours ago (build a91f3c2), no rollback since.",
+        ),
+        (
+            "compare error rates across all services this week",
+            SONNET,
+            _trace(
+                ("list_services", "ok"),
+                ("get_service_metrics", "ok"),
+                ("get_service_metrics", "ok"),
+                ("get_service_metrics", "ok"),
+                ("get_service_metrics", "ok"),
+            ),
+            [1900, 2200, 2000, 2100, 1700, 1300],
+            "checkout-api and notifications both show elevated error rates this week; auth-api and payments-api are within baseline.",
+        ),
+        (
+            "why did search_logs fail for checkout-api?",
+            HAIKU,
+            _trace(("search_logs", "error")),
+            [800, 650],
+            "search_logs failed: the log index for checkout-api's most recent window hadn't finished ingesting yet; retry after a minute.",
+        ),
+        (
+            "is notifications healthy?",
+            HAIKU,
+            _trace(("get_service_metrics", "ok")),
+            [750, 600],
+            "notifications is healthy: no active incidents, latency and error rate both within baseline.",
+        ),
+        (
+            "what's driving the cost increase this month?",
+            SONNET,
+            _trace(("get_cost_breakdown", "ok"), ("list_services", "ok")),
+            [2000, 1600, 1400],
+            "The increase is driven by checkout-api's higher request volume, not a pricing or efficiency regression.",
+        ),
+        (
+            "compare checkout-api and payments-api tail latency",
+            SONNET,
+            _trace(("get_service_metrics", "ok"), ("get_service_metrics", "ok")),
+            [1700, 1500, 1300],
+            "checkout-api's p99 is roughly 3x payments-api's, consistent with the connection-pool issue found in an earlier investigation.",
+        ),
+        (
+            "did the last checkout-api deploy cause the regression?",
+            SONNET,
+            _trace(("get_recent_deployments", "ok"), ("get_service_metrics", "ok"), ("search_logs", "error")),
+            [1900, 2000, 1700, 1200],
+            "Timing lines up with the 14:02 deploy, but search_logs couldn't confirm via logs, so treat this as likely, not certain.",
+        ),
+        (
+            "list all services and their current status",
+            HAIKU,
+            _trace(("list_services", "ok")),
+            [850],
+            "5 services tracked: checkout-api, payments-api, auth-api, notifications, and search. All reporting except search, which returned no recent data.",
+        ),
+        (
+            "what tools are available to this agent?",
+            HAIKU,
+            _trace(),
+            [500],
+            "5 tools: list_services, get_service_metrics, search_logs, get_recent_deployments, get_cost_breakdown.",
+        ),
         (
             "do a full multi-signal investigation of the checkout-api incident",
             SONNET,

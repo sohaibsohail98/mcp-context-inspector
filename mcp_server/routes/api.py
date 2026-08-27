@@ -20,8 +20,8 @@ async def api_sessions(request: Request):
     # account (see dev_mode.py). Anyone else's request for it is
     # silently ignored rather than erroring, so a stray query param
     # never becomes a way to probe who's on the allowlist.
-    include_test_sessions = (
-        request.query_params.get("include_test_sessions") == "1" and dev_mode.is_dev_mode_account(owner)
+    include_test_sessions = request.query_params.get("include_test_sessions") == "1" and dev_mode.is_dev_mode_account(
+        owner
     )
     return JSONResponse(store.get_recent_sessions(limit, owner=owner, include_test_sessions=include_test_sessions))
 

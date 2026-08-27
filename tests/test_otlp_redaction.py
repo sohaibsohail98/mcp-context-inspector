@@ -87,8 +87,7 @@ def test_stored_content_is_redacted_but_sizing_reflects_original(isolated_sqlite
     store = isolated_sqlite_db
 
     original_text = (
-        "<system-reminder>\nuser email: sscontactenquiries@gmail.com\n</system-reminder>\n\n"
-        "What's the deploy process?"
+        "<system-reminder>\nuser email: sscontactenquiries@gmail.com\n</system-reminder>\n\nWhat's the deploy process?"
     )
     request_body = {
         "messages": [{"role": "user", "content": original_text}],
@@ -127,7 +126,4 @@ def test_stored_content_is_redacted_but_sizing_reflects_original(isolated_sqlite
     from mcp_server.otlp.common import estimate_tokens
 
     assert injected["char_count"] + user_blocks[0]["char_count"] == len(original_text)
-    assert (
-        injected["token_estimate"] + user_blocks[0]["token_estimate"]
-        == estimate_tokens(original_text)
-    )
+    assert injected["token_estimate"] + user_blocks[0]["token_estimate"] == estimate_tokens(original_text)

@@ -675,8 +675,7 @@ async def auth_login(request: Request):
     demo_script_tag = ""
     if os.environ.get("CTXWINDOW_DEMO_MODE") == "1" and request.query_params.get("demo") == "1":
         demo_script_tag = (
-            '<script src="/demo-static/demo_transition.js"></script>'
-            '<script src="/demo-static/demo_reveal.js"></script>'
+            '<script src="/demo-static/demo_transition.js"></script><script src="/demo-static/demo_reveal.js"></script>'
         )
     # The landing hero is split at the primary CTA: intro_hero is the
     # above-the-fold pitch + live proof card, intro_rest is everything
@@ -845,7 +844,8 @@ async def auth_login(request: Request):
     canonical_origin_json = json.dumps(_public_origin(request))
     client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID")
     if not client_id:
-        return HTMLResponse(f"""<!doctype html>
+        return HTMLResponse(
+            f"""<!doctype html>
 <html><head><title>CtxWindow</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&family=Archivo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
@@ -859,7 +859,9 @@ async def auth_login(request: Request):
 </div>
 {intro_rest}
 </div>
-</body></html>""", status_code=503)
+</body></html>""",
+            status_code=503,
+        )
 
     return HTMLResponse(f"""<!doctype html>
 <html><head><title>CtxWindow</title>
@@ -2606,5 +2608,3 @@ async def auth_revoke_device(request: Request):
         return JSONResponse({"error": "missing token_id"}, status_code=400)
     auth_store.revoke_token(google_sub, body["token_id"])
     return JSONResponse({"ok": True})
-
-

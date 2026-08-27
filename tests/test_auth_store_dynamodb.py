@@ -64,7 +64,9 @@ class FakeAuthTable:
         self._items.pop(self._key(Key), None)
         return {}
 
-    def update_item(self, Key, UpdateExpression, ExpressionAttributeValues=None, ConditionExpression=None, ReturnValues=None):
+    def update_item(
+        self, Key, UpdateExpression, ExpressionAttributeValues=None, ConditionExpression=None, ReturnValues=None
+    ):
         values = ExpressionAttributeValues or {}
         key = self._key(Key)
         existing = dict(self._items.get(key, {}))
@@ -128,7 +130,9 @@ def test_get_or_create_token_mints_and_is_idempotent(fake_table):
     assert first == second
     assert store.is_valid_token(first)
     users = store.list_users()
-    assert users == [{"google_sub": "sub123", "email": "new@example.com", "created_at": pytest.approx(time.time(), abs=5)}]
+    assert users == [
+        {"google_sub": "sub123", "email": "new@example.com", "created_at": pytest.approx(time.time(), abs=5)}
+    ]
 
 
 def test_get_or_create_token_different_accounts_get_different_tokens(fake_table):
@@ -190,7 +194,9 @@ def test_redeem_oauth_code_rejects_wrong_pkce_verifier(fake_table):
     client_id = store.register_oauth_client(["https://example.com/cb"])
     verifier = "correct-verifier"
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
-    code = store.issue_oauth_code(client_id, "sub123", "a@example.com", "https://example.com/cb", challenge, "https://server/mcp")
+    code = store.issue_oauth_code(
+        client_id, "sub123", "a@example.com", "https://example.com/cb", challenge, "https://server/mcp"
+    )
     with pytest.raises(ValueError, match="PKCE"):
         store.redeem_oauth_code(code, client_id, "https://example.com/cb", "wrong-verifier", "https://server/mcp")
 
@@ -202,8 +208,12 @@ def test_redeem_oauth_code_success_returns_identity(fake_table):
     client_id = store.register_oauth_client(["https://example.com/cb"])
     verifier = "correct-verifier"
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
-    code = store.issue_oauth_code(client_id, "sub123", "a@example.com", "https://example.com/cb", challenge, "https://server/mcp")
-    google_sub, email = store.redeem_oauth_code(code, client_id, "https://example.com/cb", verifier, "https://server/mcp")
+    code = store.issue_oauth_code(
+        client_id, "sub123", "a@example.com", "https://example.com/cb", challenge, "https://server/mcp"
+    )
+    google_sub, email = store.redeem_oauth_code(
+        code, client_id, "https://example.com/cb", verifier, "https://server/mcp"
+    )
     assert (google_sub, email) == ("sub123", "a@example.com")
 
 
@@ -214,7 +224,9 @@ def test_redeem_oauth_code_rejects_reuse(fake_table):
     client_id = store.register_oauth_client(["https://example.com/cb"])
     verifier = "correct-verifier"
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
-    code = store.issue_oauth_code(client_id, "sub123", "a@example.com", "https://example.com/cb", challenge, "https://server/mcp")
+    code = store.issue_oauth_code(
+        client_id, "sub123", "a@example.com", "https://example.com/cb", challenge, "https://server/mcp"
+    )
     store.redeem_oauth_code(code, client_id, "https://example.com/cb", verifier, "https://server/mcp")
     with pytest.raises(ValueError, match="already used"):
         store.redeem_oauth_code(code, client_id, "https://example.com/cb", verifier, "https://server/mcp")
@@ -241,7 +253,9 @@ def test_redeem_oauth_code_rejects_mismatched_redirect_uri(fake_table):
     client_id = store.register_oauth_client(["https://example.com/cb"])
     verifier = "correct-verifier"
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
-    code = store.issue_oauth_code(client_id, "sub123", "a@example.com", "https://example.com/cb", challenge, "https://server/mcp")
+    code = store.issue_oauth_code(
+        client_id, "sub123", "a@example.com", "https://example.com/cb", challenge, "https://server/mcp"
+    )
     with pytest.raises(ValueError, match="does not match"):
         store.redeem_oauth_code(code, client_id, "https://different.example.com/cb", verifier, "https://server/mcp")
 
@@ -273,7 +287,9 @@ def test_revoke_oauth_client_removes_registration_and_unconsumed_codes(fake_tabl
     client_id = store.register_oauth_client(["https://example.com/cb"])
     verifier = "v"
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
-    code = store.issue_oauth_code(client_id, "sub123", "a@example.com", "https://example.com/cb", challenge, "https://server/mcp")
+    code = store.issue_oauth_code(
+        client_id, "sub123", "a@example.com", "https://example.com/cb", challenge, "https://server/mcp"
+    )
 
     store.revoke_oauth_client(client_id)
 
@@ -310,7 +326,9 @@ def test_list_users_paginates_across_scan_pages(fake_table):
 
 # --- Per-device / per-session tokens ---------------------------------
 
-CHROME_MAC = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+CHROME_MAC = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+)
 FIREFOX_WIN = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0"
 
 

@@ -248,9 +248,7 @@ def _is_genuine_user_turn(msg):
     if isinstance(content, str):
         return bool(content)
     if isinstance(content, list):
-        return any(
-            isinstance(item, dict) and item.get("type") != "tool_result" for item in content
-        )
+        return any(isinstance(item, dict) and item.get("type") != "tool_result" for item in content)
     return False
 
 
@@ -383,9 +381,7 @@ def _handle_request_body(session_id, attrs, owner):
     # before its migration run) doesn't re-append every reminder as a
     # duplicate: the old blob's fragment identities are what fresh_blocks
     # now carries.
-    existing_counts = Counter(
-        ident for b in existing for ident in _split_stored_block_identity(b)
-    )
+    existing_counts = Counter(ident for b in existing for ident in _split_stored_block_identity(b))
     seen_counts = Counter()
     for block in fresh_blocks:
         identity = _block_identity(block)

@@ -160,9 +160,7 @@ def handle_traces(resource_attrs, spans, owner):
         if trace_id in trace_session:
             return trace_session[trace_id]
         session_id = _resolve_session_id(span_attrs, resource_attrs, trace_id)
-        store.start_or_get_session(
-            session_id, owner=owner, source="copilot", model=trace_model.get(trace_id)
-        )
+        store.start_or_get_session(session_id, owner=owner, source="copilot", model=trace_model.get(trace_id))
         trace_session[trace_id] = session_id
         return session_id
 
@@ -241,17 +239,13 @@ def _handle_chat_span(span, span_attrs, session_id, owner):
     )
 
     event_attr_dicts = [
-        attrs_list_to_dict(ev.get("attributes", []))
-        for ev in (span.get("events") or [])
-        if isinstance(ev, dict)
+        attrs_list_to_dict(ev.get("attributes", [])) for ev in (span.get("events") or []) if isinstance(ev, dict)
     ]
 
     input_messages = _find_attr_value(span_attrs, event_attr_dicts, "gen_ai.input.messages")
     output_messages = _find_attr_value(span_attrs, event_attr_dicts, "gen_ai.output.messages")
 
-    blocks = _messages_to_blocks(input_messages, turn_n) + _messages_to_blocks(
-        output_messages, turn_n
-    )
+    blocks = _messages_to_blocks(input_messages, turn_n) + _messages_to_blocks(output_messages, turn_n)
     if not blocks:
         return
 
@@ -400,12 +394,7 @@ def _category_for_role(role):
 
 
 def _handle_tool_span(span, span_attrs, session_id, owner):
-    tool_name = (
-        span_attrs.get("gen_ai.tool.name")
-        or span_attrs.get("tool.name")
-        or span.get("name")
-        or "unknown_tool"
-    )
+    tool_name = span_attrs.get("gen_ai.tool.name") or span_attrs.get("tool.name") or span.get("name") or "unknown_tool"
     args = _parse_maybe_json(span_attrs.get("gen_ai.tool.call.arguments"))
     status = "error" if _tool_span_errored(span) else "success"
     store.append_tool_call(

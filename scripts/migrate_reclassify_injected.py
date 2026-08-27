@@ -394,13 +394,7 @@ class _FirestoreAdapter:
 
     def load_blocks(self, session_id):
         client = self._store._client()
-        docs = (
-            self._store._sessions(client)
-            .document(session_id)
-            .collection("context_blocks")
-            .order_by("_seq")
-            .stream()
-        )
+        docs = self._store._sessions(client).document(session_id).collection("context_blocks").order_by("_seq").stream()
         rows = []
         for d in docs:
             data = d.to_dict()
@@ -463,10 +457,7 @@ def _make_adapter():
 
 def _print_session_diff(session_id, report):
     print(f"\nsession {session_id}")
-    print(
-        f"  rows:   {report['rows_before']} -> {report['rows_after']}  "
-        f"({report['blocks_split']} block(s) split)"
-    )
+    print(f"  rows:   {report['rows_before']} -> {report['rows_after']}  ({report['blocks_split']} block(s) split)")
     print(
         f"  tokens: {report['token_total_before']} -> {report['token_total_after']}  "
         f"(delta {report['token_delta']:+d})   [MUST be 0]"

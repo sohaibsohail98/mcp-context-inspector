@@ -38,9 +38,7 @@ def _claude_code_resource(session_id):
                                 {
                                     "key": "body",
                                     "value": {
-                                        "stringValue": (
-                                            '{"messages":[{"role":"user","content":"api_tests probe"}]}'
-                                        )
+                                        "stringValue": ('{"messages":[{"role":"user","content":"api_tests probe"}]}')
                                     },
                                 },
                             ]
