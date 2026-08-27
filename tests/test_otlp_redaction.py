@@ -106,16 +106,28 @@ def test_stored_content_is_redacted_but_sizing_reflects_original(isolated_sqlite
     claude_code.handle_logs({"service.name": "claude-code"}, [record], owner=None)
 
     timeline = store.get_context_timeline("sess-redact-size")
+    # The email lives inside the <system-reminder>, which split_injected_context
+    # peels into its own `injected` block; the `user` block is the real prompt.
+    injected_blocks = [b for b in timeline if b["category"] == "injected"]
     user_blocks = [b for b in timeline if b["category"] == "user"]
+    assert len(injected_blocks) == 1
     assert len(user_blocks) == 1
-    block = user_blocks[0]
+    injected = injected_blocks[0]
 
     # Stored content must be redacted.
-    assert "sscontactenquiries@gmail.com" not in block["content"]
-    assert "[redacted-email]" in block["content"]
+    assert "sscontactenquiries@gmail.com" not in injected["content"]
+    assert "[redacted-email]" in injected["content"]
 
-    # But char_count/token_estimate must reflect the ORIGINAL, longer,
-    # pre-redaction text length -- not the redacted (shorter, since the
-    # placeholder is shorter than the real email here) text.
-    assert block["char_count"] == len(original_text)
-    assert block["char_count"] != len(block["content"])
+    # The per-fragment char_count is the ORIGINAL fragment length
+    # (pre-redaction), so it does not equal the shorter redacted preview.
+    assert injected["char_count"] != len(injected["content"])
+
+    # Split invariant: the two fragments' char_count / token_estimate sum
+    # back to the ORIGINAL whole message's, not the redacted text's.
+    from mcp_server.otlp.common import estimate_tokens
+
+    assert injected["char_count"] + user_blocks[0]["char_count"] == len(original_text)
+    assert (
+        injected["token_estimate"] + user_blocks[0]["token_estimate"]
+        == estimate_tokens(original_text)
+    )
