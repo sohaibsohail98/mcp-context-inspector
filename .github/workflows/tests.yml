@@ -11,7 +11,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      # Full-history scan, not just the diff — catches a secret in an
+      # Full-history scan, not just the diff. Catches a secret in an
       # older commit on this branch too, same class of leak that had to
       # be scrubbed from main's history with git-filter-repo once
       # already. See .githooks/pre-commit for the local, staged-diff-only
@@ -34,13 +34,13 @@ jobs:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.0.1
       - run: uv venv && uv pip install -e ".[dev]"
-      # Pure unit/in-process integration tests — no AWS credentials, no
+      # Pure unit/in-process integration tests: no AWS credentials, no
       # real DynamoDB, no real Google network calls (verify_credential
       # is monkeypatched everywhere it's tested). Runs on every push and
       # PR so a regression in the MCP server itself is caught before it
-      # ships — this package is meant to be handed to other people, so
+      # ships. This package is meant to be handed to other people, so
       # it needs to hold up on its own, not just "worked when I ran it
-      # locally once." api_tests/ is excluded here on purpose — those
+      # locally once." api_tests/ is excluded here on purpose: those
       # hit a real deployed URL over the network (see api-e2e-tests
       # below) and would make this "no network calls" job a liar.
       - run: uv run python -m pytest -v --ignore=api_tests
@@ -48,10 +48,10 @@ jobs:
   api-e2e-tests:
     runs-on: ubuntu-latest
     # Live black-box tests against the real deployed instance (see
-    # api_tests/README.md) — only runs once API_TEST_BASE_URL/
+    # api_tests/README.md). Only runs once API_TEST_BASE_URL/
     # API_TEST_TOKEN secrets exist in the repo. Without them this job
     # still runs but every test self-skips (api_tests/conftest.py), so
-    # it shows green-with-skips rather than silently not existing —
+    # it shows green-with-skips rather than silently not existing,
     # visible in the Actions UI as "needs secrets configured" instead
     # of just being absent.
     steps:

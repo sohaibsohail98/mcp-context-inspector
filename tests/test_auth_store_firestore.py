@@ -1,5 +1,5 @@
 """Regression tests for mcp_server/auth/store_firestore.py, run against
-the real Firestore emulator (FIRESTORE_EMULATOR_HOST) — not a fake/mock,
+the real Firestore emulator (FIRESTORE_EMULATOR_HOST), not a fake/mock,
 since Firestore's transaction semantics (used for get_or_create_token's
 race-safety and redeem_oauth_code's single-use enforcement) are exactly
 the behavior under test and are impractical to fake convincingly.
@@ -227,7 +227,7 @@ def test_mint_oauth_token_is_valid_and_distinct_from_sign_in_token(isolated_fire
 
 
 def test_mint_oauth_token_always_mints_fresh_token(isolated_firestore_auth_store):
-    """Unlike get_or_create_token, this never reuses/upserts — two grants
+    """Unlike get_or_create_token, this never reuses/upserts: two grants
     for the same (user, client) yield two distinct, independently
     revocable tokens."""
     store = isolated_firestore_auth_store

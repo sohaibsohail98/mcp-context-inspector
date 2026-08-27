@@ -1,4 +1,4 @@
-"""/setup/* — writes this account's MCP connection + OTLP config into
+"""/setup/*: writes this account's MCP connection + OTLP config into
 the caller's own ~/.claude/settings.json, either directly (loopback-only,
 self-hosted case) or via a downloadable personalized script or curl-able
 installer (deployed case, see mcp_server/local_setup.py for the shared
@@ -21,7 +21,7 @@ def _is_loopback_request(request):
 @server.custom_route("/setup/apply-local-config", methods=["POST"])
 async def apply_local_config(request: Request):
     """Merges this session's MCP server entry + OTLP telemetry env vars
-    into the caller's own ~/.claude/settings.json — the same shape the
+    into the caller's own ~/.claude/settings.json, the same shape the
     connect page's copy-paste snippets already produce, applied for them
     instead of by them. Backs up the existing file first (never a plain
     overwrite); merges into (never replaces) existing mcpServers/env keys,
@@ -59,7 +59,7 @@ async def local_script(request: Request):
     a caller whose browser and server aren't on the same machine (i.e. a
     deployed instance). The script is generated per-request from an
     authenticated call, never a static link, so a leaked URL alone
-    (browser history, a proxy log) can't hand out a live token —
+    (browser history, a proxy log) can't hand out a live token.
     MultiTokenAuthMiddleware already enforces the bearer-token check via
     protected_prefixes before this handler runs."""
     auth_header = request.headers.get("authorization", "")
@@ -68,7 +68,7 @@ async def local_script(request: Request):
         return JSONResponse({"error": "missing bearer token"}, status_code=401)
 
     # Unlike apply_local_config above, this route is reachable from a
-    # deployed instance — request.base_url would be wrong there (see
+    # deployed instance, where request.base_url would be wrong (see
     # _public_origin's docstring), so this one can't just use it directly.
     base = _public_origin(request)
     script = local_setup.render_local_script(base, bearer_token)
@@ -84,10 +84,10 @@ async def issue_install_code(request: Request):
     /setup/install one-liner, so the caller's real bearer token never has
     to appear in plaintext in a piped shell command (which would
     otherwise sit in shell history forever). Requires the caller's own
-    bearer token — same MultiTokenAuthMiddleware gate as every other
+    bearer token, the same MultiTokenAuthMiddleware gate as every other
     /setup/* route. The code stores the bearer token itself (see
     auth_store.issue_install_code), so this works identically whether
-    the caller used a per-user token or the shared owner token — neither
+    the caller used a per-user token or the shared owner token. Neither
     needs an identity lookup here, only the token they already have."""
     auth_header = request.headers.get("authorization", "")
     bearer_token = auth_header.removeprefix("Bearer ") if auth_header.startswith("Bearer ") else None
@@ -103,20 +103,20 @@ async def setup_install(request: Request):
     """The curl-able one-liner's target: `curl -fsSL .../setup/install?t=<code> | sh`.
     Exchanges the short-lived code minted by /setup/issue-install-code for
     the same settings.json merge /setup/local-script's downloaded script
-    performs, just delivered as `sh` instead of Python — see
-    local_setup.render_install_shell_script. No Authorization header
+    performs, just delivered as `sh` instead of Python (see
+    local_setup.render_install_shell_script). No Authorization header
     involved here at all: the code IS the credential for this one
     exchange, since a piped curl command can't carry a bearer header the
     way a browser fetch can."""
     code = request.query_params.get("t")
     if not code:
-        return PlainTextResponse("missing install code — copy the command again from the setup page.\n", status_code=400)
+        return PlainTextResponse("missing install code. Copy the command again from the setup page.\n", status_code=400)
 
     try:
         bearer_token = auth_store.redeem_install_code(code)
     except ValueError as e:
         return PlainTextResponse(
-            f"echo 'mcp-context-inspector: {e} — copy the install command again from the page.' >&2\nexit 1\n",
+            f"echo 'mcp-context-inspector: {e}. Copy the install command again from the page.' >&2\nexit 1\n",
             status_code=400,
             media_type="text/x-shellscript",
         )

@@ -1,7 +1,7 @@
 [project]
 name = "mcp-context-inspector"
 version = "0.1.0"
-description = "MCP server + execution metrics recorder for agent sessions — real-time cost/token metrics and a full Context Window Explorer breakdown, over a real MCP handshake."
+description = "MCP server + execution metrics recorder for agent sessions: real-time cost/token metrics and a full Context Window Explorer breakdown, over a real MCP handshake."
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
@@ -22,7 +22,7 @@ line-length = 120
 target-version = "py311"
 
 [tool.ruff.lint]
-# Default set (pyflakes + a slice of pycodestyle) — this is a lint pass
+# Default set (pyflakes + a slice of pycodestyle). This is a lint pass
 # to catch real mistakes (unused imports, undefined names, bare excepts),
 # not a full style-enforcement rewrite of an existing codebase.
 select = ["E", "F", "W"]

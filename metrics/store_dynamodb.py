@@ -1,4 +1,4 @@
-"""DynamoDB backend for the execution recorder — used once deployed,
+"""DynamoDB backend for the execution recorder, used once deployed,
 since a container's local filesystem doesn't persist across
 invocations and SQLite would silently lose data. Same function
 signatures as store_sqlite.py; callers (app.py, mcp_server/server.py)
@@ -7,7 +7,7 @@ active.
 
 Single-table design: partition key session_id, sort key sk distinguishes
 item type ("SESSION", "TURN#0000", "TOOLCALL#0000", ...). Aggregate reads
-(recent sessions, aggregate tool metrics) use Scan — fine at personal
+(recent sessions, aggregate tool metrics) use Scan. Fine at personal
 project scale; revisit with a GSI if that ever stops being true.
 """
 
@@ -32,7 +32,7 @@ _table = boto3.resource("dynamodb", region_name=REGION).Table(TABLE_NAME)
 
 
 def _visible(session_owner, caller_owner):
-    """caller_owner=None means "the admin/owner token" — sees
+    """caller_owner=None means "the admin/owner token", which sees
     everything. Otherwise a caller only sees sessions it owns. Same
     contract as store_sqlite.py's version."""
     return caller_owner is None or session_owner == caller_owner
@@ -46,9 +46,9 @@ def _session_owner(session_id):
 
 def record_session(prompt, model_id, loop_result, owner=None):
     """owner is the Google account `sub` that recorded this session, or
-    None for the server owner's own — see _visible(). This stays the
+    None for the server owner's own; see _visible(). This stays the
     one-shot atomic path (source='bedrock_agent', status 'closed'
-    immediately) — OTLP ingestion uses start_or_get_session + append_*
+    immediately). OTLP ingestion uses start_or_get_session + append_*
     below instead, since that data arrives incrementally."""
     session_id = str(uuid.uuid4())
     cost = estimate_cost(model_id, loop_result["input_tokens"], loop_result["output_tokens"])
@@ -117,7 +117,7 @@ def record_session(prompt, model_id, loop_result, owner=None):
 
 
 def _scan_all(**kwargs):
-    """Scan with pagination — a single Scan call stops at 1MB *scanned*
+    """Scan with pagination. A single Scan call stops at 1MB *scanned*
     (before any FilterExpression), silently returning a partial result if
     more remains. Aggregate reads (recent sessions, aggregate tool
     metrics, aggregate cost) need every item, not just the first page.
@@ -133,7 +133,7 @@ def _scan_all(**kwargs):
 
 
 def get_session_metrics(session_id, owner=None):
-    """Session metadata split from per-prompt processing metrics — same
+    """Session metadata split from per-prompt processing metrics, same
     shape contract as store_sqlite.py's version (see that docstring,
     including the owner-filtering behavior)."""
     resp = _table.get_item(Key={"session_id": session_id, "sk": "SESSION"})
@@ -203,7 +203,7 @@ def get_agent_trace(session_id, owner=None):
 
 
 def get_context_timeline(session_id, owner=None):
-    """Same contract as store_sqlite.py's version — see that docstring."""
+    """Same contract as store_sqlite.py's version; see that docstring."""
     if not _visible(_session_owner(session_id), owner):
         return []
     resp = _table.query(
@@ -227,10 +227,10 @@ def get_context_timeline(session_id, owner=None):
 
 
 def _owned_session_ids(owner):
-    """Every session_id belonging to `owner` — used to filter aggregate
+    """Every session_id belonging to `owner`, used to filter aggregate
     scans over TOOLCALL#/etc. items, which don't carry `owner`
     themselves (only the SESSION item does). A second Scan, not a JOIN
-    (DynamoDB has none) — fine at this project's personal scale, same
+    (DynamoDB has none). Fine at this project's personal scale, same
     reasoning as _scan_all's own docstring."""
     items = _scan_all(
         FilterExpression="sk = :sk AND #o = :owner",
@@ -288,7 +288,7 @@ def get_cost_estimate(session_id=None, period_seconds=None, owner=None):
 
 def get_recent_sessions(limit=10, owner=None, include_test_sessions=False):
     """include_test_sessions=False (the default) drops rows whose
-    session_id starts with "api-tests-" — see store_sqlite.py's
+    session_id starts with "api-tests-"; see store_sqlite.py's
     get_recent_sessions docstring."""
     if owner is not None:
         items = _clean(
@@ -308,7 +308,7 @@ def get_recent_sessions(limit=10, owner=None, include_test_sessions=False):
     items.sort(key=lambda i: i["timestamp"], reverse=True)
     # Turn/tool-call aggregates via bounded Queries per already-sliced-to-
     # `limit` session (partition-key lookup, same pattern
-    # get_token_breakdown uses) — not a full-table Scan per row, and
+    # get_token_breakdown uses), not a full-table Scan per row, and
     # bounded by `limit` (the dashboard's page size), not the whole table.
     result = []
     for i in items[:limit]:
@@ -345,10 +345,10 @@ def get_recent_sessions(limit=10, owner=None, include_test_sessions=False):
 
 
 def start_or_get_session(session_id, owner=None, source="claude_code", model=None):
-    """Entry point for OTLP ingestion — see store_sqlite.py's docstring
+    """Entry point for OTLP ingestion; see store_sqlite.py's docstring
     for the full reasoning; same contract here. Conditional put (not a
     plain get-then-put) closes the race where two OTLP batches for a
-    brand-new session_id arrive close together — DynamoDB rejects the
+    brand-new session_id arrive close together. DynamoDB rejects the
     second write instead of both racing to "create" the same session."""
     existing = _table.get_item(Key={"session_id": session_id, "sk": "SESSION"}).get("Item")
     if existing:
@@ -390,7 +390,7 @@ def _next_index(session_id, sk_prefix):
 
 # Two concurrent OTLP batches for the same session can both call
 # _next_index and get the same count back, then both put_item the same
-# sk — a plain put_item would let the second silently overwrite the
+# sk. A plain put_item would let the second silently overwrite the
 # first. attribute_not_exists(sk) rejects the second writer instead;
 # _put_next_indexed retries with a freshly recomputed index until a
 # write succeeds. A cap bounds retries against a determined write storm
@@ -418,7 +418,7 @@ def _put_next_indexed(session_id, sk_prefix, build_item):
 
 
 def _check_ownership_or_raise(session_id, owner):
-    """Same reasoning as store_sqlite.py's version — every append_*/
+    """Same reasoning as store_sqlite.py's version: every append_*/
     close_session call must not be able to write into a session_id
     owned by someone else. A missing session (append called before
     start_or_get_session) is treated as belonging to no one, i.e.
@@ -429,7 +429,7 @@ def _check_ownership_or_raise(session_id, owner):
 
 def _recost_session(session_id):
     """Re-derive estimated_cost from the session's own model + running
-    token totals — same reasoning as store_sqlite.py's version."""
+    token totals, same reasoning as store_sqlite.py's version."""
     item = _table.get_item(Key={"session_id": session_id, "sk": "SESSION"}).get("Item")
     if not item:
         return
@@ -506,14 +506,14 @@ _PROMPT_PREVIEW_CHARS = 200
 
 def append_context_block(session_id, block, owner=None):
     """block: {category, label, char_count, token_estimate, turn_n,
-    status=None, content=None} — same shape record_session's
+    status=None, content=None}, the same shape record_session's
     context_blocks rows use. owner must match the session's own owner.
 
     Same backfill reasoning as store_sqlite.py's version: OTLP sessions
     are created by start_or_get_session with prompt=None, since a live
     session has no single upfront prompt argument the way record_session
     does. The first real user-authored block (category == "user")
-    backfills the SESSION item's prompt attribute here, once — re-fetch
+    backfills the SESSION item's prompt attribute here, once. Re-fetch
     the item and check its current prompt before writing, so a later
     turn's user message can never overwrite turn 0's original prompt.
     Truncated for list-view display; the full text already lives in this
@@ -551,7 +551,7 @@ def append_context_block(session_id, block, owner=None):
 
 
 def close_session(session_id, final_totals=None, owner=None):
-    """Same contract as store_sqlite.py's version — see that docstring,
+    """Same contract as store_sqlite.py's version; see that docstring,
     including the owner check."""
     _check_ownership_or_raise(session_id, owner)
     if final_totals:

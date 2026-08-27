@@ -4,7 +4,7 @@ build step), served here rather than templated as Python strings the
 way routes/auth.py's desktop dashboard is.
 
 /m is NOT in MultiTokenAuthMiddleware's protected_prefixes, since these
-are just static assets containing no per-user data — auth happens
+are just static assets containing no per-user data. Auth happens
 client-side in app.js, gated at fetch time by the same bearer-token
 check as everything else under /api/*."""
 

@@ -1,10 +1,10 @@
-"""End-to-end integration tests for the OTLP telemetry pipeline —
+"""End-to-end integration tests for the OTLP telemetry pipeline:
 exercises the real HTTP layer (Starlette TestClient, in-process, no
 mocks below the route handler) all the way from a raw OTLP POST body
 through auth, the vendor mapper, the store, and back out through the
 /api/* routes the dashboard's own JS calls. Unit tests elsewhere already
 cover each layer (mapper, store, auth) in isolation with more edge
-cases — this file's job is only to prove the layers are actually wired
+cases. This file's job is only to prove the layers are actually wired
 together correctly as one pipeline, and that a Bedrock-agent session,
 a Claude-Code-via-OTLP session, and a Copilot-via-OTLP session can all
 coexist correctly under the same owner-scoped dashboard.
@@ -48,7 +48,7 @@ def _claude_code_logs_payload(session_id="e2e-cc-1"):
 
     def _attrs(event_name, body, **extra):
         # Real Claude Code puts the raw body in a `body` ATTRIBUTE, not
-        # the LogRecord's own top-level `body` field — confirmed via live
+        # the LogRecord's own top-level `body` field, confirmed via live
         # capture, see claude_code.py's module docstring.
         attrs = [
             {"key": "event.name", "value": {"stringValue": event_name}},
@@ -173,8 +173,8 @@ def test_copilot_otlp_traces_flow_to_dashboard_api(client):
 
 def test_three_sources_coexist_in_one_dashboard_view(client):
     """A Bedrock agent session (via /api/record-session), a Claude Code
-    session (via OTLP logs), and a Copilot session (via OTLP traces) —
-    all under the same owner token — must all show up together in one
+    session (via OTLP logs), and a Copilot session (via OTLP traces),
+    all under the same owner token, must all show up together in one
     /api/sessions call, each with its own correct source, and the
     dashboard-facing detail route must work identically for all three
     (no source-specific code path leaking through, per the plan's
@@ -214,14 +214,14 @@ def test_three_sources_coexist_in_one_dashboard_view(client):
         assert detail["metrics"]["session"]["source"] == row["source"]
 
     # Sanity: the pre-existing bedrock session is still exactly as
-    # record_session left it — OTLP ingestion for other sessions must
+    # record_session left it. OTLP ingestion for other sessions must
     # not have mutated it.
     bedrock_detail = client.get(f"/api/sessions/{bedrock_id}", headers=_auth()).json()
     assert bedrock_detail["metrics"]["prompt_metrics"]["total_tokens"] == 120
 
 
 def test_otlp_sessions_are_owner_scoped_like_everything_else(client, isolated_auth_store):
-    """A per-user token must only see its own OTLP-ingested sessions —
+    """A per-user token must only see its own OTLP-ingested sessions.
     same owner-isolation contract as the rest of the dashboard, proven
     end to end through the real auth middleware, not just at the store
     layer (already covered in tests/test_metrics_store_sqlite.py)."""
@@ -236,7 +236,7 @@ def test_otlp_sessions_are_owner_scoped_like_everything_else(client, isolated_au
     assert [s["session_id"] for s in alice_view] == ["alice-session"]
     assert [s["session_id"] for s in bob_view] == ["bob-session"]
 
-    # Alice can't read Bob's session by ID either — same "not found," not
+    # Alice can't read Bob's session by ID either: same "not found," not
     # a 403, so this can't be used to probe which session_ids exist.
     cross_read = client.get("/api/sessions/bob-session", headers=_auth(alice_token))
     assert cross_read.status_code == 404
@@ -265,7 +265,7 @@ def test_malformed_and_unrecognized_otlp_payloads_do_not_crash_the_pipeline(clie
 
 def test_dashboard_page_renders_after_real_otlp_ingestion(client, monkeypatch):
     """The /auth/login page (which embeds the dashboard JS/markup) must
-    still render successfully once real OTLP-sourced data exists —
+    still render successfully once real OTLP-sourced data exists,
     proves the dashboard rebuild's markup and the ingestion pipeline
     aren't accidentally coupled in a way that breaks page rendering."""
     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
@@ -279,7 +279,7 @@ def test_dashboard_page_renders_after_real_otlp_ingestion(client, monkeypatch):
 def test_otlp_cannot_hijack_another_owners_session(client, isolated_auth_store):
     """A per-user token must not be able to write into a session_id that
     already belongs to a different owner, even though OTLP session_ids
-    are client-chosen (not server-generated uuid4s) — regression test
+    are client-chosen (not server-generated uuid4s). Regression test
     for a cross-tenant write-authorization bypass found in review."""
     alice_token = isolated_auth_store.get_or_create_token("alice-sub", "alice@example.com")
     bob_token = isolated_auth_store.get_or_create_token("bob-sub", "bob@example.com")
@@ -292,7 +292,7 @@ def test_otlp_cannot_hijack_another_owners_session(client, isolated_auth_store):
     resp2 = client.post("/otlp/v1/logs", json=_claude_code_logs_payload("shared-id"), headers=_auth(bob_token))
     assert resp2.status_code == 200  # batch succeeds, but the colliding record is silently skipped
 
-    # Alice's session is untouched — still exactly what she wrote, no
+    # Alice's session is untouched: still exactly what she wrote, no
     # data injected by Bob, and Bob sees no session at all.
     alice_view = client.get("/api/sessions", headers=_auth(alice_token)).json()
     bob_view = client.get("/api/sessions", headers=_auth(bob_token)).json()

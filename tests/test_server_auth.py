@@ -1,5 +1,5 @@
 """Regression tests for MultiTokenAuthMiddleware and the /auth/login,
-/auth/verify routes — in-process via Starlette's TestClient, no real
+/auth/verify routes, in-process via Starlette's TestClient, no real
 subprocess, no real network call to Google (verify_credential is
 monkeypatched at the mcp_server.routes_auth module level, where
 auth_verify's route handler actually looks it up).
@@ -19,7 +19,7 @@ from mcp_server.auth.google import InvalidGoogleToken
 @pytest.fixture
 def client(isolated_auth_store, isolated_sqlite_db):
     """A fresh app per test, gated by MultiTokenAuthMiddleware with a
-    fixed owner token — isolated_auth_store/isolated_sqlite_db mean
+    fixed owner token. isolated_auth_store/isolated_sqlite_db mean
     neither per-user tokens nor session data leak between tests, or
     touch the developer's real local data/*.db files."""
     app = server_module.server.streamable_http_app()
@@ -87,7 +87,7 @@ def test_maybe_seed_demo_db_noop_without_src():
 def test_resolve_owner_token_strips_trailing_newline():
     """Secret Manager values created via `echo | gcloud secrets create`
     commonly carry a trailing newline that becomes part of the mounted
-    env var — an untrimmed comparison would reject the real token."""
+    env var, and an untrimmed comparison would reject the real token."""
     assert server_module._resolve_owner_token("real-token\n") == "real-token"
 
 
@@ -110,7 +110,7 @@ def test_maybe_seed_demo_db_noop_when_target_exists(tmp_path):
 
 
 def test_auth_login_is_unauthenticated(client):
-    """The pre-auth sign-in page itself must not require a token —
+    """The pre-auth sign-in page itself must not require a token:
     that would be circular."""
     resp = client.get("/auth/login")
     assert resp.status_code != 401
@@ -142,7 +142,7 @@ def test_auth_verify_mints_token_for_valid_credential(client, monkeypatch, isola
 
 
 def test_auth_verify_is_unauthenticated_itself(client, monkeypatch):
-    """Verifying doesn't require an existing MCP token — you're getting
+    """Verifying doesn't require an existing MCP token; you're getting
     your FIRST token here."""
     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
     monkeypatch.setattr(
@@ -218,7 +218,7 @@ def test_api_record_session_attributes_to_the_calling_token(client, isolated_aut
 
 # --- Developer mode: hiding api_tests probe sessions ---------------------
 # api_tests/ posts real OTLP payloads against a real deployment to verify
-# ingestion end-to-end (see api_tests/README.md) — every session_id it
+# ingestion end-to-end (see api_tests/README.md), and every session_id it
 # creates is prefixed "api-tests-". Without filtering, every account's
 # dashboard would show these synthetic probe sessions alongside real ones.
 
@@ -234,7 +234,7 @@ def _claude_code_otlp_payload(session_id):
                             {
                                 "attributes": [
                                     {"key": "session.id", "value": {"stringValue": session_id}},
-                                    # A real turn event, not just a bare log record — see
+                                    # A real turn event, not just a bare log record. See
                                     # otlp/claude_code.py's _TURN_EVENT_NAMES: a session_id
                                     # with no turn-shaped event (e.g. only
                                     # mcp_server_connection) doesn't create a session row.
@@ -286,7 +286,7 @@ def test_dev_mode_status_true_for_allowlisted_sub(client, isolated_auth_store, m
 
 def test_include_test_sessions_ignored_for_non_dev_mode_account(client, isolated_auth_store):
     """A stray ?include_test_sessions=1 from an unlisted account must be
-    silently ignored, not honored — otherwise the query param itself
+    silently ignored, not honored; otherwise the query param itself
     becomes a way to bypass the allowlist."""
     token = isolated_auth_store.get_or_create_token("not-on-allowlist-sub", "a@example.com")
     test_id = "api-tests-xyz789"
@@ -339,7 +339,7 @@ def test_api_record_session_requires_auth(client):
 
 def test_api_record_session_malformed_json_body_is_a_400_not_a_500(client):
     """request.json() on a non-JSON body must not raise an unhandled
-    JSONDecodeError — a malformed request from any client (or any
+    JSONDecodeError. A malformed request from any client (or any
     friend's agent) should get a clean, documented 400, not an
     internal server error."""
     resp = client.post(
@@ -391,7 +391,7 @@ _PROTECTED_ROUTES = [
 
 @pytest.mark.parametrize("method,path", _PROTECTED_ROUTES)
 def test_every_protected_route_rejects_garbage_token(client, method, path):
-    """A sweep, not a sample — every /api/* route must reject an
+    """A sweep, not a sample: every /api/* route must reject an
     unrecognized bearer token, not just the ones covered by earlier
     spot-checks. Adding a new route without wiring it into
     MultiTokenAuthMiddleware's prefix match would otherwise ship
@@ -410,7 +410,7 @@ def test_every_protected_route_rejects_missing_token(client, method, path):
 
 
 def test_otlp_logs_route_rejects_missing_token(client):
-    """/otlp/* must be gated exactly like /api/* — it returns the same
+    """/otlp/* must be gated exactly like /api/*, since it returns the same
     session/token data, just via a different ingestion path."""
     resp = client.post("/otlp/v1/logs", json={"resourceLogs": []})
     assert resp.status_code == 401
@@ -465,13 +465,13 @@ def test_otlp_route_rejects_non_object_body(client):
 
 # --- /otlp/debug tenant isolation ---------------------------------------
 # Regression coverage for the gap the launch-plan review found: this route
-# used to return process-global counters, not filtered by current_owner —
+# used to return process-global counters, not filtered by current_owner,
 # see mcp_server/otlp/__init__.py's owner-keyed _counts.
 
 
 def test_otlp_debug_does_not_leak_another_tenants_data(client, isolated_auth_store):
     """Alice's session landing must not flip Bob's /otlp/debug panel to
-    "connected" — the exact false-positive the review flagged."""
+    "connected": the exact false-positive the review flagged."""
     alice_token = isolated_auth_store.get_or_create_token("alice-sub", "alice@example.com")
     bob_token = isolated_auth_store.get_or_create_token("bob-sub", "bob@example.com")
 
@@ -495,7 +495,7 @@ def test_otlp_debug_does_not_leak_another_tenants_data(client, isolated_auth_sto
 
 
 def test_otlp_debug_recent_skipped_is_owner_scoped(client, isolated_auth_store):
-    """recent_skipped carries resource_attrs (hostnames, session IDs) —
+    """recent_skipped carries resource_attrs (hostnames, session IDs),
     the review's second finding was that any authenticated caller could
     read another tenant's entries here."""
     alice_token = isolated_auth_store.get_or_create_token("alice-sub", "alice@example.com")
@@ -537,7 +537,7 @@ def test_otlp_debug_owner_token_has_its_own_bucket(client, isolated_auth_store):
 
 # --- /setup/apply-local-config -----------------------------------------
 # This route does a real local filesystem write (the caller's own
-# ~/.claude/settings.json) — every test here monkeypatches
+# ~/.claude/settings.json), so every test here monkeypatches
 # server_module._CLAUDE_SETTINGS_PATH to a tmp_path file, never the real
 # path, and uses a loopback-address TestClient (Starlette's TestClient
 # defaults its "client" to ("testclient", 50000), not a loopback address,
@@ -554,7 +554,7 @@ def loopback_client(isolated_auth_store, isolated_sqlite_db):
 
 def test_apply_local_config_rejects_non_loopback(client):
     """The default `client` fixture's TestClient host is "testclient",
-    not a loopback address — exactly the case this endpoint must reject,
+    not a loopback address: exactly the case this endpoint must reject,
     since it performs a real local filesystem write."""
     resp = client.post("/setup/apply-local-config", headers={"Authorization": "Bearer owner-secret"})
     assert resp.status_code == 403
@@ -582,7 +582,7 @@ def test_apply_local_config_creates_new_file(loopback_client, tmp_path, monkeypa
 
 
 def test_apply_local_config_merges_without_clobbering_existing_entries(loopback_client, tmp_path, monkeypatch):
-    """An existing, unrelated mcpServers entry and env var must survive —
+    """An existing, unrelated mcpServers entry and env var must survive,
     this route merges into the file, it never replaces it wholesale."""
     settings_path = tmp_path / "settings.json"
     settings_path.write_text(json.dumps({
@@ -621,7 +621,7 @@ def test_apply_local_config_refuses_to_touch_invalid_json(loopback_client, tmp_p
 # of writing settings.json itself (no filesystem access to the caller's
 # machine), it hands back a personalized script that does the same write
 # when the user runs it locally. Available from any host, not just
-# loopback — the whole point is it works for a deployed instance.
+# loopback. The whole point is it works for a deployed instance.
 
 
 def test_local_script_rejects_missing_token(client):
@@ -631,7 +631,7 @@ def test_local_script_rejects_missing_token(client):
 
 def test_local_script_available_on_non_loopback_host(client):
     """Unlike /setup/apply-local-config, this route must NOT be gated to
-    loopback requests — a deployed instance is exactly the case it exists
+    loopback requests. A deployed instance is exactly the case it exists
     for."""
     resp = client.get("/setup/local-script", headers={"Authorization": "Bearer owner-secret"})
     assert resp.status_code == 200
@@ -661,7 +661,7 @@ def test_local_script_is_valid_python(client):
 # --- /setup/issue-install-code + /setup/install --------------------------
 # The curl-able one-liner: /setup/issue-install-code mints a short-lived,
 # single-use code bound to the caller's own bearer token; /setup/install
-# exchanges that code (no Authorization header — the code IS the
+# exchanges that code (no Authorization header; the code IS the
 # credential, since a piped curl command can't carry a bearer header) for
 # a POSIX-sh installer script that performs the identical settings.json
 # merge as /setup/local-script's downloaded Python script.
@@ -723,7 +723,7 @@ def test_setup_install_rejects_expired_code(client, monkeypatch, isolated_auth_s
 
     # Simulate the "copied the command, got pulled away, pasted it 20
     # minutes later" case the plan explicitly calls out as the common
-    # failure mode — backdate expires_at directly rather than sleeping.
+    # failure mode, so backdate expires_at directly rather than sleeping.
     conn = store_sqlite._connect()
     conn.execute("UPDATE install_codes SET expires_at = 0")
     conn.commit()
@@ -737,7 +737,7 @@ def test_setup_install_rejects_expired_code(client, monkeypatch, isolated_auth_s
 def test_setup_install_script_is_valid_posix_shell(client):
     """A malformed template (unbalanced braces from the heavy {{ }}
     escaping) would otherwise only surface at curl-time in someone's
-    terminal — catch it here instead by actually invoking `sh -n`
+    terminal, so catch it here instead by actually invoking `sh -n`
     (syntax-check only, no execution) against the real script."""
     import subprocess
 
@@ -763,7 +763,7 @@ def test_setup_install_script_does_not_shell_expand_the_token(client, tmp_path, 
     """Regression test for a shell-injection bug found in review: the
     installer used to interpolate BEARER_TOKEN into a double-quoted
     `python3 -c "..."` body, so a token containing `$`, backticks, or a
-    backslash was expanded/executed by `sh` before Python ever saw it —
+    backslash was expanded/executed by `sh` before Python ever saw it.
     confirmed to both silently corrupt the stored token (breaking every
     OTLP export with an unexplained 401) and, for the backtick case,
     execute arbitrary shell commands during install. The owner token
@@ -776,7 +776,7 @@ def test_setup_install_script_does_not_shell_expand_the_token(client, tmp_path, 
     from mcp_server.auth import store_sqlite
 
     # Bypass the normal issue/redeem-code flow to control the exact
-    # bearer token value embedded in the script — the malicious payload
+    # bearer token value embedded in the script. The malicious payload
     # needs to be the raw bearer token, not something that goes through
     # JSON encoding first.
     code = store_sqlite.issue_install_code(malicious_token)
@@ -798,8 +798,8 @@ def test_setup_install_script_does_not_shell_expand_the_token(client, tmp_path, 
 
 def test_setup_install_script_execution_applies_same_patch_as_local_script(client, tmp_path, monkeypatch):
     """The curl-installer must perform the identical settings.json merge
-    as /setup/local-script's downloaded Python script — same keys, same
-    values — since it's meant to be an equally valid path to the same
+    as /setup/local-script's downloaded Python script (same keys, same
+    values), since it's meant to be an equally valid path to the same
     result."""
     import subprocess
 
@@ -823,7 +823,7 @@ def test_setup_install_script_execution_applies_same_patch_as_local_script(clien
 
 def test_local_script_execution_applies_same_patch_as_apply_local_config(client, tmp_path, monkeypatch):
     """The downloaded script must perform the identical settings.json
-    merge as the in-process route — same keys, same values — since it's
+    merge as the in-process route (same keys, same values), since it's
     meant to be a drop-in substitute for users who can't reach the
     loopback-only route."""
     resp = client.get("/setup/local-script", headers={"Authorization": "Bearer owner-secret"})

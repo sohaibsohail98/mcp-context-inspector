@@ -1,4 +1,4 @@
-"""Shared pytest fixtures. These tests are pure unit tests — no live
+"""Shared pytest fixtures. These tests are pure unit tests: no live
 Bedrock/AWS calls.
 """
 
@@ -7,8 +7,8 @@ import pytest
 
 @pytest.fixture
 def isolated_sqlite_db(tmp_path, monkeypatch):
-    """Point store_sqlite at a fresh, empty DB file per test — never the
-    real data/metrics.db — so tests can't see each other's data or the
+    """Point store_sqlite at a fresh, empty DB file per test, never the
+    real data/metrics.db, so tests can't see each other's data or the
     developer's real local history."""
     from metrics import store_sqlite
 
@@ -19,11 +19,11 @@ def isolated_sqlite_db(tmp_path, monkeypatch):
 @pytest.fixture
 def isolated_firestore_db(monkeypatch):
     """Point store_firestore at a fresh, unique top-level collection per
-    test — same reasoning as isolated_sqlite_db, but Firestore (even the
+    test. Same reasoning as isolated_sqlite_db, but Firestore (even the
     emulator) has no per-test DB-file-reset primitive like SQLite's
     tmp_path, so isolation instead comes from a unique collection name
     per test rather than a unique database. Requires the emulator (see
-    FIRESTORE_EMULATOR_HOST) — callers are responsible for skipping when
+    FIRESTORE_EMULATOR_HOST); callers are responsible for skipping when
     it isn't reachable."""
     import uuid
 
@@ -35,14 +35,14 @@ def isolated_firestore_db(monkeypatch):
 
 @pytest.fixture
 def isolated_auth_store(tmp_path, monkeypatch):
-    """Point the SQLite auth backend at a fresh, empty DB file per test —
+    """Point the SQLite auth backend at a fresh, empty DB file per test,
     same reasoning as isolated_sqlite_db, never the developer's real
     data/mcp_auth.db (real per-user tokens). Imports auth_store_sqlite
     directly (not the auth_store dispatcher) for the same reason
     isolated_sqlite_db imports store_sqlite directly: DB_PATH lives on
     the concrete backend module, and functions reached only via the
     dispatcher's re-exported names would still read the *backend's own*
-    module-global DB_PATH, not a copy on the dispatcher — patching the
+    module-global DB_PATH, not a copy on the dispatcher. Patching the
     dispatcher's attribute wouldn't reach them."""
     from mcp_server.auth import store_sqlite as auth_store_sqlite
 
@@ -53,13 +53,13 @@ def isolated_auth_store(tmp_path, monkeypatch):
 @pytest.fixture
 def isolated_firestore_auth_store():
     """Point the Firestore auth backend at a fresh set of collections per
-    test, via a unique collection-name prefix — same isolation goal as
+    test, via a unique collection-name prefix. Same isolation goal as
     isolated_auth_store, but Firestore (even the emulator) has no
     per-test "fresh DB file" equivalent, so prefixing collection names
     is the practical substitute: each test gets its own
     mcp_users/oauth_clients/oauth_codes/oauth_tokens namespace and tests
     can't see each other's data. Requires FIRESTORE_EMULATOR_HOST to be
-    set — callers are expected to skip when it isn't (see
+    set; callers are expected to skip when it isn't (see
     tests/test_auth_store_firestore.py's module-level skipif)."""
     import uuid
 
@@ -91,7 +91,7 @@ def isolated_firestore_auth_store():
 @pytest.fixture(autouse=True)
 def _reset_oauth_register_rate_limit():
     """routes_oauth._register_attempts is module-level, in-memory state
-    (see that module's docstring on why) — without this, tests that hit
+    (see that module's docstring on why). Without this, tests that hit
     POST /oauth/register more than _REGISTER_MAX_PER_WINDOW times across
     the whole test session would start getting real 429s from each
     other, not from anything the test itself is checking. Autouse so
@@ -107,7 +107,7 @@ def _reset_oauth_register_rate_limit():
 @pytest.fixture(autouse=True)
 def _reset_otlp_debug_counters():
     """mcp_server.otlp's _counts/_last_accepted_at/_recent_skipped are
-    module-level, in-memory state (see that module's docstring) — same
+    module-level, in-memory state (see that module's docstring). Same
     reasoning as _reset_oauth_register_rate_limit above: without this,
     GET /otlp/debug tests would see counters left over from whatever
     other test sent OTLP payloads earlier in the same test session,

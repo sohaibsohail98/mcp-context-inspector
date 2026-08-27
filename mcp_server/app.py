@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 def _log_tool_errors(fn):
     """MCP serializes a tool exception straight into the JSON-RPC error
-    response — it never reaches Cloud Run's stdout/stderr on its own, so a
+    response; it never reaches Cloud Run's stdout/stderr on its own, so a
     failure like a locked SQLite file is otherwise invisible server-side.
     Logs, then re-raises unchanged so MCP's own error handling still runs."""
 

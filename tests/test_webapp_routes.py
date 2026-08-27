@@ -1,5 +1,5 @@
 """Smoke tests for the mobile session-history webapp's static routes
-(mcp_server/routes/webapp.py) — the /m shell, its static assets, and
+(mcp_server/routes/webapp.py): the /m shell, its static assets, and
 the redirect-handoff addition in routes/auth.py's /auth/login. Mirrors
 the TestClient-against-the-real-app pattern used by
 test_dashboard_markup.py / test_connect_page_otel_tabs.py rather than
@@ -28,7 +28,7 @@ def test_webapp_index_serves_shell_html():
         resp = client.get("/m/")
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
-    assert "Lumen" in resp.text
+    assert "CtxWindow" in resp.text
     assert 'id="app"' in resp.text
     assert '/m/app.js' in resp.text
     assert '/m/styles.css' in resp.text
@@ -58,7 +58,7 @@ def test_webapp_unknown_asset_redirects_to_index():
 
 
 def test_webapp_routes_are_not_gated_by_bearer_auth():
-    """/m/* serves static assets only (no per-user data) — auth happens
+    """/m/* serves static assets only (no per-user data); auth happens
     client-side in app.js against /api/*, which stays protected."""
     with _client() as client:
         resp = client.get("/m/")

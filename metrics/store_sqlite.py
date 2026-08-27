@@ -1,8 +1,8 @@
-"""SQLite backend for the execution recorder — local dev only. Selected
+"""SQLite backend for the execution recorder, local dev only. Selected
 via metrics/store.py's dispatcher; see store_dynamodb.py for the
 deployed backend, needed because a container's local filesystem
 doesn't persist across invocations. Same function signatures either
-way — callers go through store.py and never know which backend is
+way; callers go through store.py and never know which backend is
 active.
 """
 
@@ -75,8 +75,8 @@ _TURNS_MIGRATION_COLUMNS = ("cache_read_input_tokens", "cache_write_input_tokens
 
 
 def _migrate_turns_table(conn):
-    """CREATE TABLE IF NOT EXISTS never alters an already-existing table —
-    a turns table created before prompt caching was added has no
+    """CREATE TABLE IF NOT EXISTS never alters an already-existing table.
+    A turns table created before prompt caching was added has no
     cache_read_input_tokens/cache_write_input_tokens columns, and every
     read/write against them then crashes with "no such column" on that
     pre-existing data/metrics.db. ALTER TABLE ADD COLUMN (idempotent via
@@ -89,9 +89,9 @@ def _migrate_turns_table(conn):
 
 
 def _migrate_sessions_table(conn):
-    """Same reasoning as _migrate_turns_table — a sessions table that
+    """Same reasoning as _migrate_turns_table: a sessions table that
     predates per-owner data isolation has no `owner` column. Existing
-    rows get owner=NULL, meaning "recorded before ownership existed" —
+    rows get owner=NULL, meaning "recorded before ownership existed",
     treated the same as the server owner's own sessions (visible with
     the admin/owner token, invisible to any per-user token's filtered
     view). source/status predate OTLP ingestion the same way; ALTER
@@ -111,11 +111,11 @@ _TOOL_CALLS_MIGRATION_COLUMNS = ("latency_ms", "timestamp")
 
 
 def _migrate_tool_calls_table(conn):
-    """Same reasoning as _migrate_turns_table — the Tool calls tab
-    (docs/internal/OTLP_INTEGRATION_PLAN.md's dashboard spec) needs a per-call
+    """Same reasoning as _migrate_turns_table: the Tool calls tab
+    needs a per-call
     latency and timestamp that a pre-existing tool_calls table doesn't
     have. Both default to 0 for rows written before this column
-    existed — "unknown," not a real zero latency."""
+    existed, meaning "unknown," not a real zero latency."""
     existing = {row["name"] for row in conn.execute("PRAGMA table_info(tool_calls)")}
     for column in _TOOL_CALLS_MIGRATION_COLUMNS:
         if column not in existing:
@@ -124,11 +124,11 @@ def _migrate_tool_calls_table(conn):
 
 
 def _migrate_context_blocks_table(conn):
-    """Same reasoning as _migrate_turns_table — a context_blocks table
+    """Same reasoning as _migrate_turns_table: a context_blocks table
     from before block content was captured has no `content` column.
     Existing rows get content=NULL, meaning "not captured for this
     block" (shown as such in the Context Explorer), not an empty
-    string — those are different things: an empty string is a
+    string. Those are different things: an empty string is a
     genuinely blank block, NULL is "we never stored it"."""
     existing = {row["name"] for row in conn.execute("PRAGMA table_info(context_blocks)")}
     if "content" not in existing:
@@ -138,7 +138,7 @@ def _migrate_context_blocks_table(conn):
 def _connect():
     # CREATE TABLE IF NOT EXISTS is cheap and idempotent, so every caller
     # (record AND every read) gets a guaranteed-initialized DB through
-    # this one function — reading before any session has ever been
+    # this one function, so reading before any session has ever been
     # recorded works instead of failing.
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
@@ -158,7 +158,7 @@ def _session_owner(conn, session_id):
 
 
 def _visible(session_owner, caller_owner):
-    """caller_owner=None means "the admin/owner token" — sees
+    """caller_owner=None means "the admin/owner token", which sees
     everything. Otherwise a caller only sees sessions it owns."""
     return caller_owner is None or session_owner == caller_owner
 
@@ -167,9 +167,9 @@ def record_session(prompt, model_id, loop_result, owner=None):
     """loop_result is runtime.run_agent_loop()'s return dict. owner is
     the Google account `sub` that recorded this session, or None for
     the server owner's own (e.g. the local agent calling this directly,
-    not through an authenticated MCP connection) — see _visible(). This
+    not through an authenticated MCP connection); see _visible(). This
     stays the one-shot atomic path (source='bedrock_agent', status
-    'closed' immediately) — OTLP ingestion uses start_or_get_session +
+    'closed' immediately). OTLP ingestion uses start_or_get_session +
     append_* below instead, since that data arrives incrementally."""
     session_id = str(uuid.uuid4())
     cost = estimate_cost(model_id, loop_result["input_tokens"], loop_result["output_tokens"])
@@ -243,7 +243,7 @@ def record_session(prompt, model_id, loop_result, owner=None):
 def get_session_metrics(session_id, owner=None):
     """Session metadata and per-prompt processing metrics as separate
     sub-dicts. owner=None (the admin/owner token) sees any session; a
-    per-user owner only sees sessions it owns — everything else reads as
+    per-user owner only sees sessions it owns; everything else reads as
     "not found," the same shape as a genuinely missing session_id, so
     this can't be used to probe which session_ids exist."""
     conn = _connect()
@@ -367,7 +367,7 @@ def get_cost_estimate(session_id=None, period_seconds=None, owner=None):
 def get_context_timeline(session_id, owner=None):
     """Ordered, categorized breakdown of everything that entered this
     session's context window, with a running cumulative_tokens/
-    cumulative_pct — token_estimate is a character-based estimate (see
+    cumulative_pct. token_estimate is a character-based estimate (see
     agent/runtime.py), not exact Bedrock usage, so cumulative_pct is
     illustrative too."""
     conn = _connect()
@@ -385,12 +385,12 @@ def get_context_timeline(session_id, owner=None):
 
 def get_recent_sessions(limit=10, owner=None, include_test_sessions=False):
     """Aggregates (turn_count, cache tokens, tool call/error counts) are
-    correlated subqueries, not per-row follow-up fetches — one query
+    correlated subqueries, not per-row follow-up fetches, so one query
     total, not the N+1 pattern the dashboard's KPI strip comment
     explicitly calls out avoiding elsewhere.
 
     include_test_sessions=False (the default) excludes rows whose
-    session_id starts with "api-tests-" — the live black-box suite in
+    session_id starts with "api-tests-", the live black-box suite in
     api_tests/ posts real OTLP payloads against a real deployment and
     otherwise clutters every account's dashboard with synthetic probe
     sessions (see api_tests/client.py's session_id generation). The
@@ -426,14 +426,14 @@ def get_recent_sessions(limit=10, owner=None, include_test_sessions=False):
 
 
 def start_or_get_session(session_id, owner=None, source="claude_code", model=None):
-    """Entry point for OTLP ingestion — unlike record_session (one atomic
+    """Entry point for OTLP ingestion. Unlike record_session (one atomic
     insert once a Bedrock agent's loop finishes), a live Claude Code/
     Copilot session reports turns/tool-calls/context-blocks one at a
     time as they happen. Idempotent on session_id: a client that
     reconnects or retries a batch calls this again with the same ID and
     gets the existing session back rather than a duplicate row. The
     session_id is caller-supplied (Claude Code's/Copilot's own ID), not
-    a server-generated uuid4 like record_session's — so a caller must
+    a server-generated uuid4 like record_session's, so a caller must
     not be able to "adopt" another owner's session_id by reusing it;
     raises SessionOwnershipError when it already belongs to someone
     else."""
@@ -455,7 +455,7 @@ def start_or_get_session(session_id, owner=None, source="claude_code", model=Non
 
 def _check_ownership_or_raise(conn, session_id, owner):
     """Every append_*/close_session call must not be able to write into
-    a session_id owned by someone else — same reasoning as
+    a session_id owned by someone else, same reasoning as
     start_or_get_session's docstring. A session_id with no matching row
     yet (append called before start_or_get_session, shouldn't normally
     happen) is treated as belonging to no one, i.e. deny-by-default for
@@ -475,7 +475,7 @@ def _next_seq(conn, table, session_id, seq_column="seq"):
 
 def _recost_session(conn, session_id):
     """Re-derive estimated_cost from the session's own model + running
-    token totals — called after every append_turn, since OTLP sessions
+    token totals. Called after every append_turn, since OTLP sessions
     never get a single final loop_result to price in one shot the way
     record_session does."""
     row = conn.execute(
@@ -491,7 +491,7 @@ def append_turn(session_id, turn_data, owner=None):
     row and folds its totals into the parent session row so
     get_session_metrics/get_recent_sessions stay accurate without a
     separate aggregation pass. owner must match the session's own owner
-    (see _check_ownership_or_raise) — a per-user caller can't write into
+    (see _check_ownership_or_raise): a per-user caller can't write into
     a session_id it doesn't own."""
     conn = _connect()
     _check_ownership_or_raise(conn, session_id, owner)
@@ -555,13 +555,13 @@ _PROMPT_PREVIEW_CHARS = 200
 
 def append_context_block(session_id, block, owner=None):
     """block: {category, label, char_count, token_estimate, turn_n,
-    status=None, content=None} — same shape record_session's
+    status=None, content=None}, the same shape record_session's
     context_blocks rows use. owner must match the session's own owner
     (see _check_ownership_or_raise).
 
     OTLP sessions are created by start_or_get_session with prompt=None,
     since a live session's content arrives incrementally as blocks. The
-    first user-authored block backfills sessions.prompt here — the
+    first user-authored block backfills sessions.prompt here. The
     `prompt IS NULL` guard means a later turn's user message can never
     clobber turn 0's original prompt. Truncated for list-view display;
     the full text already lives in this block's own
@@ -597,7 +597,7 @@ def close_session(session_id, final_totals=None, owner=None):
     """Marks a session complete once the client process exits or goes
     idle past some timeout. final_totals, if given, overwrites the
     incrementally-accumulated totals with exact values (e.g. from the
-    client's own final usage report) — {input_tokens, output_tokens,
+    client's own final usage report): {input_tokens, output_tokens,
     total_tokens, latency_ms}. Optional: the dashboard already tolerates
     an 'open' session showing partial data, so a session that never
     gets explicitly closed (e.g. the client crashed) just stays 'open'

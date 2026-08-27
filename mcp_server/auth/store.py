@@ -1,9 +1,10 @@
 """Backend dispatcher for the per-user MCP token store. Same
 STORAGE_BACKEND env var as metrics/store.py, so sessions and auth always
 switch backends together. SQLite for local dev, DynamoDB or Firestore
-once deployed (see README.md's "Storage backends" — under SQLite a lost
-token row on cold start silently breaks that user's auth). Same function signatures
-either way; callers import from here and never know which is active.
+once deployed (see README.md's "Storage backends"; under SQLite a lost
+token row on cold start silently breaks that user's auth). Same function
+signatures either way; callers import from here and never know which is
+active.
 
 See mcp_server/auth/store_sqlite.py's module docstring for the data
 shape and the OAuth 2.1 + PKCE flow this backs.

@@ -1,9 +1,8 @@
 """Claude Code OTLP mapper.
 
 Parses Claude Code's native OpenTelemetry export (`http/json` protocol,
-`OTEL_LOG_RAW_API_BODIES=1` inline mode — see docs/internal/OTLP_INTEGRATION_PLAN.md,
-"### Claude Code" section) into the append_*/start_or_get_session calls in
-metrics/store.py.
+`OTEL_LOG_RAW_API_BODIES=1` inline mode) into the
+append_*/start_or_get_session calls in metrics/store.py.
 
 Bodies are the literal Anthropic Messages API JSON. The Messages API is
 stateless: every api_request_body event's `messages[]` is the FULL
@@ -20,13 +19,13 @@ assistant's fresh reply) and is always appended directly, no diffing.
 Verified against a real captured payload (CLAUDE_CODE_ENABLE_TELEMETRY=1,
 OTEL_LOG_RAW_API_BODIES=1, claude-code 2.1.233), 2026-08-20:
   - session.id, model, and event.name are all stamped on the log
-    record's own attributes (not just resource attributes) — confirmed.
+    record's own attributes (not just resource attributes).
   - event.name values are the bare event name (`"api_request_body"`,
-    not `"claude_code.api_request_body"`) — confirmed, matches
+    not `"claude_code.api_request_body"`), matching
     _handle_log_record's dispatch.
   - the raw Messages API JSON is in the log record's `body` ATTRIBUTE
-    (`attrs["body"]`), not the LogRecord's own top-level `body` field —
-    this was WRONG in the original assumption and silently broke every
+    (`attrs["body"]`), not the LogRecord's own top-level `body` field.
+    This was WRONG in the original assumption and silently broke every
     request/response body handler; fixed in _parse_body.
 
 Still unverified (no tool call happened in the captured session):
@@ -36,7 +35,7 @@ Still unverified (no tool call happened in the captured session):
   - exact latency/duration attribute name on api_response_body records
     (not present as a top-level attribute in the captured payload;
     latency/duration_ms/timestamps live inside the separate
-    claude_code.api_request event instead — see _handle_response_body)
+    claude_code.api_request event instead; see _handle_response_body)
 """
 
 import json
@@ -61,9 +60,9 @@ from mcp_server.otlp.redaction import redact
 # Narrow, deliberate exception set for per-record try/except in the batch
 # loops below: KeyError/TypeError cover malformed/missing dict shape,
 # json.JSONDecodeError covers a body string that isn't valid JSON (e.g. a
-# truncated inline body, or a body_ref-only record with no real body — see
+# truncated inline body, or a body_ref-only record with no real body; see
 # _parse_body). SessionOwnershipError covers a payload whose session.id
-# collides with a different owner's existing session — skip that record
+# collides with a different owner's existing session: skip that record
 # rather than writing into someone else's session or crashing the batch.
 # One malformed/unauthorized record must never sink the rest of the batch.
 _SKIP_EXCEPTIONS = (KeyError, TypeError, json.JSONDecodeError, SessionOwnershipError)
@@ -77,12 +76,12 @@ _SKIP_EXCEPTIONS = (KeyError, TypeError, json.JSONDecodeError, SessionOwnershipE
 def _mk_block(category, label, text, turn_n, status=None, capture_content=True):
     """capture_content=False for blocks whose `text` is a synthetic
     placeholder/redaction marker, not real content (see
-    _mk_reasoning_block) — char_count/token_estimate still reflect the
+    _mk_reasoning_block). char_count/token_estimate still reflect the
     real size, but nothing gets stored for the Context Explorer's
     expand-to-view feature to show.
 
     char_count/token_estimate are computed from the full, ORIGINAL text
-    before any redaction — these numbers must reflect real token spend,
+    before any redaction, since these numbers must reflect real token spend,
     which redaction doesn't change. `content` is redact()ed and only then
     truncated: truncating first could cut a `[redacted-...]` placeholder
     in half at the boundary."""
@@ -113,7 +112,7 @@ def _mk_tool_use_block(item, turn_n):
 def _join_text_blocks(items):
     """system/tool_result content can be a plain string OR a list of
     content blocks (e.g. `[{"type": "text", "text": "..."}]`, used when
-    cache_control markers are attached) — flatten either shape to text."""
+    cache_control markers are attached). Flattens either shape to text."""
     texts = []
     for item in items or []:
         if isinstance(item, dict) and item.get("type") == "text":
@@ -139,11 +138,11 @@ def _mk_tool_result_block(item, turn_n):
 
 def _mk_reasoning_block(item, turn_n):
     """Extended-thinking content is unconditionally redacted by Claude
-    Code even with raw bodies on (confirmed in the plan) — there is no
-    real thinking text to show. Use whatever placeholder/redaction-marker
-    text is present for sizing; if there's truly none, force a minimal
-    nonzero token_estimate (never 0 — a real reasoning block did consume
-    real tokens even though we can't see the content). status="redacted"
+    Code even with raw bodies on, so there is no real thinking text to
+    show. Use whatever placeholder/redaction-marker text is present for
+    sizing; if there's truly none, force a minimal nonzero
+    token_estimate. Never 0: a real reasoning block did consume real
+    tokens even though we can't see the content. status="redacted"
     (not baked into the label) so the dashboard's existing redacted-block
     styling/copy applies the same way a redacted tool_result's status
     does; capture_content=False since the placeholder text isn't real
@@ -184,12 +183,12 @@ def _blocks_from_message(msg, turn_n):
 def _is_genuine_user_turn(msg):
     """The Anthropic Messages API sends tool_result content back inside
     a message with role='user' (this is documented, stable API
-    behavior) — a naive 'every role==user message starts a new turn'
+    behavior). A naive 'every role==user message starts a new turn'
     rule double-counts that as a second, spurious turn for every single
     tool call, since the real new user turn only happens once per
     actual round-trip. A message counts as starting a genuine new turn
     only if it carries real user-authored content (a plain string, or
-    at least one non-tool_result content block) — a message that's
+    at least one non-tool_result content block). A message that's
     purely tool_result blocks stays attached to the turn already in
     progress."""
     content = msg.get("content")
@@ -206,7 +205,7 @@ def _walk_request_body(body):
     """Builds the FULL ordered block list implied by one api_request_body
     payload: system -> tools -> each messages[] entry's content, in
     order. turn_n increments each time a new genuine user turn is
-    crossed (see _is_genuine_user_turn) — assistant content and
+    crossed (see _is_genuine_user_turn). Assistant content and
     tool_result-only messages share that same turn_n until the next
     real user message. Caller is responsible for diffing this against
     what's already stored (see module docstring)."""
@@ -240,10 +239,10 @@ def _parse_body(attrs):
     CONFIRMED against a real captured payload (CLAUDE_CODE_ENABLE_TELEMETRY=1,
     OTEL_LOG_RAW_API_BODIES=1): the raw Messages API JSON lives in the log
     record's `body` ATTRIBUTE (inside `attributes`, alongside `body_length`/
-    `model`/etc — i.e. `attrs["body"]`, already unwrapped by
+    `model`/etc, i.e. `attrs["body"]`, already unwrapped by
     attrs_list_to_dict), not in the LogRecord's own top-level `body` field.
     That field instead carries the dotted event name
-    (`"claude_code.api_request_body"`) as its stringValue — reading it as
+    (`"claude_code.api_request_body"`) as its stringValue. Reading it as
     the payload silently no-ops every request/response body (the
     json.JSONDecodeError falls into _SKIP_EXCEPTIONS).
 
@@ -277,7 +276,7 @@ def _current_turn_n(session_id, owner):
 def _block_identity(block):
     """Hashable dedup key for a context block, used to diff a freshly
     walked block list against what's already stored (see
-    _handle_request_body). Deliberately only (category, label, content) —
+    _handle_request_body). Deliberately only (category, label, content),
     the three fields present unchanged on BOTH a freshly-built block and
     one returned by store.get_context_timeline(). turn_n/char_count/
     token_estimate/status are excluded: the counts are pure functions of
@@ -289,7 +288,7 @@ def _block_identity(block):
 def _handle_request_body(session_id, attrs, owner):
     body = _parse_body(attrs)
     if not isinstance(body, dict):
-        return  # content unavailable (e.g. body_ref-only) — nothing to walk
+        return  # content unavailable (e.g. body_ref-only), nothing to walk
     fresh_blocks = _walk_request_body(body)
     existing = store.get_context_timeline(session_id, owner=owner)
 
@@ -297,7 +296,7 @@ def _handle_request_body(session_id, attrs, owner):
     # length-based tail slice (fresh_blocks[len(existing):]). Real Claude
     # Code sessions can inject content (e.g. a <system-reminder> block)
     # ahead of already-seen text in a later request, which shifts
-    # everything after it — the length slice then re-appends
+    # everything after it; the length slice then re-appends
     # previously-stored blocks as duplicates.
     #
     # Instead, the Nth occurrence of a block identity in fresh_blocks is
@@ -311,7 +310,7 @@ def _handle_request_body(session_id, attrs, owner):
         identity = _block_identity(block)
         seen_counts[identity] += 1
         if seen_counts[identity] <= existing_counts[identity]:
-            continue  # this occurrence is already stored — skip
+            continue  # this occurrence is already stored
         store.append_context_block(session_id, block, owner=owner)
 
 
@@ -331,7 +330,7 @@ def _handle_response_body(session_id, attrs, owner):
         # Exact-count path per the plan: prefer the response's own usage
         # block over any char-based estimate. Latency: no confirmed
         # attribute name for this on api_response_body records (see
-        # module docstring) — try a couple of plausible ones, else 0
+        # module docstring), so try a couple of plausible ones, else 0
         # rather than fabricating a number.
         latency_ms = attrs.get("duration_ms") or attrs.get("latency_ms") or 0
         store.append_turn(
@@ -349,7 +348,7 @@ def _handle_response_body(session_id, attrs, owner):
 
 def _handle_tool_result(session_id, attrs, owner):
     # Attribute key names here are unverified against a real payload (see
-    # module docstring) — tool_name/success/duration_ms/error_type follow
+    # module docstring): tool_name/success/duration_ms/error_type follow
     # plausible OTel semantic-convention naming, not a confirmed schema.
     tool_name = attrs.get("tool_name") or attrs.get("tool.name") or "unknown_tool"
     status = "success" if attrs.get("success") else "error"
@@ -365,28 +364,28 @@ def _handle_tool_result(session_id, attrs, owner):
 # opposed to housekeeping Claude Code emits regardless of activity.
 # Confirmed by live capture (2026-08-27): running /clear starts a brand-
 # new session.id client-side and, if no real prompt follows, that new
-# session's ONLY log record is a lone mcp_server_connection event — a
+# session's ONLY log record is a lone mcp_server_connection event: a
 # connection-health ping, not a turn. Creating a session row for that
 # alone left a permanent, empty (prompt=None, model=None, status="open"
 # forever) row that never gets backfilled, since no further event for
-# that session_id ever arrives — exactly the "session shows up but is
-# useless" symptom reported as "missing sessions."
+# that session_id ever arrives. That is exactly the "session shows up but
+# is useless" symptom reported as "missing sessions."
 _TURN_EVENT_NAMES = {"api_request_body", "api_response_body", "tool_result", "user_prompt", "assistant_response"}
 
 
 def _handle_log_record(resource_attrs, record, owner):
     attrs = attrs_list_to_dict(record.get("attributes", []))
     # Correlation identifiers are unverified as to which level Claude
-    # Code stamps them at (log-record vs. resource) — check both, record
-    # attrs first.
+    # Code stamps them at (log-record vs. resource), so check both,
+    # record attrs first.
     session_id = attrs.get("session.id") or resource_attrs.get("session.id")
     if not session_id:
         return
 
     event_name = attrs.get("event.name")
     if event_name not in _TURN_EVENT_NAMES:
-        # mcp_server_connection and anything else: no session created —
-        # see _TURN_EVENT_NAMES's docstring. A session_id that later
+        # mcp_server_connection and anything else: no session created,
+        # per _TURN_EVENT_NAMES above. A session_id that later
         # sends a real turn event still creates its row normally at that
         # point; this only skips the empty-row case.
         return
@@ -402,8 +401,8 @@ def _handle_log_record(resource_attrs, record, owner):
         _handle_tool_result(session_id, attrs, owner)
     # user_prompt / assistant_response: session row created above (so a
     # session started this way is still visible even if bodies are ever
-    # unavailable) but content processing is still skipped on purpose —
-    # request/response bodies already carry the same content.
+    # unavailable) but content processing is still skipped on purpose,
+    # since request/response bodies already carry the same content.
 
 
 def handle_logs(resource_attrs, log_records, owner):
@@ -426,7 +425,7 @@ def _handle_metric(resource_attrs, metric, owner):
         return
     datapoints = (metric.get("sum") or metric.get("gauge") or {}).get("dataPoints", [])
     for dp in datapoints:
-        # A zero-value datapoint carries no real usage to report — same
+        # A zero-value datapoint carries no real usage to report. Same
         # "don't create a session for housekeeping, only for a real
         # turn" reasoning as _TURN_EVENT_NAMES above, applied to the
         # metrics side. The confirmed-live /clear repro that motivated

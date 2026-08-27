@@ -1,15 +1,15 @@
 """Regression tests for metrics/store_dynamodb.py, using a minimal
-in-memory fake table — not moto, not real AWS. The fake only implements
+in-memory fake table, not moto and not real AWS. The fake only implements
 the exact scan/query/get_item/batch_writer calls store_dynamodb.py
 actually issues; it is not a general DynamoDB emulator.
 
 Covers two correctness contracts:
 1. get_session_metrics must not leak the internal "sk" partition-key
-   field — its shape must match store_sqlite.py's version of the same
+   field, whose shape must match store_sqlite.py's version of the same
    function (the two are meant to be interchangeable behind
    metrics/store.py's dispatcher).
 2. Aggregate reads (get_recent_sessions, get_tool_metrics, get_cost_estimate)
-   must paginate — a single unpaginated Scan call truncates once it
+   must paginate: a single unpaginated Scan call truncates once it
    hits DynamoDB's per-call scan limit, silently undercounting/omitting
    recent items as the table grows, with no error raised.
 """
@@ -24,7 +24,7 @@ from metrics import store_dynamodb
 class _ConditionalCheckFailedException(Exception):
     """Stand-in for boto3's ClientError subclass DynamoDB raises when a
     ConditionExpression fails. Real boto3 raises a dynamically-generated
-    exception class off Table.meta.client.exceptions — this fake wires up
+    exception class off Table.meta.client.exceptions, so this fake wires up
     just enough of that attribute chain (meta.client.exceptions.<Name>)
     for start_or_get_session's `except ...ConditionalCheckFailedException`
     to catch it."""
@@ -114,7 +114,7 @@ class FakeTable:
     def put_item(self, Item, ConditionExpression=None):
         """Handles the two ConditionExpressions store_dynamodb.py issues
         ("attribute_not_exists(session_id)" from start_or_get_session,
-        "attribute_not_exists(sk)" from _put_next_indexed) — raises the
+        "attribute_not_exists(sk)" from _put_next_indexed), raises the
         fake ConditionalCheckFailedException if an item with the same
         session_id+sk already exists, otherwise upserts."""
         existing_idx = next(
@@ -135,7 +135,7 @@ class FakeTable:
     def update_item(self, Key, UpdateExpression, ExpressionAttributeValues=None, ExpressionAttributeNames=None):
         """Handles exactly the UpdateExpression shapes store_dynamodb.py
         issues: comma-separated `field = field + :val` (increment) or
-        `field = :val` / `#alias = :val` (overwrite) clauses — not a
+        `field = :val` / `#alias = :val` (overwrite) clauses, not a
         general expression parser."""
         values = ExpressionAttributeValues or {}
         names = ExpressionAttributeNames or {}
@@ -194,7 +194,7 @@ def test_get_session_metrics_strips_internal_partition_field(fake_table):
     metrics = store_dynamodb.get_session_metrics("s1")
     assert "sk" not in metrics["session"]
     assert "sk" not in metrics["prompt_metrics"]
-    # Same session/prompt_metrics split the SQLite backend returns — this
+    # Same session/prompt_metrics split the SQLite backend returns. This
     # is the interchangeability contract.
     assert set(metrics.keys()) == {"session", "prompt_metrics"}
     assert set(metrics["session"].keys()) == {"session_id", "model", "timestamp", "source", "status"}
@@ -230,7 +230,7 @@ def test_get_recent_sessions_correct_across_pages(fake_table):
 
     recent = store_dynamodb.get_recent_sessions(limit=10)
     assert len(recent) == 3
-    # Newest (highest timestamp) first — would silently drop s2 if
+    # Newest (highest timestamp) first. Would silently drop s2 if
     # pagination were broken, since it's on the last page.
     assert recent[0]["session_id"] == "s2"
 
@@ -414,7 +414,7 @@ def test_owner_defaults_to_none_backward_compatible(fake_table):
 def test_owner_filtering_survives_scan_pagination(fake_table):
     """get_recent_sessions/get_cost_estimate/get_tool_metrics with an
     owner filter all go through _scan_all, which pages. Owner filtering
-    must apply across every page, not just the first — otherwise
+    must apply across every page, not just the first; otherwise
     alice's later-paginated sessions would silently vanish from her own
     view."""
     for i in range(5):
@@ -423,7 +423,7 @@ def test_owner_filtering_survives_scan_pagination(fake_table):
         store_dynamodb.record_session(f"bob's q{i}", "m", _basic_loop_result(), owner="bob-sub")
     # Force every scan (get_recent_sessions, get_cost_estimate,
     # get_tool_metrics's _owned_session_ids lookup) to page one item at
-    # a time — the real bug this guards against only shows up past a
+    # a time. The real bug this guards against only shows up past a
     # single page.
     fake_table.page_size = 1
 
@@ -443,7 +443,7 @@ def test_owner_filtering_survives_scan_pagination(fake_table):
 
 def test_start_or_get_session_is_idempotent(fake_table):
     """OTLP payloads can arrive out of order or get retried by the
-    client — calling start_or_get_session twice for the same session_id
+    client: calling start_or_get_session twice for the same session_id
     must not create a second row or reset any totals already appended."""
     sid = store_dynamodb.start_or_get_session("otel-1", owner="u1", source="claude_code", model="claude-sonnet-4-5")
     store_dynamodb.append_turn(sid, {"input_tokens": 100, "output_tokens": 20, "latency_ms": 500})
@@ -456,13 +456,13 @@ def test_start_or_get_session_is_idempotent(fake_table):
 
 def test_start_or_get_session_conditional_put_does_not_raise(fake_table):
     """DynamoDB-specific: the real conditional put races two callers
-    creating the same session_id at once — DynamoDB rejects the loser's
+    creating the same session_id at once. DynamoDB rejects the loser's
     write with ConditionalCheckFailedException rather than letting both
     "create" it. start_or_get_session must swallow that exception
     silently (not propagate it, not duplicate the row) when the session
     already exists by the time the conditional put runs."""
     sid = store_dynamodb.start_or_get_session("otel-race", source="claude_code")
-    # Simulate a second concurrent caller for the same session_id — this
+    # Simulate a second concurrent caller for the same session_id. This
     # must hit the ConditionExpression failure path in put_item and be
     # caught, not raised.
     result = store_dynamodb.start_or_get_session("otel-race", source="claude_code")
@@ -473,7 +473,7 @@ def test_start_or_get_session_conditional_put_does_not_raise(fake_table):
 def test_append_turn_retries_past_index_collision(fake_table, monkeypatch):
     """Two concurrent OTLP batches for the same session can both call
     _next_index and get the same count back before either write commits
-    — a plain put_item would let the second silently overwrite the
+    A plain put_item would let the second silently overwrite the
     first (the DynamoDB append-race gap noted in plan.md). The
     attribute_not_exists(sk) ConditionExpression must reject the
     collision and _put_next_indexed must retry with a freshly
@@ -506,7 +506,7 @@ def test_append_turn_retries_past_index_collision(fake_table, monkeypatch):
 
 
 def test_append_turn_accumulates_session_totals(fake_table):
-    """A live Claude Code session reports turns one at a time — the
+    """A live Claude Code session reports turns one at a time. The
     parent session row's totals must reflect the running sum, not just
     the most recently appended turn."""
     sid = store_dynamodb.start_or_get_session("otel-2", source="claude_code", model="us.anthropic.claude-sonnet-4-6")
@@ -549,7 +549,7 @@ def test_append_context_block_orders_by_arrival(fake_table):
 
 
 def test_append_context_block_round_trips_content(fake_table):
-    """Same contract as store_sqlite.py's version — a block's raw text
+    """Same contract as store_sqlite.py's version: a block's raw text
     round-trips through storage; a block that never sets `content`
     reads back as None, not a crash or an empty string."""
     sid = store_dynamodb.start_or_get_session("otel-content", source="claude_code")
@@ -598,7 +598,7 @@ def test_close_session_without_final_totals_just_closes(fake_table):
 
 def test_recent_sessions_carries_source_and_status(fake_table):
     """Dashboard session list needs a per-row source badge and pressure
-    signal — both bedrock_agent (legacy) and OTLP-sourced sessions must
+    signal, so both bedrock_agent (legacy) and OTLP-sourced sessions must
     carry these fields the same way."""
     store_dynamodb.record_session("q", "m", _basic_loop_result())
     store_dynamodb.start_or_get_session("otel-7", source="copilot")
@@ -611,7 +611,7 @@ def test_recent_sessions_carries_source_and_status(fake_table):
 
 def test_recent_sessions_carries_turn_count(fake_table):
     """The session-list row needs "N turns" without a per-row follow-up
-    fetch — get_recent_sessions must return the count directly (a
+    fetch, so get_recent_sessions must return the count directly (a
     bounded per-session Query, not a full-table Scan)."""
     three_turns = _basic_loop_result(
         turns=[

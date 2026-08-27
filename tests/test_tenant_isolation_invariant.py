@@ -2,18 +2,18 @@
 promise: every route under /api/, /otlp (excluding pure ingestion
 receivers, which attribute via the owner param already threaded through
 handle_*_payload) or /setup that touches session/metrics/user data must
-read `current_owner` somewhere in its own module-level source — either to
+read `current_owner` somewhere in its own module-level source, either to
 filter its response to the caller's own data (`current_owner.get()` passed
 as an `owner=` filter) or to gate an admin-only route to the owner token
 specifically (`current_owner.get() is None`, see oauth.py's
 `_require_owner`). `current_owner` being `None` is the intentional
-owner-token/all-data path (see app.py's contextvar docstring), not a bug —
+owner-token/all-data path (see app.py's contextvar docstring), not a bug.
 this test isn't asserting every route rejects None, only that every route
 actually *reads* current_owner rather than silently ignoring it, which is
 exactly the gap a fresh review caught in GET /otlp/debug (see
 mcp_server/otlp/__init__.py's owner-keyed _counts).
 
-This is a source-inspection test, not a runtime one — it walks the
+This is a source-inspection test, not a runtime one. It walks the
 Starlette route table registered by importing mcp_server.app, resolves
 each matching endpoint back to its Python source, and checks the source
 text for `current_owner`. This catches "someone added a new route and
@@ -24,25 +24,25 @@ import inspect
 
 import pytest
 
-from mcp_server import app as app_module  # noqa: F401 — import registers all routes
+from mcp_server import app as app_module  # noqa: F401 (import registers all routes)
 from mcp_server.server import server
 
 # Prefixes that carry session/metrics/user data and therefore must respect
 # tenant isolation. Deliberately excludes /oauth/* (client registration/
-# token issuance — its own record-level ownership, not per-caller data
+# token issuance: its own record-level ownership, not per-caller data
 # filtering) and /auth/* (pre-auth sign-in, unauthenticated by design).
 _SCOPED_PREFIXES = ("/api/", "/otlp", "/setup")
 
 # Pure ingestion receivers already thread `owner=current_owner.get()`
 # through at the call site in otlp.py (see routes/otlp.py's otlp_logs/
 # otlp_metrics/otlp_traces) and pass it down into handle_*_payload, which
-# is what actually attributes stored data — checking the receiver route's
+# is what actually attributes stored data. Checking the receiver route's
 # own source text would still pass (it does read current_owner.get()), so
 # these aren't special-cased out; listed here only for documentation.
 #
 # The two oauth-admin routes below gate through a shared helper,
 # _require_owner (routes/oauth.py), rather than reading current_owner
-# inline in the endpoint body — legitimately correct (DRY across four
+# inline in the endpoint body, legitimately correct (DRY across four
 # routes), but invisible to a check of the endpoint's own source alone.
 _ADMIN_GATED_VIA_HELPER = {
     ("GET", "/api/oauth-clients"),
@@ -52,7 +52,7 @@ _ADMIN_GATED_VIA_HELPER = {
 }
 
 # /setup/* routes don't filter or attribute *stored* data by owner at
-# all — they read the caller's own bearer token straight from the
+# all: they read the caller's own bearer token straight from the
 # Authorization header and embed it into a config patch/script for that
 # same caller to run locally. There's no cross-tenant data to leak: the
 # token in the response is the exact token the caller authenticated
@@ -64,9 +64,9 @@ _NOT_OWNER_SCOPED_BY_DESIGN = {
     ("GET", "/setup/local-script"),
     # Same reasoning: /setup/issue-install-code reads the caller's own
     # bearer token from the Authorization header and mints a code bound
-    # to that exact token (see auth_store.issue_install_code) — no
+    # to that exact token (see auth_store.issue_install_code), with no
     # current_owner-filtered data involved. /setup/install exchanges that
-    # code back for the same token via auth_store.redeem_install_code —
+    # code back for the same token via auth_store.redeem_install_code,
     # the code itself, not current_owner, is the credential for this one
     # exchange (a piped curl command can't carry a bearer header).
     ("POST", "/setup/issue-install-code"),
@@ -144,12 +144,12 @@ _ROUTES_NEEDING_OWNER_CHECK = [
 def test_scoped_route_reads_current_owner(method, path, endpoint):
     """Every session/metrics/user-data route must read `current_owner`
     somewhere in its own function body, or delegate to a helper in the
-    same module that does (see _ADMIN_GATED_VIA_HELPER) — either to
+    same module that does (see _ADMIN_GATED_VIA_HELPER), either to
     filter its response (`owner=current_owner.get()`) or to gate an
     owner-only admin action (`current_owner.get() is None`).
     `current_owner` being unread is exactly the bug this test exists to
     catch: GET /otlp/debug used to return process-global counters with
-    no reference to current_owner at all — see
+    no reference to current_owner at all; see
     mcp_server/otlp/__init__.py's owner-keyed _counts."""
     source = inspect.getsource(endpoint)
     if "current_owner" in source:
@@ -163,7 +163,7 @@ def test_scoped_route_reads_current_owner(method, path, endpoint):
         return
     pytest.fail(
         f"{method} {path} ({endpoint.__module__}.{endpoint.__name__}) never reads "
-        "current_owner — every route touching session/metrics/user data must filter "
+        "current_owner. Every route touching session/metrics/user data must filter "
         "by it (or explicitly gate on current_owner.get() is None for an owner-only "
         "admin route). See this file's module docstring."
     )

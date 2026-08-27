@@ -1,5 +1,5 @@
 """Regression tests for mcp_server/auth_store_dynamodb.py, using a
-minimal in-memory fake table — not moto, not real AWS. The fake only
+minimal in-memory fake table, not moto and not real AWS. The fake only
 implements the exact get_item/put_item/update_item/delete_item/scan
 calls auth_store_dynamodb.py actually issues, mirroring the approach in
 tests/test_metrics_store_dynamodb.py.
@@ -21,7 +21,7 @@ from mcp_server.auth import store_dynamodb as store
 
 def _split_top_level(expr):
     """Splits an UpdateExpression's SET clauses on top-level commas only
-    — a plain .split(",") would also split inside `if_not_exists(a, b)`,
+    A plain .split(",") would also split inside `if_not_exists(a, b)`,
     which contains its own comma."""
     parts, depth, current = [], 0, ""
     for ch in expr:

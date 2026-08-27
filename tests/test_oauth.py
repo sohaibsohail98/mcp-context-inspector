@@ -1,5 +1,5 @@
 """Regression tests for the OAuth 2.1 + PKCE authorization server
-(/.well-known/*, /oauth/*) — the path a Connector-style MCP client uses
+(/.well-known/*, /oauth/*): the path a Connector-style MCP client uses
 when it can't just be handed a plain bearer token. Exercises the full
 discovery -> register -> authorize -> token -> use sequence end to end via
 TestClient, plus the individual failure modes (PKCE mismatch, replay,
@@ -159,7 +159,7 @@ def test_full_authorization_code_flow_yields_a_working_access_token(client):
 
 def test_issued_token_is_distinct_from_the_plain_sign_in_token(client):
     """A user who has both signed in directly (getting a mcp_users token)
-    and connected via OAuth should have two independent tokens — so
+    and connected via OAuth should have two independent tokens, so
     disconnecting the OAuth client can't take down their direct config."""
     sign_in_token = auth_store.get_or_create_token("sub123", "a@example.com")
 
@@ -355,7 +355,7 @@ def test_authorize_get_requires_google_client_id_configured(client, monkeypatch)
 # Found by an independent adversarial review of the OAuth implementation
 # and fixed the same session. `state` (and friends) are attacker-reachable:
 # anyone can register a client, then send a victim who's already signed in
-# a crafted /oauth/authorize link — the consent page is the one place
+# a crafted /oauth/authorize link. The consent page is the one place
 # those values get embedded into HTML/JS, so it's the one place a bad
 # value can turn into script execution on a page whose localStorage holds
 # a real, non-expiring bearer token.
@@ -363,7 +363,7 @@ def test_authorize_get_requires_google_client_id_configured(client, monkeypatch)
 
 def test_authorize_page_escapes_a_script_breakout_in_state(client):
     """A state value containing a literal `</script>` must not appear
-    unescaped in the response — json.dumps() alone does NOT escape `<`,
+    unescaped in the response. json.dumps() alone does NOT escape `<`,
     so naively interpolating it into a <script> block lets the HTML
     parser close the tag early regardless of JS string-escaping rules."""
     client_id = _register(client)
@@ -402,7 +402,7 @@ def test_authorize_rejects_state_over_length_cap(client):
 
 def test_authorize_rejects_empty_string_code_challenge_method(client):
     """An empty string is falsy, so the old `if code_challenge_method and
-    ... != "S256"` check silently let it through — only the explicit
+    ... != "S256"` check silently let it through. Only the explicit
     whitelist catches it."""
     client_id = _register(client)
     verifier, challenge = _pkce_pair()
@@ -421,7 +421,7 @@ def test_authorize_rejects_empty_string_code_challenge_method(client):
 
 def test_authorize_page_discloses_the_actual_redirect_host(client):
     """client_name is free text set at registration time and proves
-    nothing — the redirect host is what's actually bound to the
+    nothing: the redirect host is what's actually bound to the
     registration, so the consent page must show it, not just the name."""
     client_id = _register(client, redirect_uri="https://attacker.example/cb", client_name="Totally Legit Claude")
     verifier, challenge = _pkce_pair()
@@ -452,7 +452,7 @@ def test_register_allows_loopback_http_redirect_uri(client):
 
 def test_redeem_oauth_code_is_atomic_against_concurrent_redemption(isolated_auth_store):
     """The consume step must be a single UPDATE ... WHERE consumed_at IS
-    NULL, not a separate check-then-act — otherwise two racing
+    NULL, not a separate check-then-act; otherwise two racing
     redemptions of the same code could both pass the "not yet consumed"
     read before either writes, and both would succeed. Simulates the
     race directly at the store layer since TestClient requests are
@@ -488,7 +488,7 @@ def test_register_rate_limits_after_the_limit(client):
 
 def test_register_rate_limit_is_per_ip(client):
     """A rejected attempt from IP A must not count against IP B's own
-    window — each caller's CF-Connecting-IP is tracked independently."""
+    window, since each caller's CF-Connecting-IP is tracked independently."""
     for i in range(routes_oauth._REGISTER_MAX_PER_WINDOW):
         resp = client.post(
             "/oauth/register",
@@ -509,7 +509,7 @@ def test_register_rate_limit_is_per_ip(client):
 
 
 def test_register_rate_limit_also_counts_malformed_requests(client):
-    """The limiter checks BEFORE parsing the body, deliberately — an
+    """The limiter checks BEFORE parsing the body, deliberately: an
     attacker flooding with garbage payloads to dodge the counter must
     not get unlimited attempts."""
     for _ in range(routes_oauth._REGISTER_MAX_PER_WINDOW):

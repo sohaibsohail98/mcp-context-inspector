@@ -8,23 +8,23 @@ module docstring for the full security reasoning behind this shape,
 especially why oauth_tokens is a separate collection from mcp_users'
 own `token` field):
 
-- mcp_users/{google_sub}   — a signed-in user's own record (email,
+- mcp_users/{google_sub}   : a signed-in user's own record (email,
                               token, created_at). One doc per Google
                               account; `google_sub` (the stable,
                               non-reassignable subject identifier from
                               the verified ID token) is the doc ID, not
                               email, which a user can change.
-- oauth_clients/{client_id} — an OAuth Dynamic Client Registration
+- oauth_clients/{client_id}: an OAuth Dynamic Client Registration
                               (RFC 7591). redirect_uris is a native
                               Firestore array field, not a JSON string
-                              like the SQLite column — no json.dumps/
+                              like the SQLite column, so no json.dumps/
                               loads needed on this backend.
-- oauth_codes/{code_hash}  — a one-time authorization code. Keyed by
+- oauth_codes/{code_hash}  : a one-time authorization code. Keyed by
                               SHA-256 hash of the raw code, never the
-                              raw code itself — same reasoning as
+                              raw code itself, same reasoning as
                               hashing a password: this collection being
                               readable shouldn't hand out usable codes.
-- oauth_tokens/{token}     — an OAuth-issued access token, keyed by the
+- oauth_tokens/{token}     : an OAuth-issued access token, keyed by the
                               token value itself (already unique and
                               unguessable, so no extra ID needed).
                               Deliberately separate from mcp_users'
@@ -33,7 +33,7 @@ own `token` field):
                               same user's direct Claude Code CLI token.
 
 Uses google.cloud.firestore.Client() with Application Default
-Credentials — on Cloud Run that's the attached service account; locally
+Credentials. On Cloud Run that's the attached service account; locally
 (and in tests) set FIRESTORE_EMULATOR_HOST and the client library
 transparently points at the emulator instead, no code-level
 special-casing required.
@@ -56,8 +56,8 @@ _client = None
 def _db():
     # Lazy singleton: constructing firestore.Client() talks to metadata
     # servers / reads ADC eagerly, which we don't want to pay for at
-    # import time (e.g. for tests that only exercise other backends) —
-    # same lazy-init reasoning as store_dynamodb.py's module-level
+    # import time (e.g. for tests that only exercise other backends).
+    # Same lazy-init reasoning as store_dynamodb.py's module-level
     # boto3 resource, just deferred one step further since Client() is
     # more expensive to construct than a boto3 Table handle.
     global _client
@@ -97,14 +97,14 @@ def _s256_challenge(code_verifier):
 
 def get_or_create_token(google_sub, email):
     """Returns this Google account's MCP token, minting one on first
-    sign-in. Idempotent per google_sub — re-running the sign-in flow
+    sign-in. Idempotent per google_sub: re-running the sign-in flow
     returns the same token, not a new one.
 
     Runs the read-then-create-or-update as a single Firestore
     transaction, the equivalent of SQLite's `INSERT ... ON CONFLICT DO
     UPDATE`: two concurrent first-time sign-ins for the same brand-new
     google_sub both start a transaction, read "no doc yet," and try to
-    create one — Firestore serializes concurrent transactions that
+    create one. Firestore serializes concurrent transactions that
     touch the same document, so one commits and the other automatically
     retries, sees the now-existing doc on its retry, and returns the
     token the winner created. Either way every caller agrees on one
@@ -132,7 +132,7 @@ def is_valid_token(token):
     up by its `token` field via a query since the doc ID there is
     google_sub, not the token) or a token minted through the OAuth flow
     for a Connector-style client (oauth_tokens, looked up by doc ID
-    directly since the token IS the ID there) — both are equally valid
+    directly since the token IS the ID there). Both are equally valid
     bearer credentials from the caller's perspective; only their
     provenance differs."""
     matches = list(_users().where(filter=FieldFilter("token", "==", token)).limit(1).stream())
@@ -142,7 +142,7 @@ def is_valid_token(token):
 
 
 def get_sub_for_token(token):
-    """The google_sub that owns this token — used to attribute data
+    """The google_sub that owns this token, used to attribute data
     (record/filter by owner) to whoever's actually connected, not just
     to check "is this token valid at all." Checks both mcp_users and
     oauth_tokens (see is_valid_token). Returns None if the token doesn't
@@ -155,28 +155,28 @@ def get_sub_for_token(token):
 
 
 def list_users():
-    """Admin visibility — who has ever signed in. Never returns tokens
+    """Admin visibility: who has ever signed in. Never returns tokens
     themselves, only enough to identify an account for revocation."""
     docs = _users().order_by("created_at").stream()
     return [{"google_sub": d.id, "email": d.to_dict().get("email"), "created_at": d.to_dict().get("created_at")} for d in docs]
 
 
 def revoke(google_sub):
-    """Deletes a user's token — they'd need to sign in again to get a
+    """Deletes a user's token, so they'd need to sign in again to get a
     new one. No graceful in-place rotation; revocation is intentionally
     blunt for a personal-scale token store."""
     _users().document(google_sub).delete()
 
 
 # --- OAuth 2.1 + PKCE authorization server ------------------------------
-# Backs the /oauth/* routes in server.py — see that module's docstring for
+# Backs the /oauth/* routes in server.py; see that module's docstring for
 # the flow. A generic, spec-compliant implementation: any MCP client that
 # does OAuth discovery (Dynamic Client Registration + authorization code +
 # PKCE) can use this, not just one specific product.
 
 
 def register_oauth_client(redirect_uris, client_name=None, token_endpoint_auth_method="none"):
-    """Dynamic Client Registration (RFC 7591) — mints a fresh client_id for
+    """Dynamic Client Registration (RFC 7591). Mints a fresh client_id for
     a caller (an MCP client doing OAuth discovery) that presents at least
     one redirect URI. Raises ValueError on a malformed request; the route
     handler turns that into a 400."""
@@ -187,8 +187,8 @@ def register_oauth_client(redirect_uris, client_name=None, token_endpoint_auth_m
         if parsed.scheme not in ("https", "http") or not parsed.netloc:
             raise ValueError("redirect_uris must be absolute URLs")
         # A plain-http redirect_uri would let the one-time authorization
-        # code — and transitively, via /oauth/token, the resulting access
-        # token — travel in cleartext to anyone on-path between the
+        # code (and transitively, via /oauth/token, the resulting access
+        # token) travel in cleartext to anyone on-path between the
         # browser and that redirect target. Only allow it for a client
         # redirecting back to itself on the same machine (a CLI tool
         # completing its own loopback flow), the standard OAuth carve-out
@@ -245,8 +245,8 @@ def redeem_oauth_code(code, client_id, redirect_uri, code_verifier, resource):
     """Validates and single-use-consumes an authorization code: right
     client, right redirect_uri, unexpired, unused, and the PKCE verifier
     actually hashes to the challenge that was presented at /oauth/authorize
-    (this is what stops an attacker who intercepts the code — without the
-    verifier, which never left the original requester — from redeeming
+    (this is what stops an attacker who intercepts the code, but not the
+    verifier, which never left the original requester, from redeeming
     it). Also checks the resource (audience) matches, so a token minted
     here can't be replayed against a different MCP server. Raises
     ValueError with a caller-safe message on any failure; returns
@@ -257,10 +257,10 @@ def redeem_oauth_code(code, client_id, redirect_uri, code_verifier, resource):
     race-safe: Firestore serializes concurrent transactions touching the
     same document, so of two concurrent redemptions of the same code,
     one commits (marking consumed_at) and the other is automatically
-    retried by the client library — on retry it re-reads the doc, now
+    retried by the client library. On retry it re-reads the doc, now
     sees consumed_at already set, and raises "authorization code already
     used" itself. This mirrors SQLite's `UPDATE ... WHERE consumed_at IS
-    NULL` + rowcount check, and DynamoDB's conditional update — just
+    NULL` + rowcount check, and DynamoDB's conditional update, just
     achieved via transaction retry instead of an explicit conditional
     write."""
     code_hash = _sha256_hex(code)
@@ -292,14 +292,14 @@ def redeem_oauth_code(code, client_id, redirect_uri, code_verifier, resource):
 
 
 def issue_install_code(bearer_token, ttl_seconds=local_setup.INSTALL_CODE_TTL_SECONDS):
-    """Mints a one-time code for the /setup/install curl-able one-liner —
-    the page hands this to a signed-in caller instead of embedding their
+    """Mints a one-time code for the /setup/install curl-able one-liner.
+    The page hands this to a signed-in caller instead of embedding their
     real bearer token in plaintext (which would otherwise end up in shell
     history forever). Stores bearer_token itself (not an identity to
-    re-derive it from later) — works identically for a per-user token or
+    re-derive it from later), so it works identically for a per-user token or
     the shared owner token. Returns the raw code (shown exactly once);
     only its hash is stored, same reasoning as issue_oauth_code.
-    Deliberately a separate collection from oauth_codes — no
+    Deliberately a separate collection from oauth_codes, with no
     client_id/redirect_uri/PKCE, since there's no OAuth client or browser
     redirect involved here."""
     raw = secrets.token_urlsafe(32)
@@ -344,9 +344,9 @@ def redeem_install_code(code):
 
 
 def list_oauth_clients():
-    """Admin visibility — every OAuth client that's ever completed Dynamic
+    """Admin visibility: every OAuth client that's ever completed Dynamic
     Client Registration. No client secret to redact (token_endpoint_auth_method
-    is always "none" — these are public clients, PKCE is the actual
+    is always "none": these are public clients, and PKCE is the actual
     protection), so this is safe to return in full."""
     docs = _clients().order_by("created_at").stream()
     clients = []
@@ -362,7 +362,7 @@ def revoke_oauth_client(client_id):
     """Deletes a client's registration and any of its outstanding
     (unconsumed) authorization codes, so it can no longer complete a new
     /oauth/authorize -> /oauth/token exchange. Does NOT retroactively
-    invalidate access tokens this client already obtained — oauth_tokens
+    invalidate access tokens this client already obtained. oauth_tokens
     only records client_name (a caller-supplied display string, not
     guaranteed unique per client_id), so there's no safe way to map a
     token back to the exact client that requested it. Revoke those
@@ -380,7 +380,7 @@ def revoke_oauth_client(client_id):
 
 
 def list_oauth_tokens():
-    """Admin visibility — every access token issued via the OAuth flow.
+    """Admin visibility: every access token issued via the OAuth flow.
     Never returns the token value itself, only enough to identify and
     revoke it (see revoke_oauth_token)."""
     docs = _tokens().order_by("created_at").stream()
@@ -400,7 +400,7 @@ def list_oauth_tokens():
 
 
 def revoke_oauth_token(token):
-    """Deletes one OAuth-issued access token — the client that held it
+    """Deletes one OAuth-issued access token. The client that held it
     needs to redo the full authorization flow to get a new one. Doesn't
     touch mcp_users' own token (see revoke()), so this can't accidentally
     break a user's direct Claude Code config while disconnecting one
@@ -409,7 +409,7 @@ def revoke_oauth_token(token):
 
 
 def mint_oauth_token(google_sub, email, client_name):
-    """A fresh access token for one (user, OAuth client) pair — deliberately
+    """A fresh access token for one (user, OAuth client) pair. Deliberately
     not the same token get_or_create_token returns, so disconnecting this
     client later doesn't also invalidate the user's direct MCP client
     config. Always mints a new token, unlike get_or_create_token: a second

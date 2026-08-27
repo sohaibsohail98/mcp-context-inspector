@@ -1,4 +1,4 @@
-"""Smoke tests for the /docs static site (mcp_server/routes/docs.py) —
+"""Smoke tests for the /docs static site (mcp_server/routes/docs.py):
 mirrors test_webapp_routes.py's pattern for the same class of route
 (static file, not gated by bearer auth)."""
 
@@ -24,7 +24,7 @@ def test_docs_index_serves_html():
         resp = client.get("/docs/")
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
-    assert "Lumen" in resp.text
+    assert "CtxWindow" in resp.text
     assert "get_session_metrics" in resp.text
 
 

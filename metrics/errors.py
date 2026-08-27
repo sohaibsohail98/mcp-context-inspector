@@ -10,7 +10,7 @@ class SessionOwnershipError(Exception):
     """Raised when a caller tries to write into a session_id that
     already belongs to a different owner. OTLP session_ids are
     client-chosen (Claude Code's/Copilot's own IDs), not
-    server-generated uuid4s like record_session's — a caller holding a
+    server-generated uuid4s like record_session's. A caller holding a
     valid-but-unprivileged per-user token could otherwise pick another
     user's existing session_id and inject fabricated tool calls or
     token totals into it. Every append_*/close_session/

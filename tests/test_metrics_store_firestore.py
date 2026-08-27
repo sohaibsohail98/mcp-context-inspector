@@ -1,5 +1,5 @@
 """Regression tests for metrics/store_firestore.py, run against the real
-Firestore emulator (FIRESTORE_EMULATOR_HOST) — not a fake/mock, since
+Firestore emulator (FIRESTORE_EMULATOR_HOST), not a fake/mock, since
 Firestore's transaction semantics (used for start_or_get_session's
 create-or-fetch idempotency and the append_*/close_session sequence-
 number allocation) are exactly the behavior under test and are
@@ -146,7 +146,7 @@ def test_start_or_get_session_cross_owner_raises(isolated_firestore_db):
 def test_start_or_get_session_admin_can_adopt_any_existing(isolated_firestore_db):
     store = isolated_firestore_db
     store.start_or_get_session("otel-admin", owner="alice", source="claude_code")
-    # owner=None is the admin/owner token — must not raise.
+    # owner=None is the admin/owner token, and must not raise.
     result = store.start_or_get_session("otel-admin", owner=None)
     assert result == "otel-admin"
 
@@ -188,7 +188,7 @@ def test_close_session_rejects_non_owner(isolated_firestore_db):
 
 def test_append_functions_deny_by_default_for_unknown_session(isolated_firestore_db):
     """A session_id with no matching doc yet is treated as belonging to
-    no one — deny-by-default for any non-admin caller."""
+    no one: deny-by-default for any non-admin caller."""
     store = isolated_firestore_db
     with pytest.raises(SessionOwnershipError):
         store.append_turn("never-started", {"input_tokens": 1, "output_tokens": 1, "latency_ms": 1}, owner="alice")

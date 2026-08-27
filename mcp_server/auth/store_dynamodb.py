@@ -1,4 +1,4 @@
-"""DynamoDB backend for the per-user MCP token store — the auth
+"""DynamoDB backend for the per-user MCP token store, the auth
 equivalent of metrics/store_dynamodb.py, same reasoning: a Cloud Run
 container's local filesystem doesn't persist across cold starts or
 survive multiple concurrent instances each with their own SQLite file.
@@ -8,8 +8,8 @@ auth/store.py's dispatcher.
 Single-table design, mirroring the metrics table's approach:
 partition key `pk`, sort key `sk`.
 
-- USER#<google_sub>  / PROFILE     — a signed-in user's own record
-- USERTOKEN#<token>  / USER_REF    — reverse-lookup mirror of a user's
+- USER#<google_sub>  / PROFILE     : a signed-in user's own record
+- USERTOKEN#<token>  / USER_REF    : reverse-lookup mirror of a user's
                                       token -> google_sub, so
                                       is_valid_token/get_sub_for_token
                                       don't need a GSI. Kept in sync
@@ -17,20 +17,20 @@ partition key `pk`, sort key `sk`.
                                       and revoke(); see those functions'
                                       docstrings for the consistency
                                       tradeoffs this implies.
-- CLIENT#<client_id> / REGISTRATION — an OAuth Dynamic Client Registration
-- CODE#<code_hash>   / AUTH_CODE    — a one-time authorization code
+- CLIENT#<client_id> / REGISTRATION : an OAuth Dynamic Client Registration
+- CODE#<code_hash>   / AUTH_CODE    : a one-time authorization code
                                       (also carries a `ttl` attribute for
                                       DynamoDB's native expiry as
                                       best-effort cleanup; redeem_oauth_code
                                       still checks expires_at explicitly,
                                       same as the SQLite backend, since
                                       TTL deletion isn't instantaneous)
-- TOKEN#<token>      / ACCESS_TOKEN — an OAuth-issued access token; its
+- TOKEN#<token>      / ACCESS_TOKEN : an OAuth-issued access token; its
                                       own key already IS the token, so no
                                       reverse index is needed for this one
 
 Aggregate reads (list_users, list_oauth_clients, list_oauth_tokens) use
-Scan with an sk filter — fine at personal-project scale, same tradeoff
+Scan with an sk filter. Fine at personal-project scale, same tradeoff
 already accepted in metrics/store_dynamodb.py.
 """
 
@@ -75,7 +75,7 @@ def _install_code_key(code_hash):
 
 def get_or_create_token(google_sub, email):
     """Returns this Google account's MCP token, minting one on first
-    sign-in — same contract as the SQLite version, including
+    sign-in. Same contract as the SQLite version, including
     idempotency under concurrent first-time sign-ins.
 
     `if_not_exists(token, :new_token)` in a single update_item call is
@@ -84,12 +84,12 @@ def get_or_create_token(google_sub, email):
     attribute, but only the first write actually "wins" the token value
     (DynamoDB serializes concurrent updates to the same item), and both
     calls' ReturnValues=ALL_NEW response reflects whichever value
-    actually won — so both callers agree on one token, same as the
+    actually won, so both callers agree on one token, same as the
     SQLite path's final SELECT.
 
     The USERTOKEN# mirror write happens second, using the token that
-    actually won the race (not necessarily the one this call generated)
-    — there's a small window where PROFILE exists but USERTOKEN# doesn't
+    actually won the race (not necessarily the one this call generated).
+    There's a small window where PROFILE exists but USERTOKEN# doesn't
     yet if the process crashes between the two writes; is_valid_token
     would then reject a real token until this function runs again for
     the same account (self-healing, not a silent security hole)."""
@@ -110,15 +110,15 @@ def get_or_create_token(google_sub, email):
 
 def is_valid_token(token):
     """True for either a direct Google-sign-in token (USERTOKEN# mirror)
-    or a token minted through the OAuth flow (its own TOKEN# item) —
-    same either-source contract as the SQLite version."""
+    or a token minted through the OAuth flow (its own TOKEN# item).
+    Same either-source contract as the SQLite version."""
     if _table.get_item(Key=_user_token_key(token)).get("Item"):
         return True
     return bool(_table.get_item(Key=_oauth_token_key(token)).get("Item"))
 
 
 def get_sub_for_token(token):
-    """The google_sub that owns this token, checking both sources — see
+    """The google_sub that owns this token, checking both sources; see
     is_valid_token. Returns None if the token doesn't belong to any
     signed-in user."""
     item = _table.get_item(Key=_user_token_key(token)).get("Item")
@@ -129,7 +129,7 @@ def get_sub_for_token(token):
 
 
 def list_users():
-    """Admin visibility — who has ever signed in. Never returns tokens
+    """Admin visibility: who has ever signed in. Never returns tokens
     themselves, only enough to identify an account for revocation."""
     items = _scan_by_sk("PROFILE")
     return [
@@ -139,7 +139,7 @@ def list_users():
 
 
 def revoke(google_sub):
-    """Deletes a user's token — they'd need to sign in again to get a
+    """Deletes a user's token, so they'd need to sign in again to get a
     new one. Reads the PROFILE item first to find the matching
     USERTOKEN# mirror so both are removed; a crash between the two
     deletes could leave an orphaned, still-valid USERTOKEN# item behind
@@ -155,7 +155,7 @@ def revoke(google_sub):
 
 
 def register_oauth_client(redirect_uris, client_name=None, token_endpoint_auth_method="none"):
-    """Same validation as the SQLite version — see that module's
+    """Same validation as the SQLite version; see that module's
     docstring for why. Kept identical here rather than shared, since the
     validation is pure Python with no DB dependency and duplicating a
     handful of lines is simpler than a shared-helper module just for
@@ -199,7 +199,7 @@ def get_oauth_client(client_id):
 
 
 def issue_oauth_code(client_id, google_sub, email, redirect_uri, code_challenge, resource, ttl_seconds=600):
-    """Mints a one-time authorization code — see the SQLite version's
+    """Mints a one-time authorization code; see the SQLite version's
     docstring for the full contract. code_hash (not the raw code) is the
     partition key here too, same reasoning: this table being readable
     shouldn't hand out usable codes."""
@@ -228,13 +228,13 @@ def issue_oauth_code(client_id, google_sub, email, redirect_uri, code_challenge,
 
 
 def redeem_oauth_code(code, client_id, redirect_uri, code_verifier, resource):
-    """Validates and single-use-consumes an authorization code — same
+    """Validates and single-use-consumes an authorization code, with the same
     checks, same error messages, and the same atomicity guarantee as the
     SQLite version: the final consume step is a conditional update_item
     (`ConditionExpression="attribute_not_exists(consumed_at)"`), DynamoDB's
     equivalent of SQLite's `UPDATE ... WHERE consumed_at IS NULL`. Two
     concurrent redemptions of the same code both pass the read-side
-    checks below, but only one conditional update can succeed — the
+    checks below, but only one conditional update can succeed. The
     loser gets a ConditionalCheckFailedException, caught and turned into
     the same ValueError the SQLite path raises for a reused code."""
     import base64
@@ -275,10 +275,10 @@ def redeem_oauth_code(code, client_id, redirect_uri, code_verifier, resource):
 
 
 def issue_install_code(bearer_token, ttl_seconds=local_setup.INSTALL_CODE_TTL_SECONDS):
-    """Mints a one-time code for the /setup/install curl-able one-liner —
-    see the SQLite version's docstring for the full contract. Stores
+    """Mints a one-time code for the /setup/install curl-able one-liner.
+    See the SQLite version's docstring for the full contract. Stores
     bearer_token itself (not an identity to re-derive it from later).
-    Deliberately a separate item shape from CODE#/AUTH_CODE — no
+    Deliberately a separate item shape from CODE#/AUTH_CODE, with no
     client_id/redirect_uri/PKCE, since there's no OAuth client or
     browser redirect involved."""
     import hashlib
@@ -301,7 +301,7 @@ def issue_install_code(bearer_token, ttl_seconds=local_setup.INSTALL_CODE_TTL_SE
 
 
 def redeem_install_code(code):
-    """Validates and single-use-consumes an install code — same
+    """Validates and single-use-consumes an install code, with the same
     conditional-update atomicity as redeem_oauth_code (see that
     function's docstring). Returns the bearer token on success."""
     import hashlib
@@ -333,7 +333,7 @@ def redeem_install_code(code):
 
 
 def mint_oauth_token(google_sub, email, client_name):
-    """A fresh access token for one (user, OAuth client) pair — always a
+    """A fresh access token for one (user, OAuth client) pair. Always a
     new token, same contract as the SQLite version."""
     import secrets
 
@@ -351,7 +351,7 @@ def mint_oauth_token(google_sub, email, client_name):
 
 
 def list_oauth_clients():
-    """Admin visibility — every registered OAuth client."""
+    """Admin visibility: every registered OAuth client."""
     items = _scan_by_sk("REGISTRATION")
     return [
         {
@@ -367,7 +367,7 @@ def list_oauth_clients():
 
 def revoke_oauth_client(client_id):
     """Deletes a client's registration and any of its outstanding
-    (unconsumed) authorization codes — see the SQLite version's
+    (unconsumed) authorization codes; see the SQLite version's
     docstring for the same client_name-vs-client_id limitation on
     already-issued tokens. The unconsumed-codes cleanup is a Scan+filter
     (codes aren't keyed by client_id), fine at personal-project scale
@@ -379,7 +379,7 @@ def revoke_oauth_client(client_id):
 
 
 def list_oauth_tokens():
-    """Admin visibility — every OAuth-issued access token. Never returns
+    """Admin visibility: every OAuth-issued access token. Never returns
     the token value itself, only enough to identify and revoke it."""
     items = _scan_by_sk("ACCESS_TOKEN")
     return [
@@ -395,14 +395,14 @@ def list_oauth_tokens():
 
 
 def revoke_oauth_token(token):
-    """Deletes one OAuth-issued access token — doesn't touch a user's
+    """Deletes one OAuth-issued access token. Doesn't touch a user's
     own sign-in token (USER#/USERTOKEN# items), same isolation the
     SQLite version guarantees via its separate table."""
     _table.delete_item(Key=_oauth_token_key(token))
 
 
 def _scan_by_sk(sk):
-    """Paginated Scan filtered to one item type — see
+    """Paginated Scan filtered to one item type; see
     metrics/store_dynamodb.py's own pagination comment for why an
     unpaginated Scan silently undercounts as a table grows past one
     page; same fix applied here."""

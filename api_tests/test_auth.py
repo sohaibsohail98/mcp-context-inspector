@@ -1,7 +1,7 @@
 """Auth surface: /auth/login reachability, and that every protected
 prefix (mcp_server/middleware.py's MultiTokenAuthMiddleware) actually
 rejects a missing/invalid bearer token. Does NOT exercise /auth/verify's
-real Google-credential exchange — that needs a live Google OAuth
+real Google-credential exchange, since that needs a live Google OAuth
 round-trip, not something a black-box HTTP test can drive without a
 real browser/user. See tests/test_oauth.py for the in-process,
 monkeypatched version of that flow.
@@ -21,7 +21,7 @@ def test_protected_prefix_rejects_missing_token(client, prefix):
     assert resp.status == 401
     # mcp_server/middleware.py sets WWW-Authenticate on every 401 from
     # MultiTokenAuthMiddleware specifically so MCP clients can do RFC
-    # 9728 OAuth discovery — absence here would mean that discovery path
+    # 9728 OAuth discovery. Absence here would mean that discovery path
     # is broken, not just "some header is missing".
     assert "www-authenticate" in {k.lower() for k in resp.headers}
 

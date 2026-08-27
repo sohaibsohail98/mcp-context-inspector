@@ -31,7 +31,7 @@ def verify_credential(credential, client_id):
     # caller. Enforce it here when an email is present, since it's used
     # as a display/attribution value (dashboard identity, OAuth token
     # records). No `email` claim at all just means the scope wasn't
-    # granted, which is fine — nothing to verify, so it isn't rejected.
+    # granted, which is fine: nothing to verify, so it isn't rejected.
     if payload.get("email") and not payload.get("email_verified"):
         raise InvalidGoogleToken("Google account email is not verified")
 

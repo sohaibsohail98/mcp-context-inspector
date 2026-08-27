@@ -1,12 +1,12 @@
-"""SQLite backend for the per-user MCP token store — the local-dev /
+"""SQLite backend for the per-user MCP token store, the local-dev /
 default backend. Reached through auth/store.py's dispatcher
 (STORAGE_BACKEND env var); import directly only for the DB_PATH test
 hook (tests/conftest.py's isolated_auth_store fixture). This backend's
-writes are lost on Cloud Run cold start — see auth/store_dynamodb.py
+writes are lost on Cloud Run cold start; see auth/store_dynamodb.py
 for the persistent one.
 
 One row per Google account, keyed on `google_sub` (the stable,
-non-reassignable subject identifier from the verified ID token — never
+non-reassignable subject identifier from the verified ID token, never
 the email, which a user can change).
 
 Also stores the OAuth 2.1 + PKCE authorization-server data (client
@@ -36,7 +36,7 @@ _SCHEMA = """
     );
 
     -- OAuth clients registered via POST /oauth/register (RFC 7591 Dynamic
-    -- Client Registration) — e.g. claude.ai registers itself here once,
+    -- Client Registration). For example, claude.ai registers itself here once,
     -- the first time a user tries to add this server as a Connector.
     CREATE TABLE IF NOT EXISTS oauth_clients (
         client_id TEXT PRIMARY KEY,
@@ -49,11 +49,11 @@ _SCHEMA = """
     -- One-time authorization codes (10-minute TTL, single-use) minted by
     -- GET/POST /oauth/authorize after the user signs in with Google, and
     -- redeemed by POST /oauth/token. code_hash, not the raw code, is
-    -- stored — same reasoning as hashing a password: a code is a bearer
+    -- stored, same reasoning as hashing a password: a code is a bearer
     -- secret, and this table being readable shouldn't hand out usable
     -- codes. SHA-256 (not a slow KDF like bcrypt) is enough here since
-    -- the code is a 256-bit random secret, not a low-entropy password —
-    -- matches how this project already treats bearer tokens elsewhere.
+    -- the code is a 256-bit random secret, not a low-entropy password.
+    -- This matches how this project already treats bearer tokens elsewhere.
     CREATE TABLE IF NOT EXISTS oauth_codes (
         code_hash TEXT PRIMARY KEY,
         client_id TEXT,
@@ -84,7 +84,7 @@ _SCHEMA = """
     -- One-time install codes: the short-lived code /setup/install's
     -- curl-able one-liner exchanges for the caller's real bearer token,
     -- so the token itself never sits in shell history via a plaintext
-    -- curl arg. Separate from oauth_codes — no client_id/redirect_uri/
+    -- curl arg. Separate from oauth_codes, with no client_id/redirect_uri/
     -- PKCE, since there's no OAuth client or browser redirect involved.
     -- Same single-use + TTL + hash-keyed storage for the same reasons.
     CREATE TABLE IF NOT EXISTS install_codes (
@@ -108,7 +108,7 @@ def _connect():
 
 def get_or_create_token(google_sub, email):
     """Returns this Google account's MCP token, minting one on first
-    sign-in. Idempotent per google_sub — re-running the sign-in flow
+    sign-in. Idempotent per google_sub: re-running the sign-in flow
     returns the same token, not a new one.
 
     A single atomic upsert, not a SELECT-then-INSERT: two concurrent
@@ -131,7 +131,7 @@ def get_or_create_token(google_sub, email):
 def is_valid_token(token):
     """True for either a direct Google-sign-in token (mcp_users) or a
     token minted through the OAuth flow for a Connector-style client
-    (oauth_tokens) — both are equally valid bearer credentials from the
+    (oauth_tokens). Both are equally valid bearer credentials from the
     caller's perspective; only their provenance differs."""
     conn = _connect()
     row = conn.execute(
@@ -143,7 +143,7 @@ def is_valid_token(token):
 
 
 def get_sub_for_token(token):
-    """The google_sub that owns this token — used to attribute data
+    """The google_sub that owns this token, used to attribute data
     (record/filter by owner) to whoever's actually connected, not just to
     check "is this token valid at all." Checks both mcp_users and
     oauth_tokens (see is_valid_token). Returns None if the token doesn't
@@ -157,7 +157,7 @@ def get_sub_for_token(token):
 
 
 def list_users():
-    """Admin visibility — who has ever signed in. Never returns tokens
+    """Admin visibility: who has ever signed in. Never returns tokens
     themselves, only enough to identify an account for revocation."""
     conn = _connect()
     rows = conn.execute(
@@ -168,7 +168,7 @@ def list_users():
 
 
 def revoke(google_sub):
-    """Deletes a user's token — they'd need to sign in again to get a
+    """Deletes a user's token, so they'd need to sign in again to get a
     new one. No graceful in-place rotation; revocation is intentionally
     blunt for a personal-scale token store."""
     conn = _connect()
@@ -178,7 +178,7 @@ def revoke(google_sub):
 
 
 # --- OAuth 2.1 + PKCE authorization server ------------------------------
-# Backs the /oauth/* routes in server.py — see that module's docstring for
+# Backs the /oauth/* routes in server.py; see that module's docstring for
 # the flow. A generic, spec-compliant implementation: any MCP client that
 # does OAuth discovery (Dynamic Client Registration + authorization code +
 # PKCE) can use this, not just one specific product.
@@ -194,7 +194,7 @@ def _s256_challenge(code_verifier):
 
 
 def register_oauth_client(redirect_uris, client_name=None, token_endpoint_auth_method="none"):
-    """Dynamic Client Registration (RFC 7591) — mints a fresh client_id for
+    """Dynamic Client Registration (RFC 7591). Mints a fresh client_id for
     a caller (an MCP client doing OAuth discovery) that presents at least
     one redirect URI. Raises ValueError on a malformed request; the route
     handler turns that into a 400."""
@@ -205,8 +205,8 @@ def register_oauth_client(redirect_uris, client_name=None, token_endpoint_auth_m
         if parsed.scheme not in ("https", "http") or not parsed.netloc:
             raise ValueError("redirect_uris must be absolute URLs")
         # A plain-http redirect_uri would let the one-time authorization
-        # code — and transitively, via /oauth/token, the resulting access
-        # token — travel in cleartext to anyone on-path between the
+        # code (and transitively, via /oauth/token, the resulting access
+        # token) travel in cleartext to anyone on-path between the
         # browser and that redirect target. Only allow it for a client
         # redirecting back to itself on the same machine (a CLI tool
         # completing its own loopback flow), the standard OAuth carve-out
@@ -260,8 +260,8 @@ def redeem_oauth_code(code, client_id, redirect_uri, code_verifier, resource):
     """Validates and single-use-consumes an authorization code: right
     client, right redirect_uri, unexpired, unused, and the PKCE verifier
     actually hashes to the challenge that was presented at /oauth/authorize
-    (this is what stops an attacker who intercepts the code — without the
-    verifier, which never left the original requester — from redeeming
+    (this is what stops an attacker who intercepts the code, but not the
+    verifier, which never left the original requester, from redeeming
     it). Also checks the resource (audience) matches, so a token minted
     here can't be replayed against a different MCP server. Raises
     ValueError with a caller-safe message on any failure; returns
@@ -293,7 +293,7 @@ def redeem_oauth_code(code, client_id, redirect_uri, code_verifier, resource):
     # The earlier `consumed_at is not None` check is only a fast-path
     # rejection. This UPDATE's `WHERE consumed_at IS NULL` is what
     # actually enforces single-use: two concurrent redemptions both pass
-    # the read above, but only one UPDATE wins the row — the loser's
+    # the read above, but only one UPDATE wins the row. The loser's
     # rowcount is 0, caught below.
     cursor = conn.execute(
         "UPDATE oauth_codes SET consumed_at=? WHERE code_hash=? AND consumed_at IS NULL", (now, code_hash)
@@ -307,8 +307,8 @@ def redeem_oauth_code(code, client_id, redirect_uri, code_verifier, resource):
 
 
 def issue_install_code(bearer_token, ttl_seconds=local_setup.INSTALL_CODE_TTL_SECONDS):
-    """Mints a one-time code for the /setup/install curl-able one-liner —
-    the page hands this to a signed-in caller instead of embedding their
+    """Mints a one-time code for the /setup/install curl-able one-liner.
+    The page hands this to a signed-in caller instead of embedding their
     real bearer token in plaintext (which would otherwise end up in shell
     history forever). Stores bearer_token itself rather than an identity
     to re-derive it from, so this works identically for a per-user token
@@ -331,7 +331,7 @@ def redeem_install_code(code):
     """Validates and single-use-consumes an install code, same atomicity
     guarantee as redeem_oauth_code (the final UPDATE's WHERE consumed_at
     IS NULL is what actually enforces single-use under a race, not the
-    earlier read). Raises ValueError with a caller-safe message — the
+    earlier read). Raises ValueError with a caller-safe message. The
     install script surfaces this directly, so "expired" vs "already
     used" vs "invalid" are distinguished rather than collapsed into one
     generic failure. Returns the bearer token on success."""
@@ -362,9 +362,9 @@ def redeem_install_code(code):
 
 
 def list_oauth_clients():
-    """Admin visibility — every OAuth client that's ever completed Dynamic
+    """Admin visibility: every OAuth client that's ever completed Dynamic
     Client Registration. No client secret to redact (token_endpoint_auth_method
-    is always "none" — these are public clients, PKCE is the actual
+    is always "none": these are public clients, and PKCE is the actual
     protection), so this is safe to return in full."""
     conn = _connect()
     rows = conn.execute(
@@ -382,7 +382,7 @@ def revoke_oauth_client(client_id):
     """Deletes a client's registration and any of its outstanding
     (unconsumed) authorization codes, so it can no longer complete a new
     /oauth/authorize -> /oauth/token exchange. Does NOT retroactively
-    invalidate access tokens this client already obtained — oauth_tokens
+    invalidate access tokens this client already obtained. oauth_tokens
     only records client_name (a caller-supplied display string, not
     guaranteed unique per client_id), so there's no safe way to map a
     token back to the exact client that requested it. Revoke those
@@ -396,7 +396,7 @@ def revoke_oauth_client(client_id):
 
 
 def list_oauth_tokens():
-    """Admin visibility — every access token issued via the OAuth flow.
+    """Admin visibility: every access token issued via the OAuth flow.
     Never returns the token value itself, only enough to identify and
     revoke it (see revoke_oauth_token)."""
     conn = _connect()
@@ -409,7 +409,7 @@ def list_oauth_tokens():
 
 
 def revoke_oauth_token(token):
-    """Deletes one OAuth-issued access token — the client that held it
+    """Deletes one OAuth-issued access token. The client that held it
     needs to redo the full authorization flow to get a new one. Doesn't
     touch mcp_users' own token (see revoke()), so this can't accidentally
     break a user's direct Claude Code config while disconnecting one
@@ -421,7 +421,7 @@ def revoke_oauth_token(token):
 
 
 def mint_oauth_token(google_sub, email, client_name):
-    """A fresh access token for one (user, OAuth client) pair — deliberately
+    """A fresh access token for one (user, OAuth client) pair. Deliberately
     not the same token get_or_create_token returns, so disconnecting this
     client later doesn't also invalidate the user's direct MCP client
     config. Always mints a new token, unlike get_or_create_token: a second

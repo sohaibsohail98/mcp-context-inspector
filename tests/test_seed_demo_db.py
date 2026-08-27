@@ -1,5 +1,5 @@
 """Pins the shape of the deterministic demo dataset the public Cloud Run
-image bakes in (see scripts/seed_demo_db.py, Dockerfile) — a fresh-eyes
+image bakes in (see scripts/seed_demo_db.py, Dockerfile). A fresh-eyes
 regression test that this stays: (a) reproducible byte-for-byte, since
 that's the entire point of avoiding uuid4()/time.time(), and (b) rich
 enough for the Context Window Explorer / Recent Sessions demo to look

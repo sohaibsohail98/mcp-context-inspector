@@ -1,4 +1,4 @@
-"""Google sign-in, the connect page, and the live dashboard SPA — the
+"""Google sign-in, the connect page, and the live dashboard SPA: the
 human-facing side of this server. auth_login builds and serves the
 sign-in/connect/dashboard HTML+JS as large inline templates (kept as-is
 in one function rather than decomposed further: it's one cohesive page
@@ -117,7 +117,7 @@ _PAGE_STYLE = """
   }
   .g_id_signin { margin-top: 0.35rem; }
 
-  /* Consent (Authorize/Cancel) + success confirmation — modeled after
+  /* Consent (Authorize/Cancel) + success confirmation, modeled after
      Cloudflare Wrangler's OAuth "wants to access your account" and
      "Authorization granted" screens. */
   .handshake { display: flex; align-items: center; justify-content: center; gap: 1rem; margin: 0.25rem 0 1.75rem; }
@@ -184,46 +184,46 @@ _PAGE_STYLE = """
   .tab-panel.active { display: block; }
   .otel-optin { margin-top: 0.9rem; padding: 0.8rem; border: 1px solid var(--warn-border); background: var(--warn-dim); border-radius: 8px; }
 
-  /* Landing/home page hero — "Live Wire" direction: leads with proof (a
+  /* Landing/home page hero, "Live Wire" direction: leads with proof (a
      live-feeling recreation of the real Context Explorer bar + KPI
      tiles) rather than words about the product, mirroring the actual
      dashboard's own color semantics so the pitch and the product agree
      with each other on sight. */
-  .lumen-kicker {
+  .ctxwindow-kicker {
     display: inline-flex; align-items: center; gap: 0.5rem; font-size: 0.76rem; font-weight: 600;
     color: var(--accent); letter-spacing: 0.03em; background: var(--accent-dim); padding: 0.32rem 0.8rem;
     border-radius: 999px; margin-bottom: 1.3rem;
   }
-  .lumen-kicker .pulse { width: 6px; height: 6px; border-radius: 999px; background: var(--accent); display: inline-block; animation: lumen-pulse 1.8s infinite; }
-  @keyframes lumen-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
-  @media (prefers-reduced-motion: reduce) { .lumen-kicker .pulse { animation: none; } }
-  .lumen-h1 {
+  .ctxwindow-kicker .pulse { width: 6px; height: 6px; border-radius: 999px; background: var(--accent); display: inline-block; animation: ctxwindow-pulse 1.8s infinite; }
+  @keyframes ctxwindow-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+  @media (prefers-reduced-motion: reduce) { .ctxwindow-kicker .pulse { animation: none; } }
+  .ctxwindow-h1 {
     font-size: clamp(1.75rem, 4.4vw, 2.35rem); font-weight: 700; letter-spacing: -0.015em;
     line-height: 1.18; margin: 0 0 1rem; text-wrap: balance; max-width: 20ch;
   }
-  .lumen-accent { color: var(--accent); }
-  .lumen-sub { font-size: 1rem; color: var(--text-dim); max-width: 46ch; margin: 0 0 2rem; line-height: 1.65; }
+  .ctxwindow-accent { color: var(--accent); }
+  .ctxwindow-sub { font-size: 1rem; color: var(--text-dim); max-width: 46ch; margin: 0 0 2rem; line-height: 1.65; }
 
-  .lumen-demo {
+  .ctxwindow-demo {
     border: 1px solid var(--border); border-radius: 14px; background: var(--bg-raised);
     box-shadow: var(--shadow); overflow: hidden; margin: 0 0 1.4rem;
   }
-  .lumen-demo-head {
+  .ctxwindow-demo-head {
     display: flex; align-items: center; gap: 0.6rem; padding: 0.75rem 1rem; border-bottom: 1px solid var(--border-soft);
     font-size: 0.76rem; color: var(--text-dimmer);
   }
-  .lumen-dots { display: flex; gap: 0.35rem; }
-  .lumen-dots span { width: 7px; height: 7px; border-radius: 999px; background: var(--bg-raised-2); display: block; }
-  .lumen-demo-body { padding: 1.2rem 1.3rem 1.4rem; }
-  .lumen-demo-bar { display: flex; height: 24px; width: 100%; border-radius: 7px; overflow: hidden; margin-bottom: 0.9rem; }
-  .lumen-demo-legend { display: flex; flex-wrap: wrap; gap: 0.7rem 1.1rem; font-size: 0.74rem; color: var(--text-dim); margin-bottom: 1.1rem; }
-  .lumen-demo-legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
-  .lumen-demo-legend i { width: 7px; height: 7px; border-radius: 999px; display: inline-block; }
-  .lumen-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.6rem; }
-  .lumen-kpi { background: var(--bg-raised-2); border: 1px solid var(--border-soft); border-radius: 8px; padding: 0.6rem 0.75rem; min-width: 0; }
-  .lumen-kpi .k-label { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dimmer); font-weight: 650; margin-bottom: 0.25rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .lumen-kpi .k-value { font-weight: 650; font-size: 0.98rem; font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace; }
-  @media (max-width: 480px) { .lumen-kpis { grid-template-columns: repeat(2, 1fr); } }
+  .ctxwindow-dots { display: flex; gap: 0.35rem; }
+  .ctxwindow-dots span { width: 7px; height: 7px; border-radius: 999px; background: var(--bg-raised-2); display: block; }
+  .ctxwindow-demo-body { padding: 1.2rem 1.3rem 1.4rem; }
+  .ctxwindow-demo-bar { display: flex; height: 24px; width: 100%; border-radius: 7px; overflow: hidden; margin-bottom: 0.9rem; }
+  .ctxwindow-demo-legend { display: flex; flex-wrap: wrap; gap: 0.7rem 1.1rem; font-size: 0.74rem; color: var(--text-dim); margin-bottom: 1.1rem; }
+  .ctxwindow-demo-legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
+  .ctxwindow-demo-legend i { width: 7px; height: 7px; border-radius: 999px; display: inline-block; }
+  .ctxwindow-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.6rem; }
+  .ctxwindow-kpi { background: var(--bg-raised-2); border: 1px solid var(--border-soft); border-radius: 8px; padding: 0.6rem 0.75rem; min-width: 0; }
+  .ctxwindow-kpi .k-label { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dimmer); font-weight: 650; margin-bottom: 0.25rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ctxwindow-kpi .k-value { font-weight: 650; font-size: 0.98rem; font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace; }
+  @media (max-width: 480px) { .ctxwindow-kpis { grid-template-columns: repeat(2, 1fr); } }
 
   .byline { text-align: center; font-size: 0.82rem; color: var(--text-dimmer); margin: 2rem 0 0; }
   .byline a { color: var(--text-dim); }
@@ -237,7 +237,7 @@ _PAGE_STYLE = """
   }
   .trust-card { border-color: var(--border); }
 
-  /* Live dashboard — full session-list + tabbed session-detail rebuild,
+  /* Live dashboard: full session-list + tabbed session-detail rebuild,
      matching the approved mockup (see PR description). Shown to every
      authenticated user for their own data right after Authorize.
      dash-empty/dash-error are the two loading/error states, reused
@@ -432,7 +432,7 @@ _PAGE_STYLE = """
     background: var(--warn-dim); border: 1px solid var(--warn-border);
     display: flex; align-items: center; gap: 0.6rem; font-size: 0.85rem; color: var(--text);
   }
-  .setup-waiting .pulse { width: 8px; height: 8px; border-radius: 999px; background: var(--warn); flex-shrink: 0; animation: lumen-pulse 1.8s infinite; }
+  .setup-waiting .pulse { width: 8px; height: 8px; border-radius: 999px; background: var(--warn); flex-shrink: 0; animation: ctxwindow-pulse 1.8s infinite; }
   @media (prefers-reduced-motion: reduce) { .setup-waiting .pulse { animation: none; } }
   .setup-waiting strong { color: var(--warn); }
   .range-row { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.2rem; }
@@ -472,17 +472,17 @@ _PAGE_STYLE = """
 @server.custom_route("/auth/login", methods=["GET"])
 async def auth_login(request: Request):
     intro = """
-<div class="lumen-kicker"><span class="pulse"></span> updates automatically as you work</div>
-<h1 class="lumen-h1">Watch your agent's <span class="lumen-accent">context window</span> fill up as you work.</h1>
-<p class="lumen-sub">Every token that entered the model, in the order it loaded: system prompt, tool specs, injected reminders, tool results. Not a summary, the real breakdown, against real cost, over a real MCP connection. No rewritten agent loop, no wrapper.</p>
+<div class="ctxwindow-kicker"><span class="pulse"></span> updates automatically as you work</div>
+<h1 class="ctxwindow-h1">Watch your agent's <span class="ctxwindow-accent">context window</span> fill up as you work.</h1>
+<p class="ctxwindow-sub">Every token that entered the model, in the order it loaded: system prompt, tool specs, injected reminders, tool results. Not a summary, the real breakdown, against real cost, over a real MCP connection. No rewritten agent loop, no wrapper.</p>
 
-<div class="lumen-demo" id="lumen-demo">
-  <div class="lumen-demo-head">
-    <span class="lumen-dots"><span></span><span></span><span></span></span>
+<div class="ctxwindow-demo" id="ctxwindow-demo">
+  <div class="ctxwindow-demo-head">
+    <span class="ctxwindow-dots"><span></span><span></span><span></span></span>
     <span>sess_8f2a1c4e &middot; claude-sonnet-5 &middot; 2m ago</span>
   </div>
-  <div class="lumen-demo-body">
-    <div class="lumen-demo-bar" id="lumen-demo-bar">
+  <div class="ctxwindow-demo-body">
+    <div class="ctxwindow-demo-bar" id="ctxwindow-demo-bar">
       <div data-w="9" style="width:0%;background:var(--cat-system);"></div>
       <div data-w="16" style="width:0%;background:var(--cat-tools);"></div>
       <div data-w="6" style="width:0%;background:var(--cat-user);"></div>
@@ -491,7 +491,7 @@ async def auth_login(request: Request):
       <div data-w="41" style="width:0%;background:var(--cat-toolresult);"></div>
       <div data-w="9" style="width:0%;background:var(--cat-answer);"></div>
     </div>
-    <div class="lumen-demo-legend">
+    <div class="ctxwindow-demo-legend">
       <span><i style="background:var(--cat-system);"></i>system</span>
       <span><i style="background:var(--cat-tools);"></i>tools</span>
       <span><i style="background:var(--cat-reasoning);"></i>reasoning</span>
@@ -499,11 +499,11 @@ async def auth_login(request: Request):
       <span><i style="background:var(--cat-toolresult);"></i>tool result</span>
       <span><i style="background:var(--cat-answer);"></i>answer</span>
     </div>
-    <div class="lumen-kpis">
-      <div class="lumen-kpi"><div class="k-label">Tokens</div><div class="k-value" id="kpi-tokens">0</div></div>
-      <div class="lumen-kpi"><div class="k-label">Cache hit</div><div class="k-value" id="kpi-cache">0%</div></div>
-      <div class="lumen-kpi"><div class="k-label">Cost</div><div class="k-value" id="kpi-cost">$0.00</div></div>
-      <div class="lumen-kpi"><div class="k-label">Context used</div><div class="k-value" id="kpi-context" style="color:var(--warn);">0%</div></div>
+    <div class="ctxwindow-kpis">
+      <div class="ctxwindow-kpi"><div class="k-label">Tokens</div><div class="k-value" id="kpi-tokens">0</div></div>
+      <div class="ctxwindow-kpi"><div class="k-label">Cache hit</div><div class="k-value" id="kpi-cache">0%</div></div>
+      <div class="ctxwindow-kpi"><div class="k-label">Cost</div><div class="k-value" id="kpi-cost">$0.00</div></div>
+      <div class="ctxwindow-kpi"><div class="k-label">Context used</div><div class="k-value" id="kpi-context" style="color:var(--warn);">0%</div></div>
     </div>
   </div>
 </div>
@@ -526,8 +526,8 @@ async def auth_login(request: Request):
 </div>
 
 <div class="card trust-card">
-  <h3>What Lumen stores, and what it never sees</h3>
-  <p class="card-hint" style="margin-bottom:0.6rem;">Sign-in mints a bearer token tied to your Google account; Lumen never sees your Google password.
+  <h3>What CtxWindow stores, and what it never sees</h3>
+  <p class="card-hint" style="margin-bottom:0.6rem;">Sign-in mints a bearer token tied to your Google account; CtxWindow never sees your Google password.
   Session metrics (tokens, cost, tool names) are stored by default. Full prompt/response content is only
   captured if you turn on the optional raw-body flag, and even then it passes through basic redaction
   before storage. Your data is never visible to another signed-in user, only to you and the server owner.</p>
@@ -558,12 +558,12 @@ async def auth_login(request: Request):
 
 <script>
   // Animates the hero demo card's bars/KPIs from zero once, on first
-  // load only — a static mock would otherwise read as a screenshot,
+  // load only. A static mock would otherwise read as a screenshot,
   // not a live product. Respects prefers-reduced-motion by snapping
   // straight to final values instead of animating.
   (function () {
     var reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    var bars = document.querySelectorAll("#lumen-demo-bar > div");
+    var bars = document.querySelectorAll("#ctxwindow-demo-bar > div");
     var targets = { tokens: 48200, cache: 81, cost: 0.94, context: 84 };
     var duration = reduceMotion ? 0 : 900;
     var start = null;
@@ -592,7 +592,7 @@ async def auth_login(request: Request):
 <div class="landing-topbar" id="landing-topbar">
   <div class="brand">
     <span class="brand-mark">&#9670;</span>
-    <span style="font-weight:650; font-size:0.95rem;">Lumen</span>
+    <span style="font-weight:650; font-size:0.95rem;">CtxWindow</span>
   </div>
   <div class="spacer"></div>
   <a class="gh-link" href="https://github.com/sohaibsohail98/mcp-context-inspector" target="_blank" rel="noopener">
@@ -604,7 +604,7 @@ async def auth_login(request: Request):
     client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID")
     if not client_id:
         return HTMLResponse(f"""<!doctype html>
-<html><head><title>Lumen</title>
+<html><head><title>CtxWindow</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&family=Archivo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
 <style>{_PAGE_STYLE}</style></head>
@@ -616,7 +616,7 @@ async def auth_login(request: Request):
 </body></html>""", status_code=503)
 
     return HTMLResponse(f"""<!doctype html>
-<html><head><title>Lumen</title>
+<html><head><title>CtxWindow</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&family=Archivo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
 <style>{_PAGE_STYLE}</style>
@@ -627,7 +627,7 @@ async def auth_login(request: Request):
 <div id="intro">{intro}
 <div class="card">
   <h3>Sign in to get your token</h3>
-  <p style="margin-top:0; color: var(--text-dim); font-size: 0.9rem;">One click — no password, no account to create here.</p>
+  <p style="margin-top:0; color: var(--text-dim); font-size: 0.9rem;">One click, no password, no account to create here.</p>
   <div id="g_id_onload" data-client_id="{client_id}" data-callback="onSignIn"></div>
   <div class="g_id_signin" data-type="standard" data-theme="filled_black"></div>
 </div>
@@ -658,13 +658,13 @@ async def auth_login(request: Request):
       "export OTEL_EXPORTER_OTLP_PROTOCOL=http/json",
       "export OTEL_EXPORTER_OTLP_ENDPOINT=" + otlpUrl,
       'export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer ' + token + '"',
-      // Claude Code's exporter never sets service.name itself — the
+      // Claude Code's exporter never sets service.name itself, and that is the
       // primary signal detect_vendor() matches on (see
-      // mcp_server/otlp/__init__.py) — so without this line, every real
+      // mcp_server/otlp/__init__.py), so without this line every real
       // session falls back to detect_vendor's session.id-presence check,
       // which is itself only populated by the two INCLUDE_SESSION_ID
       // vars below. Omitting any of these four means every session from
-      // this snippet lands in recent_skipped, not your dashboard —
+      // this snippet lands in recent_skipped, not your dashboard.
       // found in review after local_setup.py's installer already
       // carried all four but this manual snippet didn't.
       "export OTEL_RESOURCE_ATTRIBUTES=service.name=claude-code",
@@ -675,7 +675,7 @@ async def auth_login(request: Request):
     const claudeOtelOptin = [
       "export OTEL_LOG_RAW_API_BODIES=1",
       // Claude Code truncates any content-bearing attribute (including this
-      // raw body) at 60KB by default — real sessions with a system prompt
+      // raw body) at 60KB by default. Real sessions with a system prompt
       // and tool specs exceed that almost immediately, which truncates the
       // body's JSON mid-string and makes it unparseable, silently losing
       // that turn's Context Explorer detail (confirmed via a live capture).
@@ -697,7 +697,7 @@ async def auth_login(request: Request):
           <div class="kv-row"><span class="kv-label">MCP server URL</span><span class="kv-value">` + mcpUrl + `</span></div>
           <div class="kv-row"><span class="kv-label">Your token</span><span class="kv-value">` + token + `</span></div>
         </div>
-        <p class="card-hint" style="margin-top: 0.8rem;">Keep your token private — anyone with it can read and record data as you.</p>
+        <p class="card-hint" style="margin-top: 0.8rem;">Keep your token private: anyone with it can read and record data as you.</p>
         <div style="display: flex; gap: 0.5rem; margin-top: 0.8rem;">
           <button class="copy" onclick="copyText('token-raw')">Copy token</button>
           <button class="copy" onclick="copyText('url-raw')">Copy URL</button>
@@ -711,11 +711,11 @@ async def auth_login(request: Request):
       <div id="local-setup-card" class="card accent">
         <h3>Set up Claude Code automatically</h3>
         <p class="card-hint">Writes the MCP connection and telemetry config below directly into
-        your own <code>~/.claude/settings.json</code> — the same file the manual snippets below
+        your own <code>~/.claude/settings.json</code>, the same file the manual snippets below
         would have you paste into by hand, applied for you instead. Your existing settings are
         backed up first and merged, never overwritten.</p>
         <p class="card-hint" style="color: var(--ok);">This is a local file write on your own
-        machine only — nothing here is sent anywhere except this server, which is also running
+        machine only. Nothing here is sent anywhere except this server, which is also running
         on your machine right now.</p>
         <button class="copy" onclick="applyLocalConfig()" id="local-setup-btn">Apply to my Claude Code config</button>
         <div id="local-setup-result" style="margin-top: 0.7rem; font-size: 0.85rem;"></div>
@@ -724,7 +724,7 @@ async def auth_login(request: Request):
       <div id="install-card" class="card accent">
         <h3>Set up Claude Code</h3>
         <p class="card-hint">Once you run this, Claude Code streams your session data straight to
-        this dashboard in the background — nothing stored locally, nothing to keep running.</p>
+        this dashboard in the background. Nothing stored locally, nothing to keep running.</p>
 
         <p style="margin: 0.9rem 0 0.5rem; font-size: 0.87rem;">
           <em><strong>Please close any existing Claude Code sessions</strong></em> &mdash; terminal
@@ -739,14 +739,14 @@ async def auth_login(request: Request):
           <button class="icon-btn" onclick="refreshInstallCommand()" id="install-refresh-btn" title="Get a fresh command (the old one expires after a few minutes)">&#8635; New command</button>
         </div>
         <p class="card-hint" style="margin-top: 0.6rem;">
-          This command is single-use and expires in a few minutes — the code in the URL exchanges
+          This command is single-use and expires in a few minutes. The code in the URL exchanges
           once for your real token, server-side, so the token itself never ends up sitting in your
           shell history. If it's gone stale, click "New command" for a fresh one.
         </p>
 
         <details style="margin-top: 0.9rem;">
           <summary>Not comfortable piping straight into a shell? Inspect it first</summary>
-          <p class="card-hint">Same script either way — this just downloads it instead of piping
+          <p class="card-hint">Same script either way; this just downloads it instead of piping
           it directly, so you (or <code>less</code>, or your editor) can read exactly what it's
           about to do before anything runs:</p>
           <pre id="install-cmd-inspect">fetching your install command&hellip;</pre>
@@ -759,7 +759,7 @@ async def auth_login(request: Request):
             <div class="setup-waiting"><span class="pulse"></span>
               <span>Waiting for your first prompt&hellip; run the command above, close and
               reopen Claude Code, then run one prompt. Check back here about 10 seconds after
-              it finishes — that's how often telemetry exports.</span>
+              it finishes. That's how often telemetry exports.</span>
             </div>
           </div>
           <button class="icon-btn" onclick="checkConnection()" style="margin-top:0.6rem;" id="test-connection-btn">&#8635; Check now</button>
@@ -767,8 +767,8 @@ async def auth_login(request: Request):
 
         <p class="card-hint" style="margin-top: 0.9rem;">
           Prefer not to run a script? <a href="https://claude.ai/new#settings/customize-connectors" target="_blank" rel="noopener" onclick="document.querySelector('details').open=true;">Connect via claude.ai Connectors instead &rarr;</a>
-          — opens claude.ai's Connectors settings in a new tab. Paste just the MCP server URL from
-          "Your connection" above (no token needed — you'll sign in with Google right there) under
+          Opens claude.ai's Connectors settings in a new tab. Paste just the MCP server URL from
+          "Your connection" above (no token needed, since you'll sign in with Google right there) under
           <strong>Add custom connector</strong>. Full steps in the "Advanced" section below.
         </p>
       </div>
@@ -779,23 +779,23 @@ async def auth_login(request: Request):
         <div style="padding-left: 1.7rem;">
         ` + (isLocalHost ? `` : `
         <div id="connectors-info" style="margin-bottom: 1.1rem;">
-          <p class="card-hint"><strong>claude.ai Connectors</strong> — this server can't write to your local
+          <p class="card-hint"><strong>claude.ai Connectors</strong>: this server can't write to your local
           Claude Code config from here; it can only do that for itself when it's the one running on your
           machine (self-hosted at <code>localhost</code>). But claude.ai's own Connectors feature gets you MCP
           query access (ask "what did session X cost") in every session, everywhere, with zero local files
-          touched — it just can't carry the OTLP env vars that power automatic telemetry, so the dashboard
+          touched. It just can't carry the OTLP env vars that power automatic telemetry, so the dashboard
           won't auto-populate as you code unless you also paste the "Claude Code (live telemetry)" snippet
           below once per machine.</p>
           <ol class="card-hint" style="padding-left: 1.2rem; margin: 0.7rem 0;">
             <li>Copy the MCP server URL above.</li>
             <li>Go to <strong>claude.ai &rarr; Customize &rarr; Connectors &rarr; Add custom connector.</strong></li>
-            <li>Paste the URL and click <strong>Add</strong> — leave the OAuth Client ID/Secret fields blank,
+            <li>Paste the URL and click <strong>Add</strong>, leaving the OAuth Client ID/Secret fields blank,
             those aren't used here. claude.ai will open a Google sign-in page for this server automatically;
             once you sign in, the connector is live. No token to copy or paste anywhere.</li>
           </ol>
           <a class="copy" href="https://claude.ai/new#settings/customize-connectors" target="_blank" rel="noopener" style="display:inline-block; text-decoration:none;">Open claude.ai Connectors</a>
           <p class="card-hint" style="margin-top: 0.7rem;"><strong>This is a separate sign-in from Claude Code.</strong>
-          Connecting here mints a token scoped to claude.ai only — your Claude Code CLI still needs its own
+          Connecting here mints a token scoped to claude.ai only. Your Claude Code CLI still needs its own
           token from the "Claude Code" tab above. Disconnecting one never affects the other.</p>
         </div>
         `) + `
@@ -812,7 +812,7 @@ async def auth_login(request: Request):
           <button class="copy" onclick="copyText('claude-config')">Copy config</button>
         </div>
         <div class="tab-panel" data-panel="api">
-          <p class="card-hint">Bedrock-based agents — point them at the MCP server URL above with this header on every request:</p>
+          <p class="card-hint">Bedrock-based agents: point them at the MCP server URL above with this header on every request:</p>
           <pre id="raw-header">` + rawHeader + `</pre>
           <button class="copy" onclick="copyText('raw-header')">Copy header</button>
           <p class="card-hint" style="margin-top: 0.9rem;">curl (debugging):</p>
@@ -820,14 +820,14 @@ async def auth_login(request: Request):
           <button class="copy" onclick="copyText('curl-cmd')">Copy curl</button>
         </div>
         <div class="tab-panel" data-panel="claude-otel">
-          <p class="card-hint">Claude Code exports its own OpenTelemetry data natively — point it at this server instead of
+          <p class="card-hint">Claude Code exports its own OpenTelemetry data natively. Point it at this server instead of
           (or alongside) the MCP connection to get live token/cost/tool-call telemetry with no extra tool calls needed:</p>
           <pre id="claude-otel-snippet">` + claudeOtelSnippet + `</pre>
           <button class="copy" onclick="copyText('claude-otel-snippet')">Copy snippet</button>
           <div class="otel-optin">
-            <p class="card-hint"><strong>Optional — powers the per-session Context Window Explorer.</strong> Without this,
+            <p class="card-hint"><strong>Optional, and powers the per-session Context Window Explorer.</strong> Without this,
             you still get token counts, cost, and tool-call telemetry from the snippet above. With it, Claude Code's own
-            raw request/response bodies are captured, giving you the full block-by-block context breakdown — but per
+            raw request/response bodies are captured, giving you the full block-by-block context breakdown, but per
             Claude Code's own docs, this is a materially bigger disclosure: "bodies include the entire conversation
             history." Add it only if you want that level of detail:</p>
             <pre id="claude-otel-optin">` + claudeOtelOptin + `</pre>
@@ -835,15 +835,15 @@ async def auth_login(request: Request):
           </div>
         </div>
         <div class="tab-panel" data-panel="copilot-otel">
-          <p class="card-hint">GitHub Copilot (VS Code) also exports OpenTelemetry natively — this covers Copilot Chat,
+          <p class="card-hint">GitHub Copilot (VS Code) also exports OpenTelemetry natively. This covers Copilot Chat,
           which is VS Code's native AI surface, so no separate VS Code integration is needed:</p>
           <pre id="copilot-otel-snippet">` + copilotOtelSnippet + `</pre>
           <button class="copy" onclick="copyText('copilot-otel-snippet')">Copy snippet</button>
           <div class="otel-optin">
-            <p class="card-hint"><strong>Optional — powers the per-session Context Window Explorer.</strong> Without this,
+            <p class="card-hint"><strong>Optional, and powers the per-session Context Window Explorer.</strong> Without this,
             you still get token counts and tool-call telemetry from the snippet above. With it, Copilot exposes its own
             structured prompt/response content (` + "`gen_ai.input.messages`/`gen_ai.output.messages`" + `) for the full
-            context breakdown — a bigger disclosure than token counts alone. Add it only if you want that level of detail:</p>
+            context breakdown, a bigger disclosure than token counts alone. Add it only if you want that level of detail:</p>
             <pre id="copilot-otel-optin">` + copilotOtelOptin + `</pre>
             <button class="copy" onclick="copyText('copilot-otel-optin')">Copy opt-in line</button>
           </div>
@@ -853,7 +853,7 @@ async def auth_login(request: Request):
 
       <div class="card accent">
         <h3>Live dashboard <span class="badge">ready</span></h3>
-        <p class="card-hint">Your own sessions only — every ` + "`record_session`" + ` call from your LLM/agent
+        <p class="card-hint">Your own sessions only. Every ` + "`record_session`" + ` call from your LLM/agent
         (recorded through the token above) shows up here within a few seconds, including the full
         Context Window Explorer breakdown. No separate app needed.</p>
         <button class="copy" onclick="goToDashboard()">Proceed to dashboard &rarr;</button>
@@ -862,12 +862,12 @@ async def auth_login(request: Request):
       <details>
         <summary>How do I record my own agent's sessions here, not just read?</summary>
         <p>Call the <code>record_session</code> MCP tool (or POST <code>/api/record-session</code>) with the same
-        bearer token — whatever you record is automatically attributed to you, the same way reads are scoped.
+        bearer token, so whatever you record is automatically attributed to you, the same way reads are scoped.
         See the package README's Auth section for the exact request shape.</p>
       </details>
       <details>
         <summary>Can this token be revoked?</summary>
-        <p>Yes — the server owner can revoke your access at any time; you'd just sign in again here for a new one.
+        <p>Yes. The server owner can revoke your access at any time; you'd just sign in again here for a new one.
         Your already-recorded data isn't deleted, and stays visible only to you and the server owner.</p>
       </details>
     `;
@@ -882,7 +882,7 @@ async def auth_login(request: Request):
   // A separate full-width screen (not nested in the narrow sign-in/
   // config column) reached via "Proceed to dashboard" after a fresh
   // sign-in, or automatically on a returning visit with a stored token
-  // (see rehydrateFromStorage) — matches the approved dashboard mockup's
+  // (see rehydrateFromStorage), matching the approved dashboard mockup's
   // own topbar + wide layout rather than squeezing it into a card.
   function avatarInitial(email) {{
     return (email || "?").trim()[0]?.toUpperCase() || "?";
@@ -893,7 +893,7 @@ async def auth_login(request: Request):
       <div class="topbar">
         <div class="brand">
           <span class="brand-mark">&#9670;</span>
-          <span style="font-weight:650; font-size:0.95rem;">Lumen</span>
+          <span style="font-weight:650; font-size:0.95rem;">CtxWindow</span>
         </div>
         <div class="topbar-spacer"></div>
         <span class="live-pill"><span class="live-dot"></span> live</span>
@@ -948,7 +948,7 @@ async def auth_login(request: Request):
     if (trigger) trigger.setAttribute("aria-expanded", "false");
   }}
 
-  // Closes the identity dropdown on any click outside it — cheap to
+  // Closes the identity dropdown on any click outside it. Cheap to
   // register once at load rather than per dashboardScreen() render,
   // since #identity-dropdown only exists (and only needs closing)
   // while the dashboard screen is mounted; closeIdentityMenu() itself
@@ -975,7 +975,7 @@ async def auth_login(request: Request):
       }});
       const data = await res.json();
       if (res.ok && data.ok) {{
-        result.innerHTML = '<span style="color:var(--ok);">&check; Done — wrote to <code>' + data.path + '</code>'
+        result.innerHTML = '<span style="color:var(--ok);">&check; Done. Wrote to <code>' + data.path + '</code>'
           + (data.backed_up_to ? ' (previous version backed up to <code>' + data.backed_up_to + '</code>)' : '')
           + '. Restart any running Claude Code sessions to pick it up.</span>';
         btn.textContent = "Applied";
@@ -994,9 +994,9 @@ async def auth_login(request: Request):
   // Mints a fresh short-lived install code (see POST
   // /setup/issue-install-code) and renders both the piped one-liner and
   // the inspect-first (download, read, then run) variant of the exact
-  // same command — see LUMEN_LAUNCH_PLAN.md §1.2. The code is single-use
+  // same command; see LUMEN_LAUNCH_PLAN.md §1.2. The code is single-use
   // and expires in a few minutes, so this re-mints on every call rather
-  // than caching — "New command" (and page reload) always gets a live one.
+  // than caching, so "New command" (and page reload) always gets a live one.
   async function refreshInstallCommand() {{
     const cmdEl = document.getElementById("install-cmd");
     const inspectEl = document.getElementById("install-cmd-inspect");
@@ -1017,19 +1017,19 @@ async def auth_login(request: Request):
           + "        # read exactly what it's about to do\\nsh install.sh";
       }}
     }} catch (err) {{
-      cmdEl.textContent = "Couldn't fetch an install command: " + err.message + " — click \\"New command\\" to retry.";
+      cmdEl.textContent = "Couldn't fetch an install command: " + err.message + ". Click \\"New command\\" to retry.";
     }} finally {{
       if (btn) {{ btn.disabled = false; btn.classList.remove("spinning"); }}
     }}
   }}
 
-  // "Test your connection" — a single on-demand check against
+  // "Test your connection": a single on-demand check against
   // GET /otlp/debug (owner-scoped, see mcp_server/otlp/__init__.py),
   // never a polling loop: Claude Code only exports telemetry on actual
   // use, so there's no honest way to fake a heartbeat here. Three
   // states: still waiting (nothing accepted and nothing skipped yet),
   // connected (at least one claude_code payload accepted), or received-
-  // but-unrecognized (something landed in recent_skipped — the vendor-
+  // but-unrecognized (something landed in recent_skipped, i.e. the vendor-
   // detection miss this project hit once before, see otlp/__init__.py's
   // detect_vendor).
   async function checkConnection() {{
@@ -1047,17 +1047,17 @@ async def auth_login(request: Request):
         const when = lastAt ? new Date(lastAt * 1000).toLocaleString() : "just now";
         resultEl.innerHTML = '<div class="setup-waiting" style="background:var(--accent-dim); border-color: color-mix(in srgb, var(--accent) 40%, transparent);">'
           + '<span style="color:var(--accent);">&check;</span>'
-          + '<span><strong>Connected as ' + currentEmail + '</strong> — first session seen ' + when + '.</span></div>';
+          + '<span><strong>Connected as ' + currentEmail + '</strong>, first session seen ' + when + '.</span></div>';
       }} else if (data.counts.skipped > 0 || (data.recent_skipped && data.recent_skipped.length > 0)) {{
         resultEl.innerHTML = '<div class="setup-waiting">'
           + '<span style="color:var(--err);">&#9888;</span>'
-          + '<span>We\\'re receiving data from your machine but can\\'t identify it as Claude Code — '
+          + '<span>We\\'re receiving data from your machine but can\\'t identify it as Claude Code yet. '
           + 're-run the install command above, then close and reopen Claude Code before your next prompt.</span></div>';
       }} else {{
         resultEl.innerHTML = '<div class="setup-waiting"><span class="pulse"></span>'
           + '<span>Waiting for your first prompt&hellip; run the command above, close and '
           + 'reopen Claude Code, then run one prompt. Check back here about 10 seconds after '
-          + 'it finishes — that\\'s how often telemetry exports.</span></div>';
+          + 'it finishes. That\\'s how often telemetry exports.</span></div>';
       }}
     }} catch (err) {{
       resultEl.innerHTML = '<span style="color:var(--err);">' + err.message + '</span>';
@@ -1068,7 +1068,7 @@ async def auth_login(request: Request):
 
   // --- Live dashboard ------------------------------------------------
   // Renders each authenticated caller's own sessions right on this page,
-  // via the same /api/* routes and bearer token an LLM/agent uses — no
+  // via the same /api/* routes and bearer token an LLM/agent uses, with no
   // separate client needed to actually see what got recorded. Every
   // read here is already owner-scoped server-side (see
   // MultiTokenAuthMiddleware + metrics/store.py's owner filtering), so
@@ -1077,8 +1077,8 @@ async def auth_login(request: Request):
   // KPI strip / range filter: fetches /api/sessions?limit=500 ONCE and
   // aggregates client-side (same "personal-project scale" assumption
   // already used elsewhere in this codebase) instead of adding new
-  // backend aggregate endpoints. Every tile — sessions, tokens, spend,
-  // cache hit rate, tool error rate, context alerts — is computed from
+  // backend aggregate endpoints. Every tile (sessions, tokens, spend,
+  // cache hit rate, tool error rate, context alerts) is computed from
   // that single bulk list response; none require a per-session detail
   // fetch.
 
@@ -1108,7 +1108,7 @@ async def auth_login(request: Request):
     return String(n);
   }}
   function timeAgo(ts) {{
-    if (!ts) return "—";
+    if (!ts) return "n/a";
     const secs = Math.max(0, Date.now() / 1000 - ts);
     if (secs < 60) return "just now";
     if (secs < 3600) return Math.floor(secs / 60) + "m ago";
@@ -1123,7 +1123,7 @@ async def auth_login(request: Request):
   let dashboardSessions = []; // full bulk list (up to 500), unfiltered
   let dashboardAutoRefresh = true;
   // Whether this signed-in account is on the DEV_MODE_SUBS allowlist
-  // (see GET /api/dev-mode-status) — checked once per mount, since it
+  // (see GET /api/dev-mode-status), checked once per mount, since it
   // can't change mid-session. Everyone else never sees the toggle at
   // all, not a shown-but-disabled one.
   let dashboardIsDevMode = false;
@@ -1132,7 +1132,7 @@ async def auth_login(request: Request):
   const RANGE_SECONDS = {{today: 86400, "7d": 7 * 86400, "30d": 30 * 86400, all: null}};
   const SOURCE_LABELS = {{claude_code: "Claude Code", copilot: "Copilot", bedrock_agent: "Bedrock agent"}};
 
-  // Mirrors mci_common.config.CONTEXT_WINDOW_TOKENS — duplicated here
+  // Mirrors mci_common.config.CONTEXT_WINDOW_TOKENS, duplicated here
   // rather than plumbed through the API response because every session
   // in the list already carries total_tokens, and pulling this one
   // constant server-side into the list endpoint isn't worth a new
@@ -1167,10 +1167,10 @@ async def auth_login(request: Request):
     const totalCacheRead = inRange.reduce((sum, s) => sum + (s.cache_read_tokens || 0), 0);
     const totalFreshInput = inRange.reduce((sum, s) => sum + (s.fresh_input_tokens || 0), 0);
     const cacheDenom = totalCacheRead + totalFreshInput;
-    const cacheHitRate = cacheDenom ? Math.round((totalCacheRead / cacheDenom) * 100) + "%" : "—";
+    const cacheHitRate = cacheDenom ? Math.round((totalCacheRead / cacheDenom) * 100) + "%" : "n/a";
     const totalToolCalls = inRange.reduce((sum, s) => sum + (s.tool_call_total || 0), 0);
     const totalToolErrors = inRange.reduce((sum, s) => sum + (s.tool_call_errors || 0), 0);
-    const toolErrorRate = totalToolCalls ? Math.round((totalToolErrors / totalToolCalls) * 100) + "%" : "—";
+    const toolErrorRate = totalToolCalls ? Math.round((totalToolErrors / totalToolCalls) * 100) + "%" : "n/a";
     return `
       <div class="kpi"><span class="kpi-label">Sessions</span><span class="kpi-value">` + inRange.length + `</span></div>
       <div class="kpi"><span class="kpi-label">Tokens</span><span class="kpi-value">` + fmtTokens(tokens) + `</span></div>
@@ -1232,7 +1232,7 @@ async def auth_login(request: Request):
   }}
 
   function renderQuotaStrip() {{
-    // Neither window is wired to a real data source yet — see
+    // Neither window is wired to a real data source yet; see
     // docs/internal/OTLP_INTEGRATION_PLAN.md's "5-hour / 7-day usage-window
     // percentage" verdict (not achievable via any supported path right
     // now). Kept visually complete per that doc's framing, with the
@@ -1242,7 +1242,7 @@ async def auth_login(request: Request):
       <div class="quota-card pending">
         <div class="quota-top"><span class="q-label">` + label + `</span><span class="q-pct">&mdash;</span></div>
         <div class="quota-track"><div class="quota-fill" style="width:0%;"></div></div>
-        <div class="quota-sub">Not yet wired to a data source — see project plan.</div>
+        <div class="quota-sub">Not yet wired to a data source; see project plan.</div>
       </div>`;
     return card("5h usage window") + card("7d usage window");
   }}
@@ -1253,7 +1253,7 @@ async def auth_login(request: Request):
     const badge = SRC_BADGE[s.source] || {{cls: "other", label: "Other"}};
     const pressure = ctxPressure(s.total_tokens);
     const dotTitle = pressure.level === "ok" ? "Context window usage: " + Math.round(pressure.pct) + "%"
-      : "Context window usage: " + Math.round(pressure.pct) + "% — approaching the limit";
+      : "Context window usage: " + Math.round(pressure.pct) + "%, approaching the limit";
     return `
       <div class="session-row` + active + `" data-id="` + s.session_id + `" onclick="selectSession(event)">
         <div class="session-row-top">
@@ -1271,7 +1271,7 @@ async def auth_login(request: Request):
   function renderSessionListPanel() {{
     const inRange = sessionsInRange();
     const body = !inRange.length
-      ? '<p class="dash-empty">No sessions in view yet. Signing in here only grants query access to data recorded elsewhere — Claude Code/Copilot telemetry, or an agent calling record_session — it does not start recording this chat\\'s own activity. Set up telemetry (see the connect page) or call record_session and this list fills in automatically, no page refresh needed.</p>'
+      ? '<p class="dash-empty">No sessions in view yet. Signing in here only grants query access to data recorded elsewhere, such as Claude Code/Copilot telemetry or an agent calling record_session. It does not start recording this chat\\'s own activity. Set up telemetry (see the connect page) or call record_session and this list fills in automatically, no page refresh needed.</p>'
       : inRange.map(renderSessionRow).join("");
     return `
       <div class="panel">
@@ -1323,7 +1323,7 @@ async def auth_login(request: Request):
       ? '<div class="block-detail hidden" id="block-detail-' + idx + '">' + escapeHtml(b.content) + '</div>'
       : '<div class="block-detail unavailable hidden" id="block-detail-' + idx + '">' +
         (b.status === "redacted"
-          ? "Content is redacted by the client itself before export — not available here either."
+          ? "Content is redacted by the client itself before export, so it is not available here either."
           : "Content wasn't captured for this block (recorded before this feature existed, or via record_session without the optional field).") +
         '</div>';
     return `
@@ -1339,7 +1339,7 @@ async def auth_login(request: Request):
 
   function renderContextTab(timeline) {{
     if (!timeline.length) {{
-      return '<p class="dash-empty">No context_blocks for this session — record_session was called without the optional field.</p>';
+      return '<p class="dash-empty">No context_blocks for this session: record_session was called without the optional field.</p>';
     }}
     return `
       <div class="agent-tabs">
@@ -1364,7 +1364,7 @@ async def auth_login(request: Request):
   function renderOverviewTab(detail) {{
     const m = detail.metrics.prompt_metrics;
     // "Lines changed" / "Active time" from the mockup have no backing
-    // schema field — omitted rather than shown as fake zeros.
+    // schema field, omitted rather than shown as fake zeros.
     return `
       <div class="agent-tabs">
         <span class="agent-tab active">main</span>
@@ -1381,17 +1381,17 @@ async def auth_login(request: Request):
   function cacheHitPct(turns) {{
     // Anthropic's usage accounting: cache_read_input_tokens is a
     // SEPARATE bucket from input_tokens (the fresh/uncached portion),
-    // not a subset of it — a turn that's almost entirely served from
+    // not a subset of it. A turn that's almost entirely served from
     // cache can have cache_read_input_tokens far exceed input_tokens
     // (e.g. read=22134, input=2). Dividing read/input (found via a live
-    // browser E2E test — a real session rendered "4184%") can exceed
+    // browser E2E test, where a real session rendered "4184%") can exceed
     // 100%; the correct hit rate is read's share of the turn's TOTAL
     // input (read + fresh), which is always <= 100%.
-    if (!turns || !turns.length) return "—";
+    if (!turns || !turns.length) return "n/a";
     let read = 0, fresh = 0;
     turns.forEach((t) => {{ read += t.cache_read_input_tokens || 0; fresh += t.input_tokens || 0; }});
     const total = read + fresh;
-    if (!total) return "—";
+    if (!total) return "n/a";
     return Math.round((read / total) * 100) + "%";
   }}
 
@@ -1421,7 +1421,7 @@ async def auth_login(request: Request):
   }}
 
   function renderReliabilitySubpanel(trace) {{
-    // Real data — computed client-side from this session's already-
+    // Real data, computed client-side from this session's already-
     // fetched trace (grouped by tool, ok vs. error counts). Nothing new
     // added server-side for this.
     if (!trace.length) {{
@@ -1567,7 +1567,7 @@ async def auth_login(request: Request):
       root.innerHTML = '<p class="dash-error">Failed to load sessions: ' + err.message + '</p>';
     }} finally {{
       // Panels (including this button) get fully re-rendered above on
-      // success, so this only matters on the error path — re-query
+      // success, so this only matters on the error path. Re-query
       // rather than reuse `btn`, which may already be a detached node.
       const freshBtn = document.getElementById("manual-refresh-btn");
       if (freshBtn) {{ freshBtn.disabled = false; freshBtn.classList.remove("spinning"); }}
@@ -1625,7 +1625,7 @@ async def auth_login(request: Request):
 
   // --- Project settings (new UI, no backend yet) ----------------------
   // TODO: wire to a real per-project settings endpoint once one exists.
-  // Every control below is inert — this screen exists so the settings
+  // Every control below is inert. This screen exists so the settings
   // UX is visually complete and navigable via the ⚙ toggle, matching
   // the mockup, but nothing here persists across a page reload.
   function renderSettingsScreen() {{
@@ -1633,13 +1633,13 @@ async def auth_login(request: Request):
       <div class="settings-wrap">
         <div class="settings-head">
           <h3>Project settings</h3>
-          <p>Alert thresholds, redaction/retention, and session labels. Nothing here is wired to a backend yet —
+          <p>Alert thresholds, redaction/retention, and session labels. Nothing here is wired to a backend yet.
           changes made here are not saved.</p>
         </div>
         <div class="disclosure-note">
           <span>&#9888;</span>
           <span><strong>Not yet persisted.</strong> This screen is UI-complete but every control below is
-          disconnected from a real settings store — reloading the page resets it.</span>
+          disconnected from a real settings store, so reloading the page resets it.</span>
         </div>
         <div class="panel">
           <div class="panel-body">
@@ -1720,12 +1720,12 @@ async def auth_login(request: Request):
   }}
 
   // Decodes a Google ID token's payload for DISPLAY only (email, in the
-  // consent screen) — this is NOT verification. The signature is checked
+  // consent screen). This is NOT verification. The signature is checked
   // server-side in /auth/verify, which is the only place this credential
   // is trusted for anything security-relevant.
   //
   // Duplicated verbatim in sre-investigation-agent's web/chat.js (same
-  // function, same purpose, its own consent flow) — deliberately not
+  // function, same purpose, its own consent flow), deliberately not
   // shared, since these are two different repos/origins with no build
   // step between them. Fix bugs in both copies.
   function decodeJwtPayloadForDisplay(token) {{
@@ -1752,7 +1752,7 @@ async def auth_login(request: Request):
         <span class="arrow">┅┅┅&gt;</span>
         <div class="icon-circle accent">◈<span class="badge-check">✓</span></div>
       </div>
-      <h1 class="consent-title">Connect to Lumen</h1>
+      <h1 class="consent-title">Connect to CtxWindow</h1>
       <p class="consent-sub">This will mint a personal access token scoped to your account.</p>
       <div class="identity-row">
         <span class="avatar">` + initial + `</span>
@@ -1763,7 +1763,7 @@ async def auth_login(request: Request):
         <div class="permission-list" style="margin-top: 0.9rem; margin-bottom: 0;">
           <div class="permission-row"><span class="dot"></span> Read session metrics, cost, and tool-call history you record</div>
           <div class="permission-row"><span class="dot"></span> Record new investigation sessions attributed to your account</div>
-          <div class="permission-row"><span class="dot"></span> Nothing else — no access to anyone else's data, ever</div>
+          <div class="permission-row"><span class="dot"></span> Nothing else: no access to anyone else's data, ever</div>
         </div>
       </div>
       <div class="btn-row" style="margin-top: 1.25rem;">
@@ -1779,11 +1779,11 @@ async def auth_login(request: Request):
         <div class="icon-circle accent">◈<span class="badge-check">✓</span></div>
         <div>
           <h2>Authorization granted</h2>
-          <p>Signed in as ` + email + ` — everything below is scoped to your account only.</p>
+          <p>Signed in as ` + email + `. Everything below is scoped to your account only.</p>
         </div>
       </div>
       <p class="card-hint" style="text-align:center; margin: -0.6rem 0 1.4rem;">
-        Your token, your sessions, your local Claude Code config — all of it stays on this
+        Your token, your sessions, your local Claude Code config: all of it stays on this
         computer. Nothing you set up below is ever sent anywhere except this server.
       </p>
     `;
@@ -1824,10 +1824,10 @@ async def auth_login(request: Request):
         // ?return_to=/m; if present, skip the desktop consent/dashboard
         // screens entirely and bounce straight back with the freshly
         // minted token in the URL fragment (never the query string, so
-        // it doesn't land in server logs) — webapp/app.js reads it once,
+        // it doesn't land in server logs). webapp/app.js reads it once,
         // stores it in its own localStorage key, and strips it from the
         // URL bar. See webapp/app.js's consumeTokenFromLocation().
-        // startsWith("/") alone would also admit "//evil.com" — browsers
+        // startsWith("/") alone would also admit "//evil.com", which browsers
         // treat a leading "//" as a protocol-relative absolute URL, which
         // would carry the token off-origin in the fragment. Requiring a
         // single "/" not followed by another "/" restricts this to a real
@@ -1852,12 +1852,12 @@ async def auth_login(request: Request):
   }}
 
   // --- Browser persistence ---------------------------------------------
-  // localStorage (not sessionStorage) — deliberately survives closing
+  // localStorage (not sessionStorage), which deliberately survives closing
   // the browser entirely, same trust model as staying signed into any
   // other Google-backed site: whoever authorized here once sees their
   // own dashboard again next visit with no re-auth, until they sign out
   // or the token is revoked server-side (see the README's "Can this
-  // token be revoked?"). Nothing else is ever stored here — the token
+  // token be revoked?"). Nothing else is ever stored here; the token
   // itself is the only credential, same one shown in the "Your
   // connection" card and handed to your MCP client's config.
   const SS_TOKEN = "mci_token";
@@ -1884,7 +1884,7 @@ async def auth_login(request: Request):
 
   // Runs once on load. A stored token is trusted enough to go straight
   // to the dashboard screen (no flash of the sign-in screen for a
-  // returning visitor), but then verified with a real request — a
+  // returning visitor), but then verified with a real request. A
   // token revoked server-side since the last visit signs this browser
   // back out instead of showing a dashboard that just 401s on every
   // fetch. The connect/config cards render into #landing too (kept

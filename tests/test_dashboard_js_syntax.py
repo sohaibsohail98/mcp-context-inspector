@@ -2,12 +2,12 @@
 embedded <script> block lives inside a Python string in
 mcp_server/server.py, so writing a literal `\n`/`\'` in the Python
 source gets consumed by PYTHON's own escape processing before the JS
-ever sees it — the browser then receives a raw newline/quote instead of
+ever sees it. The browser then receives a raw newline/quote instead of
 the two-character JS escape sequence, which is a JS SyntaxError severe
 enough to kill the entire inline script (nothing on the dashboard page
 works, not just the broken snippet). Static text-matching can't catch
 this class of bug; only actually parsing the rendered output as JS can.
-Skips if `node` isn't on PATH rather than failing — this is a
+Skips if `node` isn't on PATH rather than failing. This is a
 correctness net for local/CI environments that have it, not a hard
 dependency for the rest of the suite.
 """

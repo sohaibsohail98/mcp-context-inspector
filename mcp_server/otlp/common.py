@@ -1,4 +1,4 @@
-"""Shared helpers for the per-vendor OTLP mappers — OTLP JSON wire-format
+"""Shared helpers for the per-vendor OTLP mappers: OTLP JSON wire-format
 parsing (protobuf-JSON encoding, not the binary protobuf form) and the
 chars-per-token fallback estimate. Both mappers import from here rather
 than duplicating this parsing.
@@ -6,8 +6,8 @@ than duplicating this parsing.
 
 from mci_common.config import CHARS_PER_TOKEN_ESTIMATE
 
-# The five context_blocks categories the dashboard's CATEGORY_COLORS map
-# and mci_common/timeline.py both expect — every mapper must emit one of
+# The context_blocks categories the dashboard's CATEGORY_COLORS map
+# and mci_common/timeline.py both expect. Every mapper must emit one of
 # these, never an invented category string, or the block silently fails
 # to render/color in the dashboard.
 CATEGORY_SYSTEM = "system"
@@ -22,7 +22,7 @@ CATEGORY_ANSWER = "answer"
 def estimate_tokens(text):
     """Character-count fallback for content with no exact token count
     attached (see CHARS_PER_TOKEN_ESTIMATE's docstring in
-    mci_common/config.py) — only use this when a real `usage` block
+    mci_common/config.py). Only use this when a real `usage` block
     isn't available for the content being sized."""
     if not text:
         return 0
@@ -32,7 +32,7 @@ def estimate_tokens(text):
 # Caps how much raw block text (Context Explorer's expand-to-view
 # feature) a single row stores. Well above any real system prompt or
 # typical tool_result, but bounds a pathological case (e.g. a tool
-# reading a huge file) from bloating a single row without limit — the
+# reading a huge file) from bloating a single row without limit. The
 # token_estimate/char_count above are always computed from the FULL
 # untruncated text, so cost/size numbers stay accurate even when the
 # stored preview is capped.
@@ -40,9 +40,9 @@ _MAX_STORED_CONTENT_CHARS = 50_000
 
 
 def truncate_content(text):
-    """Caps text for storage in a context_block's `content` field —
-    does not affect char_count/token_estimate, which are always
-    computed from the real, untruncated text before this runs."""
+    """Caps text for storage in a context_block's `content` field. Does
+    not affect char_count/token_estimate, which are always computed from
+    the real, untruncated text before this runs."""
     if len(text) <= _MAX_STORED_CONTENT_CHARS:
         return text
     return text[:_MAX_STORED_CONTENT_CHARS] + f"\n\n[... truncated, {len(text)} chars total]"
@@ -52,15 +52,14 @@ def truncate_content(text):
 # (attribute -> kvlistValue -> nested attribute). A cap well above any
 # real payload but far below Python's default recursion limit stops a
 # maliciously/accidentally deeply-nested arrayValue/kvlistValue from
-# forcing a RecursionError on every request that touches it — found in
-# review.
+# forcing a RecursionError on every request that touches it.
 _MAX_OTLP_VALUE_DEPTH = 20
 
 
 def _otlp_value(value_obj, _depth=0):
     """An OTLP JSON `AnyValue` is `{"stringValue": ...}` or
     `{"intValue": ...}` or `{"boolValue": ...}` or `{"doubleValue": ...}`
-    etc — exactly one key present. Returns the unwrapped Python value.
+    etc, with exactly one key present. Returns the unwrapped Python value.
     Unrecognized/empty AnyValue objects return None rather than raising,
     since a single malformed attribute shouldn't sink an entire batch."""
     if not value_obj or _depth >= _MAX_OTLP_VALUE_DEPTH:
@@ -80,7 +79,7 @@ def _otlp_value(value_obj, _depth=0):
 
 def attrs_list_to_dict(attr_list, _depth=0):
     """OTLP JSON represents attribute lists as
-    `[{"key": "...", "value": {"stringValue": "..."}}, ...]` — every
+    `[{"key": "...", "value": {"stringValue": "..."}}, ...]`. Every
     resource/log/span/metric-datapoint attribute list in the wire format
     uses this exact shape. Converts to a plain `{key: value}` dict."""
     out = {}
@@ -95,15 +94,15 @@ def attrs_list_to_dict(attr_list, _depth=0):
 
 def resource_attrs_dict(resource_obj):
     """resource_obj: the `"resource"` object on a resourceLogs/
-    resourceMetrics/resourceSpans entry — `{"attributes": [...]}`."""
+    resourceMetrics/resourceSpans entry, `{"attributes": [...]}`."""
     return attrs_list_to_dict(resource_obj.get("attributes", []))
 
 
 def log_record_body_text(log_record):
-    """A LogRecord's `body` is itself an AnyValue — usually a
+    """A LogRecord's `body` is itself an AnyValue, usually a
     stringValue carrying JSON (the raw Messages API body, for Claude
     Code's api_request_body/api_response_body events) or plain text.
-    Returns the unwrapped value as-is (str, dict, or None) — callers
+    Returns the unwrapped value as-is (str, dict, or None). Callers
     that expect JSON should json.loads() a str result themselves and
     handle a decode failure explicitly rather than this helper guessing."""
     return _otlp_value(log_record.get("body", {}))

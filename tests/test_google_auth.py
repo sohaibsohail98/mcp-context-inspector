@@ -1,4 +1,4 @@
-"""Regression tests for mcp_server/google_auth.py — no real network calls
+"""Regression tests for mcp_server/google_auth.py, with no real network calls
 to Google; `id_token.verify_oauth2_token` is monkeypatched.
 """
 
@@ -21,7 +21,7 @@ def test_verify_credential_returns_sub_and_email(monkeypatch):
 
 def test_verify_credential_rejects_unverified_email(monkeypatch):
     """An email claim google itself marks unverified shouldn't be trusted
-    as someone's real identity — it's used for display/attribution
+    as someone's real identity, since it's used for display/attribution
     throughout (dashboard identity, OAuth-issued token records)."""
     monkeypatch.setattr(
         google_auth.id_token,
@@ -36,7 +36,7 @@ def test_verify_credential_rejects_unverified_email(monkeypatch):
 
 def test_verify_credential_missing_email_does_not_crash(monkeypatch):
     """Google ID tokens always carry `sub`, but `email` is only present
-    if the `email` scope was granted — must not KeyError."""
+    if the `email` scope was granted, and must not KeyError."""
     monkeypatch.setattr(
         google_auth.id_token,
         "verify_oauth2_token",
@@ -58,7 +58,7 @@ def test_verify_credential_raises_invalid_google_token_on_bad_jwt(monkeypatch):
 def test_verify_credential_passes_our_client_id_as_the_expected_audience(monkeypatch):
     """If this server's own GOOGLE_OAUTH_CLIENT_ID weren't correctly
     threaded through as the audience check, a credential minted for a
-    DIFFERENT app entirely could be accepted here — verify_oauth2_token
+    DIFFERENT app entirely could be accepted here. verify_oauth2_token
     only enforces the audience match if it's actually passed the real
     client_id, not a stale/wrong one."""
     seen = {}

@@ -1,9 +1,8 @@
-"""Plain REST routes — a curl-friendly alternative to a real MCP
-handshake (see web/mcp-client.js for the actual protocol client). Same
-underlying metrics/store.py functions the MCP tools in tools.py call;
-one data-access layer, not two implementations of "how do I read a
-session." Importing this module registers these routes on the shared
-`server` instance."""
+"""Plain REST routes, a curl-friendly alternative to a real MCP
+handshake. Same underlying metrics/store.py functions the MCP tools in
+tools.py call; one data-access layer, not two implementations of "how do
+I read a session." Importing this module registers these routes on the
+shared `server` instance."""
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse
@@ -19,7 +18,7 @@ async def api_sessions(request: Request):
     limit = int(request.query_params.get("limit", 10))
     owner = current_owner.get()
     # ?include_test_sessions=1 only takes effect for an allowlisted
-    # account (see dev_mode.py) — anyone else's request for it is
+    # account (see dev_mode.py). Anyone else's request for it is
     # silently ignored rather than erroring, so a stray query param
     # never becomes a way to probe who's on the allowlist.
     include_test_sessions = (
@@ -31,7 +30,7 @@ async def api_sessions(request: Request):
 @server.custom_route("/api/dev-mode-status", methods=["GET"])
 async def api_dev_mode_status(request: Request):
     """Tells the dashboard whether to render the "show test sessions"
-    toggle at all — the toggle itself is meaningless to anyone not on
+    toggle at all. The toggle itself is meaningless to anyone not on
     the DEV_MODE_SUBS allowlist, so it's hidden rather than shown-and-
     disabled for everyone else."""
     return JSONResponse({"dev_mode": dev_mode.is_dev_mode_account(current_owner.get())})
@@ -73,18 +72,17 @@ async def api_context_timeline(request: Request):
 
 @server.custom_route("/", methods=["GET"])
 async def root_redirect(request: Request):
-    """This is a headless MCP server, not a browsable app — visiting the
+    """This is a headless MCP server, not a browsable app. Visiting the
     bare URL with no route registered here would otherwise 404 with a
     blank page, which reads as "broken" to anyone who just opens the
     service URL. /auth/login is the actual human entry point (sign-in +
-    connection instructions), same reasoning as web/server.py's own
-    root redirect to /chat."""
+    connection instructions)."""
     return RedirectResponse(url="/auth/login")
 
 
 @server.custom_route("/health", methods=["GET"])
 async def healthz(request: Request):
-    """Unauthenticated — used by Cloud Scheduler to keep the deployed
+    """Unauthenticated. Used by Cloud Scheduler to keep the deployed
     instance warm, and by anyone checking the service is up at all."""
     return JSONResponse({"status": "ok"})
 

@@ -2,12 +2,12 @@
 
 Self-consistent fixture tests only: no real captured GitHub Copilot OTLP
 payload exists to validate against (Copilot's OTel export is genuinely
-unverified end-to-end — see the module docstring in
-mcp_server/otlp/copilot.py and docs/internal/OTLP_INTEGRATION_PLAN.md's "###
+unverified end-to-end; see the module docstring in
+mcp_server/otlp/copilot.py's own module docstring ("###
 GitHub Copilot" section for what is/isn't confirmed). These tests
 hand-construct OTLP JSON span payloads matching copilot.py's own
 documented attribute-name/shape assumptions and assert the mapper wires
-them into metrics/store.py's schema correctly and idempotently — they
+them into metrics/store.py's schema correctly and idempotently. They
 pin down *this repo's* mapping logic, not Copilot's real wire format.
 """
 
@@ -115,7 +115,7 @@ def test_invoke_agent_and_chat_span_produce_session_with_turn_and_tokens(isolate
 
 def test_second_chat_span_repeating_history_does_not_duplicate_blocks(isolated_sqlite_db):
     """gen_ai.input.messages may carry the full cumulative conversation
-    rather than just new messages each turn (unverified for Copilot —
+    rather than just new messages each turn (unverified for Copilot,
     same defensive assumption as the Claude Code mapper). A second chat
     span whose input.messages repeats the first turn's messages plus one
     new one should only append the new tail, not re-append the repeats."""
@@ -155,7 +155,7 @@ def test_second_chat_span_repeating_history_does_not_duplicate_blocks(isolated_s
 def test_execute_tool_span_appends_tool_call_with_status(isolated_sqlite_db):
     """An execute_tool span (including MCP-sourced tool calls per the
     plan) should map to append_tool_call with the right tool name, args,
-    and status — success by default, error when the span's OTLP status
+    and status: success by default, error when the span's OTLP status
     code is ERROR (2)."""
     store = isolated_sqlite_db
     trace_id = "trace-3"

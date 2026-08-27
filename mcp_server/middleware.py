@@ -13,7 +13,7 @@ from mcp_server.app import current_owner
 
 
 def _public_origin(request):
-    """The real, public-facing origin this server is reachable at — NOT
+    """The real, public-facing origin this server is reachable at. NOT
     `request.base_url`, which reflects whatever THIS process actually
     sees. Behind the Cloudflare Worker reverse proxy (see
     cloudflare-proxy/worker.js), that's Cloud Run's own internal
@@ -23,9 +23,9 @@ def _public_origin(request):
     Host header and lets fetch() re-derive it from env.ORIGIN, so the
     Host this process sees is Cloud Run's own raw hostname, never the
     public one a client actually talked to. Used for URLs this server
-    generates ABOUT itself — OAuth issuer/resource metadata, the
-    downloadable local-setup script. Getting this wrong doesn't 401 or crash
-    anything: a wrong-but-well-formed URL only fails later, when
+    generates ABOUT itself, such as OAuth issuer/resource metadata and
+    the downloadable local-setup script. Getting this wrong doesn't 401
+    or crash anything: a wrong-but-well-formed URL only fails later, when
     something else tries to fetch it.
 
     Falls back to request.base_url when PUBLIC_ORIGIN isn't set, which
@@ -45,7 +45,7 @@ class MultiTokenAuthMiddleware(BaseHTTPMiddleware):
     unauthenticated, since that is the pre-auth sign-in flow.
 
     GET /setup/install is also carved out of the bearer-token gate
-    (see unauthenticated_exact_paths) — it's the curl-able one-liner's
+    (see unauthenticated_exact_paths). It's the curl-able one-liner's
     target (`curl ... | sh`), which can't carry an Authorization header,
     so its credential is the short-lived `?t=` code checked inside the
     route handler itself (routes/setup.py's setup_install), not a bearer
@@ -83,13 +83,13 @@ class MultiTokenAuthMiddleware(BaseHTTPMiddleware):
                 # it looks at this header to find the protected-resource
                 # metadata document, which in turn points it at
                 # /.well-known/oauth-authorization-server (see the OAuth
-                # routes below). Also set on this specific response — not
-                # relying on the global CORSMiddleware — since a browser-
-                # side client's discovery fetch needs the header readable
-                # cross-origin even though this response is a plain 401.
+                # routes below). Also set on this specific response, rather
+                # than relying on the global CORSMiddleware, since a
+                # browser-side client's discovery fetch needs the header
+                # readable cross-origin even though this is a plain 401.
                 metadata_url = _public_origin(request) + "/.well-known/oauth-protected-resource/mcp"
                 return JSONResponse(
-                    {"error": "unauthorized — missing or wrong bearer token"},
+                    {"error": "unauthorized: missing or wrong bearer token"},
                     status_code=401,
                     headers={
                         "WWW-Authenticate": f'Bearer error="invalid_token", resource_metadata="{metadata_url}"',
@@ -105,15 +105,15 @@ class OAuthCORSMiddleware(BaseHTTPMiddleware):
     ever sees them.
 
     CORSMiddleware enforces its allow_origins allowlist against EVERY
-    OPTIONS request regardless of path — there's no per-route exclusion.
+    OPTIONS request regardless of path; there's no per-route exclusion.
     That allowlist is CHAT_UI_ORIGIN (this deployment's own known chat-UI
     origins), which deliberately does NOT include arbitrary MCP clients
-    like claude.ai, Cursor, or a Copilot backend — those routes need to
+    like claude.ai, Cursor, or a Copilot backend. Those routes need to
     be reachable from literally any origin, since discovery/registration
     is the entire point of them being public. Left to the app-wide
     middleware, a preflight from an unrecognized origin gets hard-
     rejected with a generic 400 before ever reaching the OAuth route's
-    own permissive CORS handling — which is exactly what broke
+    own permissive CORS handling, which is exactly what broke
     registration for a real client in production before this existed.
 
     Only handles the preflight (OPTIONS) case; the routes themselves

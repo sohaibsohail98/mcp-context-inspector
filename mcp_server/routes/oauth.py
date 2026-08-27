@@ -4,7 +4,7 @@ Copilot, ...) discover, register, and authenticate against this server
 without a manually pasted token.
 
 This server acts as BOTH the OAuth resource server (the /mcp endpoint,
-gated by MultiTokenAuthMiddleware) and the authorization server — the
+gated by MultiTokenAuthMiddleware) and the authorization server. The
 MCP spec allows either, and combined is simplest here since there's no
 identity provider to delegate to beyond Google sign-in, which this
 server already verifies itself.
@@ -16,13 +16,13 @@ Flow:
   2. Client fetches that, learns this server is also its own
      authorization server, fetches /.well-known/oauth-authorization-server
      for the actual endpoints.
-  3. Client POSTs /oauth/register once (RFC 7591) to get a client_id —
+  3. Client POSTs /oauth/register once (RFC 7591) to get a client_id:
      no manual setup, no client secret (public client, PKCE-protected).
   4. Client opens /oauth/authorize in a browser; user signs in with
      Google (this server's existing identity check, reused as the
      consent step); server redirects back with a one-time code.
   5. Client exchanges the code at /oauth/token (with the PKCE verifier)
-     for an access token — an ordinary bearer token, so
+     for an access token, an ordinary bearer token, so
      MultiTokenAuthMiddleware needs no special-casing to accept it (see
      auth_store.is_valid_token, which checks both sign-in tokens and
      OAuth-issued ones).
@@ -44,11 +44,11 @@ from mcp_server.auth.google import InvalidGoogleToken, verify_credential
 from mcp_server.middleware import _public_origin
 from mcp_server.routes.auth import _PAGE_STYLE
 
-# Per-IP fixed-window rate limit for POST /oauth/register — that route is
+# Per-IP fixed-window rate limit for POST /oauth/register. That route is
 # fully open by design (no auth, no CAPTCHA; RFC 7591 Dynamic Client
 # Registration is meant to be self-service), and every call inserts a
-# permanent row with no cleanup path except wiping the whole auth DB (see
-# docs/nextsteps.md item 5a). In-memory, per-process: doesn't survive a
+# permanent row with no cleanup path except wiping the whole auth DB.
+# In-memory, per-process: doesn't survive a
 # restart or share state across multiple instances. Acceptable at this
 # server's personal-project scale (min-instances=1 in prod today) the
 # same way other in-memory tradeoffs already made in this codebase are;
@@ -63,8 +63,8 @@ def _client_ip(request):
     """The real visitor IP, not Cloudflare's own edge IP. The
     cloudflare-proxy Worker forwards the incoming request's headers
     unchanged (see cloudflare-proxy/worker.js) other than Host, so
-    CF-Connecting-IP — set by Cloudflare's edge on every request it
-    fronts — survives the hop to Cloud Run. request.client.host is only
+    CF-Connecting-IP, set by Cloudflare's edge on every request it
+    fronts, survives the hop to Cloud Run. request.client.host is only
     a reasonable fallback for local dev / direct-to-origin calls, where
     it IS the real caller."""
     return request.headers.get("CF-Connecting-IP") or (request.client.host if request.client else "unknown")
@@ -73,7 +73,7 @@ def _client_ip(request):
 def _register_rate_limited(request):
     """True if this IP has already made _REGISTER_MAX_PER_WINDOW calls to
     /oauth/register within the trailing _REGISTER_WINDOW_SECONDS. Records
-    the current attempt as a side effect when NOT rate-limited — an
+    the current attempt as a side effect when NOT rate-limited, so an
     attempt that gets rejected doesn't itself count against the window."""
     now = time.monotonic()
     attempts = _register_attempts[_client_ip(request)]
@@ -87,8 +87,8 @@ def _register_rate_limited(request):
 
 def _oauth_cors_json(payload, status_code=200):
     """These endpoints are meant to be reachable cross-origin from
-    whatever chat UI is doing the discovery/registration/token-exchange —
-    that's the entire point of them existing — so they carry their own
+    whatever chat UI is doing the discovery/registration/token-exchange,
+    which is the entire point of them existing, so they carry their own
     permissive CORS headers rather than relying on the app-wide
     CORSMiddleware, which is deliberately scoped to this deployment's own
     known origins (see CHAT_UI_ORIGIN) and would otherwise block this."""
@@ -106,9 +106,9 @@ def _oauth_cors_json(payload, status_code=200):
 
 def _mcp_resource_url(request):
     """The canonical resource URI (RFC 8707) this server's tokens are
-    scoped to — always the /mcp endpoint itself, never a trailing slash
+    scoped to. Always the /mcp endpoint itself, never a trailing slash
     (see the MCP spec's canonical-URI guidance). Built from
-    _public_origin, not request.base_url directly — see that function's
+    _public_origin, not request.base_url directly; see that function's
     docstring for why."""
     return _public_origin(request) + "/mcp"
 
@@ -120,7 +120,7 @@ def _validate_oauth_request(client_id, redirect_uri, code_challenge, code_challe
     (client_dict, resource_to_record).
 
     code_challenge_method: strictly `== "S256"`, not the previous
-    `if code_challenge_method and ... != "S256"` — that guard was falsy
+    `if code_challenge_method and ... != "S256"`. That guard was falsy
     for an empty string, so `code_challenge_method=` (present but blank)
     sailed straight through and only failed much later, confusingly, at
     redemption. There's no legitimate caller for whom "" or "plain"
@@ -128,7 +128,7 @@ def _validate_oauth_request(client_id, redirect_uri, code_challenge, code_challe
     param to "S256" before this function ever sees it.
 
     state length cap: defense in depth alongside the escaping in
-    oauth_authorize_page below — state is attacker-reachable (a phishing
+    oauth_authorize_page below. state is attacker-reachable (a phishing
     link can set it to anything) and free-form per spec, so there's no
     charset to validate, but an unbounded value has no legitimate use and
     a length cap costs nothing."""
@@ -142,7 +142,7 @@ def _validate_oauth_request(client_id, redirect_uri, code_challenge, code_challe
         raise ValueError("state is too long")
     client = auth_store.get_oauth_client(client_id) if client_id else None
     if client is None:
-        raise ValueError("unknown client_id — register via /oauth/register first")
+        raise ValueError("unknown client_id: register via /oauth/register first")
     if redirect_uri not in client["redirect_uris"]:
         raise ValueError("redirect_uri is not registered for this client")
     expected_resource = _mcp_resource_url(request)
@@ -155,7 +155,7 @@ def _json_for_script(obj):
     """json.dumps(), but safe to interpolate directly into an HTML
     <script> block. Plain json.dumps() does NOT escape "<" or "/", so a
     value containing the literal substring "</script>" closes the
-    enclosing script tag at the HTML-parser level — before the browser
+    enclosing script tag at the HTML-parser level, before the browser
     ever gets to JS string-escaping rules, which don't apply yet at that
     point. Escaping "<", ">", and "&" as \\u-sequences (valid inside any
     JSON/JS string, invisible to JSON.parse) neutralizes that regardless
@@ -163,7 +163,7 @@ def _json_for_script(obj):
     matters here specifically because /oauth/authorize embeds the
     caller-supplied `state` (and redirect_uri, code_challenge) query
     params, which are otherwise unvalidated free-form strings per the
-    OAuth spec — an attacker who registers a client (open, unauthenticated
+    OAuth spec. An attacker who registers a client (open, unauthenticated
     registration) can put an XSS payload directly in `state` and send the
     resulting /oauth/authorize link to a victim who's already signed in,
     whose token then sits reachable in localStorage on this exact page."""
@@ -173,7 +173,7 @@ def _json_for_script(obj):
 @server.custom_route("/.well-known/oauth-protected-resource", methods=["GET", "OPTIONS"])
 @server.custom_route("/.well-known/oauth-protected-resource/mcp", methods=["GET", "OPTIONS"])
 async def oauth_protected_resource_metadata(request: Request):
-    """RFC 9728 — tells a client where its authorization server is. Two
+    """RFC 9728: tells a client where its authorization server is. Two
     paths registered: the bare well-known path some clients probe by
     default, and the resource-specific one (.../oauth-protected-resource/mcp)
     that RFC 9728 §3.1 actually specifies for a resource at /mcp."""
@@ -189,7 +189,7 @@ async def oauth_protected_resource_metadata(request: Request):
 
 @server.custom_route("/.well-known/oauth-authorization-server", methods=["GET", "OPTIONS"])
 async def oauth_authorization_server_metadata(request: Request):
-    """RFC 8414 — the actual endpoint URLs and capabilities of this
+    """RFC 8414: the actual endpoint URLs and capabilities of this
     server acting as its own authorization server."""
     if request.method == "OPTIONS":
         return _oauth_cors_json({})
@@ -209,7 +209,7 @@ async def oauth_authorization_server_metadata(request: Request):
 
 @server.custom_route("/oauth/register", methods=["POST", "OPTIONS"])
 async def oauth_register(request: Request):
-    """RFC 7591 Dynamic Client Registration — lets a client obtain a
+    """RFC 7591 Dynamic Client Registration: lets a client obtain a
     client_id with no manual setup. Public clients only (PKCE protects
     the actual grant instead of a client secret), matching
     token_endpoint_auth_methods_supported above."""
@@ -252,7 +252,7 @@ async def oauth_register(request: Request):
 
 @server.custom_route("/oauth/authorize", methods=["GET"])
 async def oauth_authorize_page(request: Request):
-    """Renders a sign-in page for the OAuth authorization request — reuses
+    """Renders a sign-in page for the OAuth authorization request. Reuses
     this server's existing Google sign-in (see /auth/login) as the
     identity check AND the consent step: signing in here is what grants
     the requesting client access, same one-click model as everywhere else
@@ -282,7 +282,7 @@ async def oauth_authorize_page(request: Request):
     client_name = client["client_name"] or "This application"
     # Shown on the consent screen alongside client_name below: client_name
     # is free-text set at registration time and proves nothing (anyone can
-    # register a client named "Claude") — the redirect host is the one
+    # register a client named "Claude"). The redirect host is the one
     # thing here that's actually bound to the registration and can't be
     # spoofed without also controlling that domain, so it's the signal
     # worth a user's attention, not the name.
@@ -304,8 +304,8 @@ async def oauth_authorize_page(request: Request):
   <h3>Authorize {escape(client_name)}</h3>
   <p class="card-hint">Sign in with Google to let <strong>{escape(client_name)}</strong>
   (<code>{escape(redirect_host)}</code>) connect to mcp-context-inspector as you. It gets the
-  same access your own signed-in session already has — your own data only, scoped to your
-  account. <strong>Check the domain in parentheses</strong> — a display name alone can say
+  same access your own signed-in session already has: your own data only, scoped to your
+  account. <strong>Check the domain in parentheses</strong>, since a display name alone can say
   anything; that domain is where your data actually goes.</p>
   <div id="g_id_onload" data-client_id="{google_client_id}" data-callback="onOAuthSignIn"></div>
   <div class="g_id_signin" data-type="standard" data-theme="filled_black"></div>
@@ -340,7 +340,7 @@ async def oauth_authorize_page(request: Request):
 @server.custom_route("/oauth/authorize", methods=["POST"])
 async def oauth_authorize_complete(request: Request):
     """Completes the authorize step after the browser has a fresh Google
-    credential: re-validates the request (defense in depth — don't trust
+    credential: re-validates the request (defense in depth: don't trust
     client-supplied params just because the GET page rendered), verifies
     the credential server-side the same way /auth/verify does, and mints
     a one-time authorization code the client exchanges at /oauth/token."""
@@ -396,7 +396,7 @@ async def oauth_authorize_complete(request: Request):
 @server.custom_route("/oauth/token", methods=["POST", "OPTIONS"])
 async def oauth_token(request: Request):
     """Exchanges a one-time authorization code (+ PKCE verifier) for an
-    access token — an ordinary bearer token, same format and same
+    access token, an ordinary bearer token, same format and same
     MultiTokenAuthMiddleware check as every other token this server
     issues (see auth_store.mint_oauth_token)."""
     if request.method == "OPTIONS":
@@ -426,7 +426,7 @@ async def oauth_token(request: Request):
         "access_token": token,
         "token_type": "Bearer",
         # This server's bearer tokens don't actually expire (see
-        # auth_store) — a large-but-finite value here rather than
+        # auth_store), a large-but-finite value here rather than
         # omitting the field, since some clients treat a missing
         # expires_in as "unknown, refresh soon" rather than "doesn't
         # expire."
@@ -437,10 +437,10 @@ async def oauth_token(request: Request):
 
 def _require_owner(request):
     """True if the caller connected with the owner token, not a per-user
-    one (current_owner.get() is None — see app.py's contextvar docstring
+    one (current_owner.get() is None; see app.py's contextvar docstring
     and MultiTokenAuthMiddleware). The admin routes below list/revoke
     every OAuth client and token on the server, not just the caller's
-    own — owner-only, same "it's your server" boundary already used
+    own. Owner-only, the same "it's your server" boundary already used
     elsewhere (e.g. get_recent_sessions seeing everyone's data)."""
     return current_owner.get() is None
 
@@ -469,7 +469,7 @@ async def api_list_oauth_tokens(request: Request):
 
 @server.custom_route("/api/oauth-tokens/{token_prefix}", methods=["DELETE"])
 async def api_revoke_oauth_token(request: Request):
-    """Revokes by exact token, not prefix — list_oauth_tokens() only ever
+    """Revokes by exact token, not prefix. list_oauth_tokens() only ever
     shows a prefix (never the full value), so this expects the caller to
     already have the real token from wherever it was issued (e.g. their
     own client config), matching how every other revoke in this server

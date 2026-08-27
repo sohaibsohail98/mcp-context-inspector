@@ -40,7 +40,7 @@
   <!-- Cloud Run -->
   <rect class="box-accent" x="580" y="120" width="200" height="70"/>
   <text class="label" x="600" y="150">Cloud Run</text>
-  <text class="sub" x="600" y="168">Lumen server (Starlette + MCP)</text>
+  <text class="sub" x="600" y="168">CtxWindow server (Starlette + MCP)</text>
 
   <!-- Storage -->
   <rect class="box" x="580" y="250" width="200" height="70"/>

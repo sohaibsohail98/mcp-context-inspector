@@ -2,11 +2,11 @@
 
 Fixtures match the real wire shape confirmed via a live local capture
 (CLAUDE_CODE_ENABLE_TELEMETRY=1, OTEL_LOG_RAW_API_BODIES=1, claude-code
-2.1.233, 2026-08-20) — see claude_code.py's module docstring "Verified"
+2.1.233, 2026-08-20); see claude_code.py's module docstring "Verified"
 section. Notably: the raw body lives in the log record's `body`
 ATTRIBUTE (`attrs["body"]`), not the LogRecord's own top-level `body`
 field (which instead carries the dotted event name as its stringValue,
-e.g. `"claude_code.api_request_body"` — reproduced here too, since a
+e.g. `"claude_code.api_request_body"`, reproduced here too, since a
 fixture that only sets the attribute wouldn't catch a regression back to
 reading the wrong field).
 """
@@ -34,7 +34,7 @@ def _log_record(event_name, body, session_id="sess-1", **extra_attrs):
         "timeUnixNano": "1000000000",
         "attributes": attrs,
         # Real Claude Code stamps the dotted event name here, NOT the
-        # payload — confirmed via live capture. Kept realistic so a
+        # payload, confirmed via live capture. Kept realistic so a
         # regression back to reading this field would fail these tests.
         "body": {"stringValue": f"claude_code.{event_name}"},
     }
@@ -171,7 +171,7 @@ def test_tool_result_event_appends_tool_call(isolated_sqlite_db):
 
 def test_redacted_thinking_block_gets_reasoning_category(isolated_sqlite_db):
     """Extended-thinking content is unconditionally redacted even with
-    raw bodies on — must still categorize as CATEGORY_REASONING with
+    raw bodies on, and must still categorize as CATEGORY_REASONING with
     status="redacted" (so the dashboard's redacted-block styling
     applies), never a zero token_estimate, and no stored content (the
     placeholder text isn't real content worth showing on expand)."""
@@ -207,7 +207,7 @@ def test_redacted_thinking_block_gets_reasoning_category(isolated_sqlite_db):
 
 def test_malformed_record_does_not_crash_batch(isolated_sqlite_db):
     """One malformed log record (invalid JSON body) must be skipped, not
-    crash the whole batch — other valid records in the same batch must
+    crash the whole batch. Other valid records in the same batch must
     still be processed."""
     store = isolated_sqlite_db
 
@@ -226,7 +226,7 @@ def test_malformed_record_does_not_crash_batch(isolated_sqlite_db):
 
 def test_tool_result_message_does_not_inflate_turn_number(isolated_sqlite_db):
     """A tool_result content block arrives inside a role='user' message
-    per the real Anthropic Messages API — a naive 'every user-role
+    per the real Anthropic Messages API. A naive 'every user-role
     message starts a new turn' rule would double-count that as a second
     turn per tool call. Regression test for that bug found in review:
     one real user turn (question -> tool call -> tool result -> answer)
@@ -250,7 +250,7 @@ def test_tool_result_message_does_not_inflate_turn_number(isolated_sqlite_db):
 def test_first_user_message_backfills_session_prompt(isolated_sqlite_db):
     """OTLP sessions are created via start_or_get_session with
     prompt=None (unlike record_session's one-shot Bedrock path, which
-    gets its prompt as a direct argument) — nothing else ever populates
+    gets its prompt as a direct argument), and nothing else ever populates
     it, so the dashboard showed "(no prompt)" for every OTLP session even
     though the real conversation content was captured correctly.
     append_context_block must backfill sessions.prompt from the first
@@ -272,7 +272,7 @@ def test_first_user_message_backfills_session_prompt(isolated_sqlite_db):
 
 def test_later_user_message_does_not_overwrite_first_prompt(isolated_sqlite_db):
     """Turn 0's user message sets sessions.prompt; a second/later turn's
-    user message must never clobber it — the prompt column is meant to
+    user message must never clobber it. The prompt column is meant to
     reflect how the session started, not its most recent turn."""
     store = isolated_sqlite_db
 
@@ -323,7 +323,7 @@ def test_shape_shift_does_not_triple_user_message_blocks(isolated_sqlite_db):
     sends the SAME cumulative history reshaped: a new
     <system-reminder>-wrapped message is placed BEFORE the original
     <session>-wrapped message (chosen over "after" because that's the
-    ordering that actually breaks a length-slice diff here — a suffix
+    ordering that actually breaks a length-slice diff here. A suffix
     slice starting at len(existing)==1 would, with "after" placement,
     still land on genuinely new content; with "before" placement it
     instead lands on the tail of the ALREADY-SEEN <session> message,
@@ -399,7 +399,7 @@ def test_byte_identical_tool_results_in_same_request_are_both_stored(isolated_sq
     """Legitimate-repeat edge case: two tool_result blocks in the SAME
     request that happen to have byte-identical content (e.g. two tool
     calls both returning "OK") are genuinely distinct occurrences and
-    must both be stored — the occurrence-index approach must not dedupe
+    must both be stored, so the occurrence-index approach must not dedupe
     them away as if they were the same occurrence."""
     store = isolated_sqlite_db
 
@@ -431,14 +431,14 @@ def test_byte_identical_tool_results_in_same_request_are_both_stored(isolated_sq
     timeline = store.get_context_timeline("sess-repeat")
     tool_results = [b for b in timeline if b["category"] == "tool_result"]
     # Distinct labels (tool_use_id is embedded in the label), so this
-    # isn't even a same-identity case — but assert content explicitly too.
+    # isn't even a same-identity case, but assert content explicitly too.
     assert len(tool_results) == 2
     assert all(b["content"] == "OK" for b in tool_results)
 
 
 def test_same_identity_repeat_admits_second_genuine_occurrence(isolated_sqlite_db):
     """Exercises the occurrence-index Counter logic directly for blocks
-    that DO share an identical (category, label, content) key — e.g. two
+    that DO share an identical (category, label, content) key, e.g. two
     plain assistant text replies that happen to be byte-identical
     ("Done."). Request 1 sends one such assistant turn; request 2 resends
     that turn PLUS a second, genuinely new occurrence of the exact same
@@ -485,7 +485,7 @@ def test_body_is_read_from_attribute_not_log_record_body_field(isolated_sqlite_d
     """Regression test for a bug found via a real local capture
     (CLAUDE_CODE_ENABLE_TELEMETRY=1, OTEL_LOG_RAW_API_BODIES=1): the raw
     Messages API JSON is in the log record's `body` ATTRIBUTE, not the
-    LogRecord's own top-level `body` field — that field instead carries
+    LogRecord's own top-level `body` field. That field instead carries
     the dotted event name (`"claude_code.api_request_body"`) as its
     stringValue. Reading the wrong field silently no-ops every
     request/response body (caught by _SKIP_EXCEPTIONS), so no exception
@@ -501,7 +501,7 @@ def test_body_is_read_from_attribute_not_log_record_body_field(isolated_sqlite_d
             {"key": "session.id", "value": {"stringValue": "sess-real-shape"}},
             {"key": "body", "value": {"stringValue": json.dumps(request_body)}},
         ],
-        # The LogRecord's own body — a real capture puts the dotted
+        # The LogRecord's own body. A real capture puts the dotted
         # event name here, NOT the payload.
         "body": {"stringValue": "claude_code.api_request_body"},
     }
@@ -540,7 +540,7 @@ def test_connection_only_event_does_not_create_an_empty_session(isolated_sqlite_
 
 
 def test_real_turn_after_connection_only_event_still_creates_session(isolated_sqlite_db):
-    """The fix only skips session creation for non-turn events — a
+    """The fix only skips session creation for non-turn events. A
     session_id that sends mcp_server_connection first and then a real
     turn must still land normally."""
     store = isolated_sqlite_db
@@ -577,7 +577,7 @@ def _token_usage_metric(session_id, value, value_key="asInt"):
 
 def test_zero_value_metric_does_not_create_a_session(isolated_sqlite_db):
     """A claude_code.token.usage datapoint with a zero value carries no
-    real usage to report — same reasoning as the logs-side fix above,
+    real usage to report, same reasoning as the logs-side fix above,
     applied to the metrics path."""
     store = isolated_sqlite_db
 

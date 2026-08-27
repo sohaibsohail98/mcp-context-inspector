@@ -1,4 +1,4 @@
-"""Firestore backend for the execution recorder — an alternative to
+"""Firestore backend for the execution recorder, an alternative to
 store_dynamodb.py for deployments that prefer GCP/Firestore over AWS.
 Same function signatures as store_sqlite.py/store_dynamodb.py; callers
 (app.py, mcp_server/server.py) go through store.py's dispatcher and
@@ -7,20 +7,20 @@ never know which backend is active.
 Schema: a top-level `sessions` collection, one document per
 session_id, with `owner` and `timestamp` as top-level fields so they're
 directly queryable/filterable/orderable (Firestore has no scan-then-
-filter equivalent worth using when a real query is available — this is
+filter equivalent worth using when a real query is available. This is
 the thing store_dynamodb.py's own docstring flags as a scan-based
 tradeoff to revisit; here we design it away up front). Subcollections
 `sessions/{session_id}/turns`, `.../tool_calls`, `.../context_blocks`
 hold the per-turn/per-call/per-block rows, each doc ID a zero-padded
 sequence number ("0000", "0001", ...) mirroring store_sqlite.py's
 turn_n/seq columns. Each doc also carries that same index in a plain
-`_seq` integer field — real Firestore rejects a descending orderBy on
+`_seq` integer field, because real Firestore rejects a descending orderBy on
 the document-ID/name field ("does not support descending key scans"),
 which the transactional max-sequence lookup needs, so `_seq` exists
 purely to give that query something descending-sortable to read.
 Forward-ordered reads use `_seq` too, for consistency.
 
-Client uses Application Default Credentials — works automatically on
+Client uses Application Default Credentials, which works automatically on
 Cloud Run via its service account; for local/test use, the client
 library transparently honors FIRESTORE_EMULATOR_HOST if set, no
 special-casing needed here.
@@ -42,12 +42,12 @@ from metrics.errors import SessionOwnershipError
 # collection instead of colliding on "sessions".
 SESSIONS_COLLECTION = os.environ.get("METRICS_FIRESTORE_COLLECTION", "sessions")
 
-_SEQ_WIDTH = 4  # "0000".."9999" — matches store_dynamodb.py's TURN#0000-style padding
+_SEQ_WIDTH = 4  # "0000".."9999", matching store_dynamodb.py's TURN#0000-style padding
 
 
 def _client():
     # A fresh Client() per call, same spirit as store_sqlite.py's
-    # _connect() — cheap (it's just a config object; the underlying gRPC
+    # _connect(). Cheap (it's just a config object; the underlying gRPC
     # channel is pooled internally) and means nothing here holds a
     # module-global client that a test fixture would need to monkeypatch
     # around. Firestore's Client() picks up FIRESTORE_EMULATOR_HOST from
@@ -60,7 +60,7 @@ def _sessions(client):
 
 
 def _visible(session_owner, caller_owner):
-    """caller_owner=None means "the admin/owner token" — sees
+    """caller_owner=None means "the admin/owner token", which sees
     everything. Otherwise a caller only sees sessions it owns. Same
     contract as store_sqlite.py's version."""
     return caller_owner is None or session_owner == caller_owner
@@ -77,7 +77,7 @@ def _seq_doc_id(n):
 
 def _next_seq_transactional(transaction, subcollection_ref):
     """Reads the current max sequence number in `subcollection_ref` and
-    returns the next one to use — called inside a @firestore.transactional
+    returns the next one to use. Called inside a @firestore.transactional
     function so the read-then-decide-the-next-id step and the following
     write are serialized against concurrent appends to the same
     subcollection. This is Firestore's native replacement for
@@ -86,7 +86,7 @@ def _next_seq_transactional(transaction, subcollection_ref):
     there's no hand-rolled retry cap to maintain here.
 
     Orders by an explicit `_seq` integer field, not FieldPath.document_id()
-    — real Firestore (unlike some emulator versions) rejects a descending
+    Real Firestore (unlike some emulator versions) rejects a descending
     orderBy on the document-ID/name field ("Firestore does not support
     descending key scans"), so every sequenced doc carries its own
     zero-padded ID *and* this plain integer field purely so this query has
@@ -100,9 +100,9 @@ def _next_seq_transactional(transaction, subcollection_ref):
 def record_session(prompt, model_id, loop_result, owner=None):
     """loop_result is runtime.run_agent_loop()'s return dict. owner is
     the Google account `sub` that recorded this session, or None for
-    the server owner's own — see _visible(). This stays the one-shot
+    the server owner's own; see _visible(). This stays the one-shot
     atomic(-ish) path (source='bedrock_agent', status 'closed'
-    immediately) — OTLP ingestion uses start_or_get_session + append_*
+    immediately). OTLP ingestion uses start_or_get_session + append_*
     below instead, since that data arrives incrementally. Uses a batch
     write: not a full cross-document transaction, but all writes commit
     or none do, which is the atomicity property record_session actually
@@ -176,7 +176,7 @@ def record_session(prompt, model_id, loop_result, owner=None):
 
 
 def get_session_metrics(session_id, owner=None):
-    """Session metadata split from per-prompt processing metrics — same
+    """Session metadata split from per-prompt processing metrics, same
     shape contract as store_sqlite.py's version (see that docstring,
     including why a wrong-owner lookup returns None instead of raising:
     it must read identically to "session doesn't exist" so this can't
@@ -249,7 +249,7 @@ def get_tool_metrics(session_id=None, owner=None):
     session's tool_calls subcollection; every session owned by `owner`;
     or every session, admin-wide. Firestore has no server-side JOIN, so
     the owner-filtered and global paths read each matching session's
-    tool_calls subcollection individually and aggregate in Python — an
+    tool_calls subcollection individually and aggregate in Python. An
     N-subcollection-read fan-out, acceptable at personal-project scale
     (same tradeoff store_dynamodb.py's own comments call out for its
     scan-based aggregates)."""
@@ -315,7 +315,7 @@ def get_cost_estimate(session_id=None, period_seconds=None, owner=None):
         query = query.where(filter=FieldFilter("owner", "==", owner))
 
     # Prefer Firestore's native sum() aggregation over pulling every
-    # matching document just to add one field client-side — falls back
+    # matching document just to add one field client-side. Falls back
     # to a Python sum only if the installed client library's aggregation
     # query support isn't available.
     try:
@@ -328,7 +328,7 @@ def get_cost_estimate(session_id=None, period_seconds=None, owner=None):
 
 def get_context_timeline(session_id, owner=None):
     """Ordered, categorized breakdown of everything that entered this
-    session's context window — same contract as store_sqlite.py's
+    session's context window, same contract as store_sqlite.py's
     version (see that docstring). build_timeline is backend-agnostic;
     reused as-is."""
     client = _client()
@@ -359,7 +359,7 @@ def get_context_timeline(session_id, owner=None):
 def get_recent_sessions(limit=10, owner=None, include_test_sessions=False):
     """Requires a composite index on (owner ASC, timestamp DESC) in
     production for the owner-filtered query below to run without
-    Firestore rejecting it — deploying that index is a separate task,
+    Firestore rejecting it. Deploying that index is a separate task,
     not handled here.
 
     Per-session aggregates (turn_count, cache_read_tokens,
@@ -367,16 +367,16 @@ def get_recent_sessions(limit=10, owner=None, include_test_sessions=False):
     correlated subqueries in store_sqlite.py's single SQL statement;
     Firestore has no server-side JOIN/correlated-subquery equivalent, so
     they're computed here by reading each returned session's turns/
-    tool_calls subcollections — N extra subcollection reads for a page
+    tool_calls subcollections, i.e. N extra subcollection reads for a page
     of `limit` sessions. Acceptable, documented tradeoff at
     personal-project scale (same reasoning store_dynamodb.py's own
     comments give for its scan-based aggregates).
 
     include_test_sessions=False (the default) drops rows whose
-    session_id starts with "api-tests-" — see store_sqlite.py's
+    session_id starts with "api-tests-"; see store_sqlite.py's
     get_recent_sessions docstring. Filtered client-side after `limit` is
     already applied server-side, so a page that's entirely test data can
-    come back empty rather than backfilled — acceptable at this scale,
+    come back empty rather than backfilled. Acceptable at this scale,
     same as the rest of this function's tradeoffs."""
     client = _client()
     query = _sessions(client)
@@ -412,11 +412,11 @@ def get_recent_sessions(limit=10, owner=None, include_test_sessions=False):
 
 
 def start_or_get_session(session_id, owner=None, source="claude_code", model=None):
-    """Entry point for OTLP ingestion — see store_sqlite.py's docstring
+    """Entry point for OTLP ingestion; see store_sqlite.py's docstring
     for the full reasoning; same contract here. Runs as a Firestore
     transaction (read the doc, then create-if-missing or check
     ownership) so two concurrent callers racing to create the same
-    brand-new session_id can't both "win" — Firestore's transaction
+    brand-new session_id can't both "win". Firestore's transaction
     serialization aborts and retries the loser rather than the manual
     conditional-put-plus-catch pattern store_dynamodb.py needs."""
     client = _client()
@@ -454,7 +454,7 @@ def start_or_get_session(session_id, owner=None, source="claude_code", model=Non
 
 
 def _check_ownership_or_raise(client, session_id, owner):
-    """Same reasoning as store_sqlite.py's version — every append_*/
+    """Same reasoning as store_sqlite.py's version: every append_*/
     close_session call must not be able to write into a session_id
     owned by someone else. A missing session (append called before
     start_or_get_session) is treated as belonging to no one, i.e.
@@ -465,7 +465,7 @@ def _check_ownership_or_raise(client, session_id, owner):
 
 def _recost_session(client, session_id):
     """Re-derive estimated_cost from the session's own model + running
-    token totals — same reasoning as store_sqlite.py's version. Reads
+    token totals, same reasoning as store_sqlite.py's version. Reads
     the just-incremented totals fresh rather than trying to thread the
     delta through, since Increment()'d fields aren't readable from the
     write call itself."""
@@ -550,17 +550,17 @@ def append_tool_call(session_id, tool_call, owner=None):
 
 def append_context_block(session_id, block, owner=None):
     """block: {category, label, char_count, token_estimate, turn_n,
-    status=None, content=None} — same shape record_session's
+    status=None, content=None}, the same shape record_session's
     context_blocks docs use. owner must match the session's own owner
     (see _check_ownership_or_raise).
 
     Also backfills the session's `prompt` field from this block's text
     the first time a category="user" block arrives on a session that
     was created via start_or_get_session (prompt=None there, since OTLP
-    ingestion has no upfront prompt the way record_session does) — this
+    ingestion has no upfront prompt the way record_session does). This
     is what makes the dashboard show the actual first user message
     instead of "(no prompt)" for OTLP-sourced sessions. Truncated to
-    ~200 chars (a label, not a full transcript — the block's own content
+    ~200 chars (a label, not a full transcript; the block's own content
     field already holds the full text, no need to store it twice).
     Guarded on prompt still being empty so a later turn's user message
     can't clobber turn 0's."""
@@ -572,7 +572,7 @@ def append_context_block(session_id, block, owner=None):
     @firestore.transactional
     def _txn(transaction):
         # All transaction reads must happen before any writes (Firestore
-        # requirement) — so the session doc is read up front alongside
+        # requirement), so the session doc is read up front alongside
         # the sequence-number read, before either write below.
         seq = _next_seq_transactional(transaction, blocks_ref)
         needs_prompt_backfill = False
@@ -603,7 +603,7 @@ def append_context_block(session_id, block, owner=None):
 
 def close_session(session_id, final_totals=None, owner=None):
     """Marks a session complete once the client process exits or goes
-    idle past some timeout. Same contract as store_sqlite.py's version —
+    idle past some timeout. Same contract as store_sqlite.py's version;
     see that docstring, including the owner check and final_totals
     override semantics."""
     client = _client()

@@ -5,7 +5,7 @@ session-list + tabbed session-detail panels, and the settings screen).
 
 Like test_connect_page_otel_tabs.py, the dashboard is built by
 client-side JS (mountDashboard/renderDashboardShell/etc.), but its
-source — including the template-literal HTML fragments it emits — is
+source, including the template-literal HTML fragments it emits, is
 rendered as literal text in the server-side /auth/login response, so
 these structural class/attribute markers are present in the HTTP
 response body without needing to execute any JS.
@@ -40,7 +40,7 @@ def test_dashboard_markup_has_new_structural_markers(monkeypatch):
 
 def test_dashboard_omits_fabricated_insight_list(monkeypatch):
     """The 30-type insight-card backlog is explicitly deferred past v1
-    (docs/internal/OTLP_INTEGRATION_PLAN.md) — the rebuild must not render an
+    The rebuild must not render an
     .insight-list section or fabricated example insights."""
     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
     app = server_module.server.streamable_http_app()
@@ -53,7 +53,7 @@ def test_dashboard_omits_fabricated_insight_list(monkeypatch):
 
 def test_quota_strip_has_no_fabricated_percentage(monkeypatch):
     """The 5h/7d usage-window quota cards are not wired to any real data
-    source yet — must render as pending, not a fabricated static number
+    source yet, so it must render as pending, not a fabricated static number
     like the mockup's own example percentages."""
     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
     app = server_module.server.streamable_http_app()
@@ -88,7 +88,7 @@ def test_refresh_controls_present(monkeypatch):
 def test_settings_toggle_reuses_existing_tab_pattern(monkeypatch):
     """The ⚙ settings toggle must exist and follow the same show/hide-
     sibling-divs pattern already used for showConnectTab, not a new
-    screen-router — per the task's explicit "reuse that pattern" note."""
+    screen-router, per the task's explicit "reuse that pattern" note."""
     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
     app = server_module.server.streamable_http_app()
     with TestClient(app) as client:

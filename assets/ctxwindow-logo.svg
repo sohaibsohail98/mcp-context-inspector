@@ -1,0 +1,36 @@
+<svg width="560" height="140" viewBox="0 0 560 140" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="CtxWindow">
+  <defs>
+    <linearGradient id="ctxwindow-mark-fill" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#8ba3e0"/>
+      <stop offset="55%" stop-color="#6cbfa4"/>
+      <stop offset="100%" stop-color="#3f8f76"/>
+    </linearGradient>
+    <radialGradient id="ctxwindow-glow" cx="50%" cy="42%" r="65%">
+      <stop offset="0%" stop-color="#6cbfa4" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#6cbfa4" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <style>
+    /* Light mode keeps the original ink; dark mode switches to the dashboard's
+       dark-theme --text so the wordmark stays legible on GitHub's dark theme. */
+    .wordmark { fill: #1c1a14; }
+    @media (prefers-color-scheme: dark) {
+      .wordmark { fill: #ece5d3; }
+    }
+  </style>
+
+  <rect x="0" y="0" width="560" height="140" fill="none"/>
+
+  <g transform="translate(70,70)">
+    <circle cx="0" cy="0" r="58" fill="url(#ctxwindow-glow)"/>
+    <!-- diamond mark, matches the dashboard topbar's brand-mark -->
+    <path d="M0 -46 L46 0 L0 46 L-46 0 Z" fill="url(#ctxwindow-mark-fill)"/>
+    <path d="M0 -46 L46 0 L0 0 Z" fill="#ffffff" opacity="0.14"/>
+    <path d="M0 -46 L0 0 L-46 0 Z" fill="#ffffff" opacity="0.06"/>
+    <!-- inner facet lines -->
+    <path d="M0 -46 L0 46 M-46 0 L46 0" stroke="#17150f" stroke-opacity="0.25" stroke-width="2"/>
+  </g>
+
+  <text class="wordmark" x="150" y="88" font-family="'Fraunces','Georgia',serif" font-weight="600" font-size="52">CtxWindow</text>
+</svg>

@@ -4,7 +4,7 @@ Deliberately stdlib-only (urllib), not httpx/requests: this subfolder's
 whole point is to exercise a real deployed instance over the network, so
 it has no dependency-injection or ASGI TestClient to piggyback on, and
 adding an HTTP library dependency for what's a handful of JSON POST/GET
-calls isn't worth it — see README.md for why this is a separate suite
+calls isn't worth it; see README.md for why this is a separate suite
 from tests/ (which does use starlette's in-process TestClient)."""
 
 import json
@@ -17,7 +17,7 @@ from dataclasses import dataclass
 # urllib's default User-Agent ("Python-urllib/3.x") is blocked outright by
 # this deployment's Cloudflare-fronted WAF/bot-fight-mode (confirmed live,
 # 2026-08-25: same request via curl succeeds, via bare urllib returns 403
-# "error code: 1010" every time, not a rate limit — see the investigation
+# "error code: 1010" every time, not a rate limit; see the investigation
 # report). A normal-looking UA avoids that entirely; this is also relevant
 # to why real telemetry might not arrive if Claude Code's own OTel exporter
 # has an equally unusual default UA.
@@ -34,7 +34,7 @@ class ApiResponse:
 
 class ApiTestClient:
     """base_url/token come from env vars (API_TEST_BASE_URL, API_TEST_TOKEN)
-    rather than constructor defaults — these tests only make sense against
+    rather than constructor defaults, since these tests only make sense against
     a real deployment the caller has credentials for, never a guessed
     default, so a missing env var should fail loudly (see conftest.py)."""
 
@@ -68,7 +68,7 @@ class ApiTestClient:
 
     def post_raw(self, path, raw_body, content_type="application/octet-stream", auth=True):
         """Like post(), but sends raw_body (bytes) unmodified instead of
-        JSON-encoding it — needed to test the server's malformed-JSON
+        JSON-encoding it. Needed to test the server's malformed-JSON
         handling itself, where post()'s automatic json.dumps() would
         just re-encode a bad string into valid JSON."""
         url = f"{self.base_url}{path}"

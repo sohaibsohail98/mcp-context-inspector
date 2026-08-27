@@ -1,4 +1,4 @@
-# $/1K tokens — approximate, matches the closest verified reference
+# $/1K tokens, approximate. Matches the closest verified reference
 # (Sonnet 4.5's published rate). Confirm against the Bedrock pricing
 # page before trusting this for anything beyond a rough estimate; it is
 # explicitly not guaranteed current.
@@ -6,7 +6,7 @@ PRICING = {
     "us.anthropic.claude-sonnet-4-6": {"input": 0.003, "output": 0.015},
     "us.anthropic.claude-haiku-4-5-20251001-v1:0": {"input": 0.0008, "output": 0.004},
     # Claude Code/Copilot report bare model IDs (no Bedrock "us.anthropic."
-    # prefix or version suffix) in their OTLP payloads — added so
+    # prefix or version suffix) in their OTLP payloads. Added so
     # OTLP-sourced sessions get a real rate instead of silently falling
     # back to DEFAULT_PRICING's Sonnet-shaped numbers for every model.
     "claude-sonnet-4-6": {"input": 0.003, "output": 0.015},

@@ -1,8 +1,7 @@
-"""Shared cumulative-token math for get_context_timeline() — both
+"""Shared cumulative-token math for get_context_timeline(). Both
 metrics/store_sqlite.py and metrics/store_dynamodb.py had this exact
-loop duplicated (found in an independent fresh-eyes review). Each
-backend still does its own query/row-shaping; only the running-total
-math lives here.
+loop duplicated. Each backend still does its own query/row-shaping;
+only the running-total math lives here.
 """
 
 from mci_common.config import CONTEXT_WINDOW_TOKENS

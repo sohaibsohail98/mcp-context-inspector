@@ -1,13 +1,12 @@
-"""OTLP telemetry ingestion — receives Claude Code's and GitHub
+"""OTLP telemetry ingestion. Receives Claude Code's and GitHub
 Copilot's native OpenTelemetry export (JSON protocol, `http/json`) and
 maps it onto the same session/turn/tool_call/context_block schema
-metrics/store.py uses for the Bedrock agent's record_session(). See
-docs/internal/OTLP_INTEGRATION_PLAN.md for the underlying research.
+metrics/store.py uses for the Bedrock agent's record_session().
 
 Dispatch is by OTLP resource attributes (`service.name` and friends).
 The exact attribute value each vendor stamps has not been verified
-against a real captured payload — if real payloads don't match, extend
-_detect_vendor's checks rather than assuming the receiver route itself
+against a real captured payload. If real payloads don't match, extend
+detect_vendor's checks rather than assuming the receiver route itself
 is wrong.
 """
 
@@ -20,17 +19,17 @@ from mcp_server.otlp.common import resource_attrs_dict
 
 logger = logging.getLogger(__name__)
 
-# In-memory only (resets on redeploy/restart) — backs GET /otlp/debug,
+# In-memory only (resets on redeploy/restart). Backs GET /otlp/debug,
 # which answers "was anything received at all, and what did the server
 # think it was" for a fire-and-forget OTel exporter. Unlike
 # metrics/store.py this also records *rejected* data.
 #
 # Keyed by owner (the google_sub current_owner resolves to, or the
-# sentinel _OWNER_TOKEN_KEY for the shared owner-token caller). Found in
-# review: this used to be flat process-global state, which both
-# false-positived "connected" for any signed-in caller the instant ANY
-# tenant's data landed, and leaked other tenants' resource_attrs
-# (hostnames, session IDs) via recent_skipped to any authenticated caller.
+# sentinel _OWNER_TOKEN_KEY for the shared owner-token caller). This used
+# to be flat process-global state, which both false-positived
+# "connected" for any signed-in caller the instant ANY tenant's data
+# landed, and leaked other tenants' resource_attrs (hostnames, session
+# IDs) via recent_skipped to any authenticated caller.
 _OWNER_TOKEN_KEY = "__owner_token__"
 
 
@@ -60,10 +59,10 @@ def _record_accepted(owner, vendor):
 
 
 def debug_snapshot(owner):
-    """Plain-dict snapshot for the /otlp/debug route — see
-    mcp_server/routes/otlp.py. Scoped to `owner` (None = the shared
+    """Plain-dict snapshot for the /otlp/debug route (see
+    mcp_server/routes/otlp.py). Scoped to `owner` (None = the shared
     owner-token's own all-data counters, which are their own bucket here,
-    not literally every tenant's data merged — see _owner_key)."""
+    not literally every tenant's data merged; see _owner_key)."""
     key = _owner_key(owner)
     return {
         "counts": dict(_counts[key]),
@@ -87,7 +86,7 @@ def _log_undetected_vendor(resource_attrs):
     /otlp/debug) is what makes a mismatched payload's real resource
     attribute shape readable without Cloud Run log access. resource_attrs
     is OTLP *resource* metadata only (service name, session id, host
-    info) — never prompt/response content — so logging it in full is safe."""
+    info), never prompt/response content, so logging it in full is safe."""
     logger.warning("otlp: undetected vendor, resource_attrs=%r", resource_attrs)
 
 
@@ -95,7 +94,7 @@ def detect_vendor(resource_attrs):
     """resource_attrs: plain dict (already run through
     resource_attrs_dict). Returns "claude_code", "copilot", or None.
     Falls back to sniffing event/attribute-name shape when service.name
-    doesn't match a known value outright — Claude Code's raw bodies
+    doesn't match a known value outright. Claude Code's raw bodies
     carry event.name values like api_request_body/api_response_body;
     Copilot's carry gen_ai.* keys. Cheap and specific enough not to
     false-positive between the two."""
@@ -115,8 +114,8 @@ def handle_logs_payload(payload, owner):
     """payload: parsed OTLP JSON body of a POST to /otlp/v1/logs
     (`{"resourceLogs": [...]}`). Routes each resourceLogs entry to the
     matching vendor mapper's handle_logs; entries from an
-    unrecognized vendor are counted as skipped, not dropped silently —
-    the receiver route surfaces the count in its response so a
+    unrecognized vendor are counted as skipped, not dropped silently.
+    The receiver route surfaces the count in its response so a
     misconfigured client is visible in its own terminal output.
     Returns {"vendor": count, ..., "skipped": count}."""
     counts = {"claude_code": 0, "copilot": 0, "skipped": 0}
@@ -173,10 +172,9 @@ def handle_metrics_payload(payload, owner):
 def handle_traces_payload(payload, owner):
     """payload: parsed OTLP JSON body of a POST to /otlp/v1/traces
     (`{"resourceSpans": [...]}`). Only Copilot's mapper uses trace spans
-    today (tool-call attribution, including MCP-sourced calls) — Claude
-    Code's base v1 mapper works entirely off log bodies/metrics (see the
-    plan's "Subagent context-window granularity" section on why its own
-    trace-span join is deferred past v1)."""
+    today (tool-call attribution, including MCP-sourced calls). Claude
+    Code's base v1 mapper works entirely off log bodies/metrics; its own
+    trace-span join is deferred past v1."""
     counts = {"claude_code": 0, "copilot": 0, "skipped": 0}
     for resource_spans in payload.get("resourceSpans", []):
         attrs = resource_attrs_dict(resource_spans.get("resource", {}))

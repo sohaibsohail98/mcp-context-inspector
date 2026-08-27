@@ -1,4 +1,4 @@
-"""Regression tests for store_sqlite.py — pins the schema-init-on-read
+"""Regression tests for store_sqlite.py. Pins the schema-init-on-read
 behavior in _connect()."""
 
 import sqlite3
@@ -8,7 +8,7 @@ def test_pre_caching_db_migrates_instead_of_crashing(isolated_sqlite_db):
     """CREATE TABLE IF NOT EXISTS never alters a table that already
     exists. A turns table created before prompt caching was added (no
     cache_read/write columns) must not crash reads/writes with "no such
-    column" — _connect() must migrate it on first touch, not require
+    column". _connect() must migrate it on first touch, not require
     manually deleting the file."""
     store = isolated_sqlite_db
 
@@ -96,7 +96,7 @@ def test_record_then_read_round_trip(isolated_sqlite_db):
 
 def test_get_session_metrics_shape_has_no_backend_internals(isolated_sqlite_db):
     """SQLite has no partition-key concept to leak, but pin the expected
-    session/prompt_metrics split anyway — this is the contract
+    session/prompt_metrics split anyway. This is the contract
     store_dynamodb.py must also match (see test_metrics_store_dynamodb.py)."""
     store = isolated_sqlite_db
     session_id = store.record_session("q", "us.anthropic.claude-sonnet-4-6", _fake_loop_result())
@@ -166,7 +166,7 @@ def test_context_timeline_round_trip_and_cumulative_math(isolated_sqlite_db):
 
 
 def test_owner_none_sees_everything(isolated_sqlite_db):
-    """owner=None is the admin/owner-token view — must see sessions
+    """owner=None is the admin/owner-token view, which must see sessions
     regardless of who recorded them."""
     store = isolated_sqlite_db
     store.record_session("q1", "m", _fake_loop_result(), owner="alice-sub")
@@ -186,7 +186,7 @@ def test_owner_only_sees_own_sessions(isolated_sqlite_db):
 
 
 def test_owner_cannot_read_another_owners_session_by_id(isolated_sqlite_db):
-    """Guessing/leaking a session_id must not bypass ownership — reads
+    """Guessing/leaking a session_id must not bypass ownership: reads
     as "not found," identical to a genuinely nonexistent session_id."""
     store = isolated_sqlite_db
     session_id = store.record_session("alice's q", "m", _fake_loop_result(), owner="alice-sub")
@@ -219,7 +219,7 @@ def test_owner_aggregate_cost_and_tool_metrics_filtered(isolated_sqlite_db):
 
 
 def test_owner_defaults_to_none_backward_compatible(isolated_sqlite_db):
-    """Every owner param defaults to None (admin view) — existing callers
+    """Every owner param defaults to None (admin view), so existing callers
     that never pass owner keep working exactly as before this feature."""
     store = isolated_sqlite_db
     session_id = store.record_session("q", "m", _fake_loop_result())
@@ -229,7 +229,7 @@ def test_owner_defaults_to_none_backward_compatible(isolated_sqlite_db):
 
 def test_metrics_db_path_env_override(tmp_path, monkeypatch):
     """A deployed container sets METRICS_DB_PATH to point writes at an
-    ephemeral path instead of the local dev default — DB_PATH must pick
+    ephemeral path instead of the local dev default, so DB_PATH must pick
     that up at import time."""
     import importlib
 
@@ -249,7 +249,7 @@ def test_metrics_db_path_env_override(tmp_path, monkeypatch):
 
 def test_start_or_get_session_is_idempotent(isolated_sqlite_db):
     """OTLP payloads can arrive out of order or get retried by the
-    client — calling start_or_get_session twice for the same session_id
+    client: calling start_or_get_session twice for the same session_id
     must not create a second row or reset any totals already appended."""
     store = isolated_sqlite_db
     sid = store.start_or_get_session("otel-1", owner="u1", source="claude_code", model="claude-sonnet-4-5")
@@ -262,7 +262,7 @@ def test_start_or_get_session_is_idempotent(isolated_sqlite_db):
 
 
 def test_append_turn_accumulates_session_totals(isolated_sqlite_db):
-    """A live Claude Code session reports turns one at a time — the
+    """A live Claude Code session reports turns one at a time. The
     parent session row's totals must reflect the running sum, not just
     the most recently appended turn."""
     store = isolated_sqlite_db
@@ -311,7 +311,7 @@ def test_append_context_block_round_trips_content(isolated_sqlite_db):
     """A block's raw text (used by the Context Explorer's expand-to-view
     feature) must round-trip through storage; a block that never sets
     `content` reads back as None ("not captured"), not a crash or an
-    empty string — those mean different things."""
+    empty string. Those mean different things."""
     store = isolated_sqlite_db
     sid = store.start_or_get_session("otel-content", source="claude_code")
     store.append_context_block(
@@ -361,7 +361,7 @@ def test_close_session_without_final_totals_just_closes(isolated_sqlite_db):
 
 def test_recent_sessions_carries_source_and_status(isolated_sqlite_db):
     """Dashboard session list needs a per-row source badge and pressure
-    signal — both bedrock_agent (legacy) and OTLP-sourced sessions must
+    signal, so both bedrock_agent (legacy) and OTLP-sourced sessions must
     carry these fields the same way."""
     store = isolated_sqlite_db
     store.record_session("q", "m", _fake_loop_result())
@@ -375,7 +375,7 @@ def test_recent_sessions_carries_source_and_status(isolated_sqlite_db):
 
 def test_recent_sessions_carries_turn_count(isolated_sqlite_db):
     """The session-list row needs "N turns" without a per-row follow-up
-    fetch — get_recent_sessions must return the count directly."""
+    fetch, so get_recent_sessions must return the count directly."""
     store = isolated_sqlite_db
     three_turns = _fake_loop_result(
         turns=[
@@ -413,8 +413,8 @@ def test_recent_sessions_carries_cache_and_tool_error_aggregates(isolated_sqlite
 
 def test_pre_latency_tool_calls_table_migrates(isolated_sqlite_db):
     """A tool_calls table created before the Tool calls tab needed
-    latency_ms/timestamp (see docs/internal/OTLP_INTEGRATION_PLAN.md's dashboard
-    spec) has neither column — must migrate instead of crashing reads."""
+    latency_ms/timestamp (see the dashboard
+    spec) has neither column, so it must migrate instead of crashing reads."""
     store = isolated_sqlite_db
     conn = sqlite3.connect(store.DB_PATH)
     conn.execute(

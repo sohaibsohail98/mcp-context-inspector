@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/lumen-logo.svg" alt="Lumen" width="360">
+  <img src="assets/ctxwindow-logo.svg" alt="CtxWindow" width="360">
 </p>
 
 <p align="center">
@@ -14,18 +14,19 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT"></a>
 </p>
 
-> **Independent, unaffiliated open-source project.** Lumen is not built, maintained, or
-> endorsed by Anthropic. "Claude" and "Claude Code" are Anthropic's products; Lumen
+> **Independent, unaffiliated open-source project.** ctxwindow is not built, maintained, or
+> endorsed by Anthropic. "Claude" and "Claude Code" are Anthropic's products; ctxwindow
 > reads their publicly documented OpenTelemetry export and MCP protocol, nothing more.
 
-Package/repo name on disk: `mcp-context-inspector`. The product is Lumen.
+The package/repo name on disk stays `mcp-context-inspector`; the product it ships is
+called **ctxwindow** (after its domain, [ctxwindow.uk](https://ctxwindow.uk)).
 
 **[Docs site →](https://ctxwindow.uk/docs)**: same content as this
 README, laid out as a proper single-page reference with section nav.
 
 ## Why this exists
 
-Most agent observability tools re-show data your own UI already displays. Lumen shows
+Most agent observability tools re-show data your own UI already displays. ctxwindow shows
 something you normally can't see at all: system prompt, tool specs, reasoning, tool calls
 and results, and the final answer, in the order they actually entered context. Each block
 is measured against the model's real context window and marked as either visible to the
@@ -276,9 +277,30 @@ httpx.post(
   <img src="assets/architecture.svg" alt="Claude Code, browser clients, and Bedrock-style agents all talk through a Cloudflare Worker reverse proxy to a Cloud Run service, which reads and writes Firestore or DynamoDB" width="720">
 </p>
 
-The live deployment runs a Cloudflare Worker (a transparent reverse proxy that gives a
-short, permanent public URL) in front of a Cloud Run service running this Starlette + MCP
-server, backed by Firestore, DynamoDB, or SQLite for local dev.
+Four pieces, front to back:
+
+1. **Cloudflare Worker** (`cloudflare-proxy/worker.js`): a pass-through reverse proxy
+   that gives the service a short permanent public URL (`ctxwindow.uk`) instead of the
+   raw `.run.app` one. It rewrites nothing but the `Host` header and streams responses
+   back untouched, so SSE endpoints work through it.
+2. **Starlette + MCP server** (`mcp_server/`), running on Cloud Run. Serves the MCP
+   handshake at `/mcp`, plain REST at `/api/*`, OTLP ingestion at `/otlp/v1/*`, Google
+   sign-in at `/auth/login`, the one-line installer at `/setup/install`, the dashboard,
+   and the docs site at `/docs`.
+3. **Data-access layer** (`metrics/store.py`), one dispatcher in front of three
+   interchangeable backends.
+4. **Storage**: SQLite, DynamoDB, or Firestore, picked by `STORAGE_BACKEND`. See
+   [Storage backends](#storage-backends).
+
+Data reaches the store by three paths, and every read comes back out through the same
+owner-filtered layer:
+
+- A **direct Python import** of `metrics.store` for an agent loop running on the same
+  machine.
+- The authenticated **`record_session` MCP tool or `POST /api/record-session`** for
+  anyone else's remote agent.
+- **`/otlp/v1/{logs,metrics,traces}`** for Claude Code's and Copilot's own native
+  OpenTelemetry export, parsed by `mcp_server/otlp/` into the same turns and tool calls.
 
 ```mermaid
 flowchart LR
@@ -286,12 +308,12 @@ flowchart LR
         A[run_agent_loop] --> R[record_session]
     end
 
-    subgraph Package["Lumen"]
+    subgraph Package["CtxWindow"]
         R -->|"direct Python import\n(local, owner=None)"| S[metrics/store.py]
         MCP["mcp_server/routes/\n(MCP + REST routes)"] --> S
-        S --> SQ["store_sqlite.py\n(local dev)"]
-        S --> DY["store_dynamodb.py"]
-        S --> FS["store_firestore.py\n(this project's own deployment)"]
+        S --> SQ["store_sqlite.py\n(local dev + public demo)"]
+        S --> DY["store_dynamodb.py\n(AWS deployments)"]
+        S --> FS["store_firestore.py\n(recommended for Cloud Run)"]
     end
 
     subgraph Remote["Another user's own agent"]
@@ -306,11 +328,6 @@ flowchart LR
     end
     OTLP["mcp_server/otlp/"] -->|"append_turn / append_tool_call"| S
 ```
-
-One data-access layer (`metrics/store.py`) has three entry points: a direct Python
-import for your own local agent, the authenticated MCP tool/REST route for anyone else's
-remote agent, and `/otlp/v1/{logs,metrics,traces}` for Claude Code's/Copilot's own native
-OpenTelemetry export. Every read goes through the same layer, filtered by owner.
 
 `record_session(prompt, model_id, loop_result, owner=None)` needs `loop_result` shaped
 like:
@@ -333,37 +350,78 @@ like:
 
 ## Storage backends
 
-Three options, selected with `STORAGE_BACKEND`:
+Three interchangeable backends, selected with `STORAGE_BACKEND`. They expose identical
+function signatures, so callers import from `metrics/store.py` and never know which one
+is active.
 
-- **`sqlite`** (default): zero setup, good for local dev, what the public demo uses.
-  Doesn't survive a Cloud Run cold start.
-- **`dynamodb`**: durable, AWS-hosted, for deployments already living in AWS.
-- **`firestore`**: durable, GCP-hosted, the recommended choice for a real Cloud Run
-  deployment with sign-in-backed writes. Uses `google.cloud.firestore.Client()` via
-  Application Default Credentials; grant Cloud Run's service account
-  `roles/datastore.user`. Needs a composite index on `(owner ASC, timestamp DESC)` on the
-  `sessions` collection (create it ahead of time via the Firestore console or
-  `gcloud firestore indexes composite create`; don't rely on the first-query error link
-  in prod). Test locally against the emulator with `gcloud emulators firestore start`,
-  then set `FIRESTORE_EMULATOR_HOST`.
+- **`sqlite`** (default): zero setup, one file on disk, what local dev uses. Path is
+  overridable with `METRICS_DB_PATH` so a container can write to a scratch location like
+  `/tmp` instead of the repo's `data/` dir. A container's local filesystem doesn't
+  persist, so anything written here is lost on a cold start. That's fine for local dev
+  and for the public demo, and wrong for anything you care about keeping.
+- **`dynamodb`**: durable, AWS-hosted, for a deployment already living in AWS. Table name
+  from `METRICS_TABLE`, region from `AWS_REGION`. Single-table design: partition key
+  `session_id`, sort key `sk` distinguishing item type (`SESSION`, `TURN#0000`,
+  `TOOLCALL#0000`). Aggregate reads (recent sessions, aggregate tool metrics) use `Scan`,
+  which its own docstring flags as fine at personal-project scale and worth revisiting
+  with a GSI if that stops being true.
+- **`firestore`**: durable, GCP-hosted, and the recommended choice for a real Cloud Run
+  deployment with sign-in-backed writes, since the service is already on GCP. This is the
+  backend this project's own code treats as its deployed target; the public demo at
+  `ctxwindow.uk` deliberately stays on seeded SQLite instead, so a cold start wipes
+  visitor writes back to the fixture data. A top-level `sessions`
+  collection with `owner` and `timestamp` as directly queryable top-level fields, plus
+  `turns`, `tool_calls`, and `context_blocks` subcollections. Because a real query is
+  available here, it avoids the scan-then-filter tradeoff DynamoDB's backend accepts.
+  The client uses Application Default Credentials, which works automatically on Cloud Run
+  via its service account; grant that account `roles/datastore.user`. Needs a composite
+  index on `(owner ASC, timestamp DESC)` on the `sessions` collection, created ahead of
+  time via the Firestore console or `gcloud firestore indexes composite create`, rather
+  than relying on the first-query error link in prod. Collection name is overridable with
+  `METRICS_FIRESTORE_COLLECTION`. To test locally, run `gcloud emulators firestore start`
+  and set `FIRESTORE_EMULATOR_HOST`; the client library honors it transparently.
 
-The per-user auth token store follows the same switch and needs the same durability. A
-lost token silently breaks that user's auth.
+The per-user auth token store (`mcp_server/auth/store.py`) reads the same
+`STORAGE_BACKEND` variable, so sessions and auth always switch together. It needs the
+same durability: under SQLite, a token row lost on cold start silently breaks that user's
+auth with no error anywhere useful.
 
-## Deploying your own
+## Deploying your own (optional)
 
-Deployed to Cloud Run (`us-central1`), `--min-instances 0 --max-instances 3`, fronted by
-a Cloudflare Worker reverse proxy (`cloudflare-proxy/`) for a short public URL instead of
-the raw `.run.app` one. GitHub Actions (Workload Identity Federation, no stored GCP keys)
-auto-deploys on push to `main` and always routes 100% of traffic to the newly built
-revision.
+**You probably don't need this.** [ctxwindow.uk](https://ctxwindow.uk) is live, free, and
+signs you in with Google, and your sessions are yours alone (see
+[Auth model](#auth-model)). Running your own copy only makes sense if you want the data
+on infrastructure you control, or you're changing the server itself.
+
+If you do want your own: the deploy path this repo uses is a Cloud Run service built from
+the `Dockerfile` at the repo root, fronted by the Cloudflare Worker in
+`cloudflare-proxy/`. `.github/workflows/deploy.yml` runs it end to end on every push to
+`main` that touches the server, and is the honest reference for the real steps:
+
+1. Run the unit suite; a red suite blocks the deploy.
+2. Authenticate to GCP with Workload Identity Federation, so there are no stored GCP keys
+   in repo secrets. This needs the `GCP_PROJECT`, `GCP_WIF_PROVIDER`, and `GCP_DEPLOY_SA`
+   repo variables set.
+3. `docker buildx build --platform linux/amd64` and push to Artifact Registry. The image
+   installs from `uv.lock` with `uv sync --frozen`, so builds stay reproducible.
+4. `gcloud run deploy`, then `gcloud run services update-traffic --to-latest`. The second
+   command is not redundant: `deploy` alone creates a revision but won't move traffic if a
+   split was ever set out-of-band, which pinned production to a stale revision for two
+   days here before it was caught.
+5. Smoke-test `/health`, then `npx wrangler deploy` the Worker (needs the
+   `CLOUDFLARE_API_TOKEN` secret and `CLOUDFLARE_ACCOUNT_ID` variable) and smoke-test it
+   through the public hostname.
+
+Forking this means replacing the GCP project, the Artifact Registry path in the
+workflow's `IMAGE`, and `cloudflare-proxy/wrangler.toml`'s `ORIGIN` and `routes`, all of
+which currently point at this project's own account and domain.
 
 Relevant env vars once deployed:
 
 - `PUBLIC_ORIGIN`: the real public origin (e.g.
   `https://ctxwindow.uk`), needed because behind the proxy
   `request.base_url` reflects Cloud Run's internal origin, not what a real caller used.
-  Every URL Lumen generates about itself (OAuth metadata, the install command) needs the
+  Every URL ctxwindow generates about itself (OAuth metadata, the install command) needs the
   real one.
 - `CHAT_UI_ORIGIN`: comma-separated CORS allowlist.
 - `MCP_ALLOWED_HOSTS`: comma-separated `Host` header allowlist for the MCP SDK's
@@ -372,6 +430,11 @@ Relevant env vars once deployed:
 - `DEV_MODE_SUBS`: comma-separated Google `sub` allowlist for developer-mode dashboard
   features (currently: showing `api_tests`' synthetic probe sessions, hidden from
   everyone else by default). Find your own `sub` via `mcp_server.auth.store.list_users()`.
+- `STORAGE_BACKEND`: `sqlite`, `dynamodb`, or `firestore`. Anything durable in practice.
+- `DEMO_SEED_SRC`: path to a prebuilt SQLite demo dataset (`demo/metrics.db`, built by
+  `scripts/seed_demo_db.py`). Set alongside a scratch `METRICS_DB_PATH` and the server
+  copies the seed in on first boot only, which is how the public demo resets itself on a
+  cold start. Leave both unset for a normal deployment.
 
 ## Contributing
 
@@ -380,13 +443,46 @@ here.
 
 ## Roadmap
 
+Shipped:
+
 - [x] Curl-pipeable one-line setup (`/setup/install`)
 - [x] Owner-scoped `/otlp/debug` + "Test your connection" panel
 - [x] Route-enumerating tenant-isolation test
-- [ ] Windows/PowerShell installer variant
-- [ ] Cursor support (OTel export + MCP config, research spike)
-- [ ] Per-device token revoke
-- [ ] Published to PyPI
+- [x] Firestore backend, and the production move onto it
+- [x] Own domain (`ctxwindow.uk`) in front of the Worker proxy
+
+Still open, honestly:
+
+- [ ] **Windows/PowerShell installer variant.** `/setup/install` serves a POSIX shell
+      script, so Windows users currently have to configure `settings.json` by hand.
+- [ ] **Per-device token revoke.** Today revoking a user (`auth.store.revoke`) kills every
+      token they hold at once; there's no way to drop one machine and keep the rest.
+- [ ] **Publish to PyPI.** Install is still git-clone-only.
+- [ ] **Cursor MCP tool access.** Worth being precise: Cursor's OTel telemetry export is
+      Enterprise-only with no self-service config surface, so cost and token dashboards
+      for Cursor sessions are not on the table. Pointing `local_setup.py`'s backup-and-
+      merge logic at `~/.cursor/mcp.json` to expose the MCP tools there is feasible, and
+      would be labeled "tool access," not "Cursor support."
+- [ ] **A real per-project settings endpoint.** The dashboard's project settings panel is
+      wired to placeholder state (`TODO` in `mcp_server/routes/auth.py`).
+- [ ] **Redaction hardening.** The OTLP redaction layer catches email addresses and
+      home-directory paths. That is a trust reducer, not comprehensive PII scrubbing, and
+      it's documented that way on purpose.
+
+## Questions or bugs?
+
+Bugs, feature requests, and anything reproducible belong in
+[GitHub issues](https://github.com/sohaibsohail98/mcp-context-inspector/issues), which is
+where they'll actually get tracked. See
+[CONTRIBUTING.md](CONTRIBUTING.md#reporting-a-bug) for what makes a good report. For a
+security issue, please don't open a public issue; open a
+[private security advisory](https://github.com/sohaibsohail98/mcp-context-inspector/security/advisories/new)
+instead.
+
+For anything that doesn't feel like an issue, a question about how something works, or
+whether a use case is a fit, there's a prefilled starting point here:
+
+[Ask a question](https://github.com/sohaibsohail98/mcp-context-inspector/issues/new?title=ctxwindow%3A%20question&labels=question)
 
 ## License
 

@@ -1,12 +1,12 @@
 """Shared merge/backup logic for writing this account's MCP connection +
-OTLP telemetry config into a Claude Code ~/.claude/settings.json — used by
+OTLP telemetry config into a Claude Code ~/.claude/settings.json. Used by
 both:
 
 - The /setup/apply-local-config route, when the server itself is running
   on the caller's own machine (self-hosted, loopback).
 - The downloadable script templated by /setup/local-script (see
   LOCAL_SCRIPT_TEMPLATE below), when the server is deployed elsewhere and
-  can't reach the caller's filesystem directly — the script runs this same
+  can't reach the caller's filesystem directly. The script runs this same
   logic locally instead.
 """
 
@@ -18,7 +18,7 @@ SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
 
 # Shared by routes/setup.py (reports this in /setup/issue-install-code's
 # response) and every auth/store_*.py backend's issue_install_code
-# default — one source of truth for the "Pin TTL to <=5 minutes" rule
+# default. One source of truth for the "Pin TTL to <=5 minutes" rule
 # from LUMEN_LAUNCH_PLAN.md, rather than three copies that could drift.
 INSTALL_CODE_TTL_SECONDS = 300
 
@@ -43,9 +43,9 @@ def build_settings_patch(base_url, bearer_token):
             "OTEL_EXPORTER_OTLP_HEADERS": "Authorization=Bearer " + bearer_token,
             "OTEL_LOG_RAW_API_BODIES": "1",
             "CLAUDE_CODE_OTEL_CONTENT_MAX_LENGTH": "1048576",
-            # Claude Code's exporter never sets service.name itself — the
-            # primary signal mcp_server/otlp/__init__.py's detect_vendor()
-            # matches on — so without this, every real session falls back
+            # Claude Code's exporter never sets service.name itself, and
+            # that is the primary signal mcp_server/otlp/__init__.py's
+            # detect_vendor() matches on. Without this, every session falls back
             # to detect_vendor's session.id-presence check, which is itself
             # opt-in and was silently missing both here and in what a real
             # Claude Code session sends by default. Confirmed against a
@@ -74,10 +74,10 @@ def apply_settings_patch(patch, settings_path=SETTINGS_PATH):
             existing = json.loads(text)
         except ValueError:
             raise ValueError(
-                f"{settings_path} exists but isn't valid JSON — not touching it. Fix or back it up manually first."
+                f"{settings_path} exists but isn't valid JSON. Not touching it. Fix or back it up manually first."
             )
         if not isinstance(existing, dict):
-            raise ValueError(f"{settings_path} isn't a JSON object — not touching it.")
+            raise ValueError(f"{settings_path} isn't a JSON object. Not touching it.")
         backup_path = settings_path.with_name(settings_path.name + f".bak-{int(time.time())}")
         backup_path.write_text(text)
         backed_up_to = str(backup_path)
@@ -95,16 +95,16 @@ def apply_settings_patch(patch, settings_path=SETTINGS_PATH):
 # {base_url} and {bearer_token} substituted in at request time. Duplicates
 # build_settings_patch/apply_settings_patch as plain code rather than
 # importing this module, since the downloaded file has to run standalone
-# on the user's machine with no mcp_context_inspector package installed —
+# on the user's machine with no mcp_context_inspector package installed:
 # stdlib only (json, time, pathlib).
 LOCAL_SCRIPT_TEMPLATE = '''#!/usr/bin/env python3
 # This script contains your personal mcp-context-inspector token. Treat it
-# like a password — don't share this file, and delete it after running.
+# like a password: don't share this file, and delete it after running.
 #
 # What it does: merges an MCP server entry (context-inspector, pointed at
 # {base_url}) and OTLP telemetry env vars into your own
 # ~/.claude/settings.json, so Claude Code connects to this server and
-# reports live telemetry automatically in every session — no manual
+# reports live telemetry automatically in every session, with no manual
 # paste-in required. Your existing settings.json is backed up first and
 # merged into, never overwritten.
 #
@@ -152,10 +152,10 @@ if SETTINGS_PATH.exists():
         existing = json.loads(text)
     except ValueError:
         raise SystemExit(
-            f"{{SETTINGS_PATH}} exists but isn't valid JSON — not touching it. Fix or back it up manually first."
+            f"{{SETTINGS_PATH}} exists but isn't valid JSON. Not touching it. Fix or back it up manually first."
         )
     if not isinstance(existing, dict):
-        raise SystemExit(f"{{SETTINGS_PATH}} isn't a JSON object — not touching it.")
+        raise SystemExit(f"{{SETTINGS_PATH}} isn't a JSON object. Not touching it.")
     backup_path = SETTINGS_PATH.with_name(SETTINGS_PATH.name + f".bak-{{int(time.time())}}")
     backup_path.write_text(text)
     backed_up_to = str(backup_path)
@@ -167,12 +167,12 @@ existing["env"].update(patch["env"])
 
 SETTINGS_PATH.write_text(json.dumps(existing, indent=2) + "\\n")
 
-print(f"Done — wrote to {{SETTINGS_PATH}}")
+print(f"Done. Wrote to {{SETTINGS_PATH}}")
 if backed_up_to:
     print(f"Previous version backed up to {{backed_up_to}}")
 print("Restart any running Claude Code sessions to pick it up.")
 print()
-print("This script has no further use and still contains your token — delete it now:")
+print("This script has no further use and still contains your token. Delete it now:")
 print(f"    rm {{__file__}}")
 '''
 
@@ -188,19 +188,19 @@ def render_local_script(base_url, bearer_token, script_name="mcp-context-inspect
 # The curl-able one-liner served by GET /setup/install (see
 # routes/setup.py). Must be POSIX `sh`, not bash: the piped form
 # (`curl ... | sh`) invokes `sh` explicitly, so the shebang line below is
-# never consulted — only the body's actual syntax matters, and `sh` on
+# never consulted. Only the body's actual syntax matters, and `sh` on
 # some platforms (Debian/Ubuntu's dash, unlike bash) rejects bash-only
 # constructs like `[[ ]]` or arrays.
 #
-# Rather than reimplement the JSON backup/merge logic in shell (the exact
-# thing this plan calls out as a trap — a second, drifting copy of the
-# same logic), this script shells out to `python3 -c` with the identical
-# merge code LOCAL_SCRIPT_TEMPLATE already carries, so both delivery
-# paths (piped-curl and downloaded-script) execute the literal same
-# Python. python3 is a stated dependency, not a silent assumption — the
-# script checks for it first and fails with a clear message otherwise.
+# Rather than reimplement the JSON backup/merge logic in shell, which
+# would be a second, drifting copy of the same logic, this script shells
+# out to `python3 -c` with the identical merge code
+# LOCAL_SCRIPT_TEMPLATE already carries, so both delivery paths
+# (piped-curl and downloaded-script) execute the literal same Python.
+# python3 is a stated dependency, not a silent assumption: the script
+# checks for it first and fails with a clear message otherwise.
 INSTALL_SHELL_TEMPLATE = '''#!/bin/sh
-# mcp-context-inspector installer — safe to re-run (idempotent merge of
+# mcp-context-inspector installer. Safe to re-run (idempotent merge of
 # your ~/.claude/settings.json, never a plain overwrite; your existing
 # file is backed up first). Not comfortable piping into a shell? Save
 # this to a file first and read it before running:
@@ -217,8 +217,8 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 
 # BASE_URL/BEARER_TOKEN travel as environment variables, never
-# interpolated into the double-quoted python3 -c "..." body below --
-# found in review: a value containing $, a backtick, or a backslash
+# interpolated into the double-quoted python3 -c "..." body below.
+# A value containing $, a backtick, or a backslash
 # would otherwise be expanded/executed by sh before Python ever saw it
 # (verified: a token containing a backtick-wrapped command executed on
 # the way in). MCP_INSTALL_BASE_URL/MCP_INSTALL_BEARER_TOKEN are this
@@ -267,9 +267,9 @@ if SETTINGS_PATH.exists():
     try:
         existing = json.loads(text)
     except ValueError:
-        raise SystemExit(f'{{SETTINGS_PATH}} exists but isn\\'t valid JSON — not touching it. Fix or back it up manually first.')
+        raise SystemExit(f'{{SETTINGS_PATH}} exists but isn\\'t valid JSON. Not touching it. Fix or back it up manually first.')
     if not isinstance(existing, dict):
-        raise SystemExit(f'{{SETTINGS_PATH}} isn\\'t a JSON object — not touching it.')
+        raise SystemExit(f'{{SETTINGS_PATH}} isn\\'t a JSON object. Not touching it.')
     backup_path = SETTINGS_PATH.with_name(SETTINGS_PATH.name + f'.bak-{{int(time.time())}}')
     backup_path.write_text(text)
     backed_up_to = str(backup_path)
@@ -281,14 +281,14 @@ existing['env'].update(patch['env'])
 
 SETTINGS_PATH.write_text(json.dumps(existing, indent=2) + chr(10))
 
-print(f'Done — wrote to {{SETTINGS_PATH}}')
+print(f'Done. Wrote to {{SETTINGS_PATH}}')
 if backed_up_to:
     print(f'Previous version backed up to {{backed_up_to}}')
 "
 
 echo ""
 echo "Close any running Claude Code sessions (terminal windows or editor"
-echo "integrations) and open a fresh one — env vars only load once at"
+echo "integrations) and open a fresh one. Env vars only load once at"
 echo "process startup, so an already-open session won't pick this up."
 echo ""
 echo "Then run one prompt and check \\"Test my connection\\" on the page."
@@ -298,12 +298,12 @@ echo "Then run one prompt and check \\"Test my connection\\" on the page."
 def _sh_single_quote(value):
     """POSIX sh single-quoting: nothing is special inside '...' except a
     literal single quote itself, which can't be escaped from inside the
-    quotes at all — the standard trick is to close the quote, emit an
+    quotes at all. The standard trick is to close the quote, emit an
     escaped literal quote, then reopen: ' -> '\\''. This is what actually
-    closes the shell-injection gap found in review (see
-    INSTALL_SHELL_TEMPLATE's comment) — env-var assignment syntax
-    (`NAME=value cmd`) is still shell-parsed, so the value needs real
-    shell quoting, not just Python's repr()."""
+    closes the shell-injection gap described in INSTALL_SHELL_TEMPLATE's
+    comment: env-var assignment syntax (`NAME=value cmd`) is still
+    shell-parsed, so the value needs real shell quoting, not just
+    Python's repr()."""
     return "'" + value.replace("'", "'\\''") + "'"
 
 

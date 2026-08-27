@@ -1,5 +1,5 @@
 """End-to-end OTLP ingestion: POST a payload shaped like a real vendor
-export, assert it's accepted (not silently counted as "skipped" — see
+export, assert it's accepted (not silently counted as "skipped"; see
 mcp_server/otlp/__init__.py's detect_vendor), and assert the resulting
 session becomes visible via /api/sessions.
 
@@ -67,7 +67,7 @@ def test_accepted_session_becomes_visible_via_api(client):
     assert resp.body["accepted"]["claude_code"] == 1
 
     # Polls GET /api/sessions/{id} (session_detail), not the list view
-    # (GET /api/sessions) — the list view hides anything whose
+    # (GET /api/sessions). The list view hides anything whose
     # session_id starts "api-tests-" by default (see
     # mcp_server/dev_mode.py), which every session this suite creates
     # does. session_detail is a direct fetch by known ID with no such
@@ -76,7 +76,7 @@ def test_accepted_session_becomes_visible_via_api(client):
     #
     # No documented eventual-consistency window in any storage backend
     # (SQLite/DynamoDB/Firestore all write synchronously per
-    # metrics/store.py's dispatcher) — a short retry loop only guards
+    # metrics/store.py's dispatcher), so a short retry loop only guards
     # against real network/propagation latency on the deployed instance,
     # not an expected async gap.
     deadline = time.time() + 10
@@ -95,7 +95,7 @@ def test_accepted_session_becomes_visible_via_api(client):
 def test_payload_with_no_resource_attributes_is_skipped_not_rejected(client):
     """Locks in CURRENT, intentional behavior: a payload with no
     service.name/session.id on its resource attributes returns 200 with
-    skipped=1, not a 4xx — detect_vendor's documented fallback for "not
+    skipped=1, not a 4xx. detect_vendor's documented fallback for "not
     our vendor" (see mcp_server/otlp/__init__.py). If Claude Code's REAL
     export ever turns out not to carry service.name/session.id on
     resource attributes, test_realistic_claude_code_payload_is_not_skipped

@@ -3,13 +3,13 @@ real MCP JSON-RPC handshake (initialize -> notifications/initialized ->
 tools/call), not just at the metrics/store.py layer. Confirms
 MultiTokenAuthMiddleware's `current_owner.set(...)` (called before
 `call_next()`) stays visible by the time the MCP SDK dispatches the
-tools/call to our tool functions — Starlette's BaseHTTPMiddleware runs
+tools/call to our tool functions. Starlette's BaseHTTPMiddleware runs
 the downstream ASGI app in the same asyncio task, so a contextvar set
 here propagates through to tool dispatch.
 
 In-process via Starlette's TestClient (isolated DB fixtures, no real
-subprocess, no real network) — the raw JSON-RPC wire format mirrors the
-`sre-investigation-agent` project's `web/mcp-client.js`, a reference
+subprocess, no real network). The raw JSON-RPC wire format mirrors the
+a browser-side MCP client, a reference
 implementation of this protocol, rather than depending on the `mcp`
 SDK's own client internals.
 """
@@ -24,7 +24,7 @@ from mcp_server import server as server_module
 def client(isolated_auth_store, isolated_sqlite_db):
     app = server_module.server.streamable_http_app()
     app.add_middleware(server_module.MultiTokenAuthMiddleware, owner_token="owner-secret")
-    # base_url must include an explicit port — the MCP SDK's transport
+    # base_url must include an explicit port. The MCP SDK's transport
     # security (DNS-rebinding protection) only allow-lists "127.0.0.1:*"
     # (a port required), and rejects TestClient's default "testserver"
     # Host header, and a bare "127.0.0.1" with no port, both with a 421.
@@ -34,8 +34,8 @@ def client(isolated_auth_store, isolated_sqlite_db):
 
 def _parse_response(resp):
     """Response body is either a plain JSON object or an SSE stream of
-    "data: {...}" frames — same dual-format handling as
-    web/mcp-client.js's _parseSseResponse, the reference implementation
+    "data: {...}" frames, the same dual-format handling as
+    a browser client's _parseSseResponse, the reference implementation
     for this wire format."""
     content_type = resp.headers.get("content-type", "")
     if "text/event-stream" not in content_type:
@@ -51,9 +51,9 @@ def _parse_response(resp):
 
 
 class RawMcpClient:
-    """Minimal raw Streamable-HTTP JSON-RPC client — just enough of the
+    """Minimal raw Streamable-HTTP JSON-RPC client: just enough of the
     protocol to call tools with a given bearer token, mirroring
-    web/mcp-client.js's McpClient."""
+    a browser client's McpClient."""
 
     def __init__(self, http_client, token):
         self.http_client = http_client
@@ -95,8 +95,8 @@ class RawMcpClient:
         return init_response["result"]
 
     def call_tool(self, name, arguments):
-        """Returns the tool's actual return value, unwrapped — same
-        wire-format handling as web/mcp-client.js's callTool(): a scalar
+        """Returns the tool's actual return value, unwrapped. Same
+        wire-format handling as a browser client's callTool(): a scalar
         return (e.g. record_session's str) carries structuredContent
         {"result": value}; a list/dict return has no structuredContent,
         each JSON-parsed content block being one list item (or the
@@ -153,7 +153,7 @@ def test_per_user_token_writes_and_reads_are_scoped_to_that_user(client, isolate
     bob.call_tool("record_session", {"prompt": "bob's q", "model_id": "m", "loop_result": _basic_loop_result()})
 
     # The real assertion: this is a genuine MCP tools/call dispatch, over
-    # a real initialize handshake, on two separate sessions — if the
+    # a real initialize handshake, on two separate sessions. If the
     # contextvar didn't survive from middleware to tool dispatch, both
     # would either see everything or see nothing, not exactly their own.
     alice_sessions = alice.call_tool("get_recent_sessions", {"limit": 10})
@@ -182,11 +182,11 @@ def test_per_user_token_cannot_read_another_users_session_by_id(client, isolated
 
     bob = RawMcpClient(client, bob_token)
     bob.initialize()
-    # get_session_metrics returns a dict — one content block, unwrapped
+    # get_session_metrics returns a dict: one content block, unwrapped
     # from the generic list-of-blocks parsing the same way
-    # web/mcp-client.js's callers do (`const [metrics] = await ...`).
+    # a browser client's callers do (`const [metrics] = await ...`).
     [metrics] = bob.call_tool("get_session_metrics", {"session_id": session_id})
     # {"error": "session not found"} for a session that either doesn't
-    # exist or isn't yours — indistinguishable, by design (see
+    # exist or isn't yours: indistinguishable, by design (see
     # metrics/store_sqlite.py's get_session_metrics docstring).
     assert metrics["error"] == "session not found"

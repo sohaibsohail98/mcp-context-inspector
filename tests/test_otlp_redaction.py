@@ -5,7 +5,7 @@ was considered per the plan this module implements, but was intentionally
 NOT added. Reading mcp_server/otlp/claude_code.py's pipeline
 (_parse_body -> _walk_request_body -> _blocks_from_message) shows the only
 inputs ever walked into a context_block's content are
-body.get("system")/body.get("tools")/body.get("messages") — the
+body.get("system")/body.get("tools")/body.get("messages"). The
 JSON-decoded Anthropic Messages API request/response body.
 x-anthropic-billing-header is an HTTP request header Claude Code sends
 alongside that body, never part of the JSON body itself, so it cannot
@@ -48,7 +48,7 @@ def test_redact_does_not_touch_unrelated_sentence():
 def test_redact_does_not_touch_unrelated_url():
     text = "See https://example.com/Users/docs/getting-started for more info."
     # Not a home-directory path (no leading-slash /Users/ segment at a
-    # path root, it's embedded in a URL) — should pass through untouched.
+    # path root, it's embedded in a URL), so it should pass through untouched.
     result = redact(text)
     assert result == text
 
@@ -80,7 +80,7 @@ def test_redact_combined_email_and_path():
 def test_stored_content_is_redacted_but_sizing_reflects_original(isolated_sqlite_db):
     """The size numbers (char_count/token_estimate) must be computed from
     the ORIGINAL, pre-redaction text, while the stored `content` is
-    redacted — this is the "size numbers != stored preview" invariant.
+    redacted. This is the "size numbers != stored preview" invariant.
     This test would fail if someone accidentally redacted-then-sized
     (i.e. computed char_count/token_estimate off the already-redacted
     text) instead of sizing-then-redacting."""

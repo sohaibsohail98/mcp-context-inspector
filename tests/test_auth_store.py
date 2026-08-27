@@ -1,4 +1,4 @@
-"""Regression tests for mcp_server/auth_store.py — the per-user MCP
+"""Regression tests for mcp_server/auth_store.py, the per-user MCP
 token store backing the Google sign-in flow.
 """
 
@@ -14,7 +14,7 @@ def test_get_or_create_token_mints_a_new_token(isolated_auth_store):
 
 def test_get_or_create_token_is_idempotent_per_google_sub(isolated_auth_store):
     """The actual property this exists for: signing in twice must return
-    the SAME token, not silently mint (and orphan) a second one — a
+    the SAME token, not silently mint (and orphan) a second one. A
     friend who re-runs /auth/login shouldn't have their already-pasted
     MCP client config invalidated."""
     store = isolated_auth_store
@@ -74,10 +74,10 @@ def test_list_users_never_includes_tokens(isolated_auth_store):
 
 def test_concurrent_first_sign_in_for_the_same_account_never_crashes(isolated_auth_store):
     """N threads racing to be the FIRST sign-in for a brand-new
-    google_sub — e.g. a friend double-clicking "Sign in with Google," or
+    google_sub, e.g. a friend double-clicking "Sign in with Google," or
     two server worker processes handling near-simultaneous requests.
     Every thread must both succeed AND agree on exactly one winning
-    token — no crash, no silently-orphaned second token."""
+    token, with no crash and no silently-orphaned second token."""
     store = isolated_auth_store
     barrier = threading.Barrier(20)
     results = []
@@ -90,7 +90,7 @@ def test_concurrent_first_sign_in_for_the_same_account_never_crashes(isolated_au
             token = store.get_or_create_token("contested-sub", "a@example.com")
             with lock:
                 results.append(token)
-        except Exception as e:  # noqa: BLE001 — the test itself is the assertion
+        except Exception as e:  # noqa: BLE001 (the test itself is the assertion)
             with lock:
                 errors.append(e)
 

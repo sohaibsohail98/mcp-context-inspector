@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Lumen Docs</title>
+<title>CtxWindow Docs</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="MCP server + live dashboard for real per-session cost, token, and Context Window Explorer telemetry.">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
@@ -182,7 +182,7 @@
 
 <div class="topbar">
   <div class="mark"></div>
-  <span class="brand">Lumen</span>
+  <span class="brand">CtxWindow</span>
   <div class="spacer"></div>
   <a class="gh" href="https://github.com/sohaibsohail98/mcp-context-inspector" target="_blank" rel="noopener">GitHub ↗</a>
 </div>
@@ -213,12 +213,12 @@
 
   <main>
     <section id="overview">
-      <h1>Lumen</h1>
+      <h1>CtxWindow</h1>
       <div class="callout" style="background: var(--surface-sunken);">
         <span class="icon" style="color: var(--accent-ink);">&#9432;</span>
-        <span><strong>Independent, unaffiliated open-source project.</strong> Lumen is not built,
+        <span><strong>Independent, unaffiliated open-source project.</strong> ctxwindow is not built,
         maintained, or endorsed by Anthropic. "Claude" and "Claude Code" are Anthropic's products;
-        Lumen reads their publicly documented OpenTelemetry export and MCP protocol, nothing more.</span>
+        ctxwindow reads their publicly documented OpenTelemetry export and MCP protocol, nothing more.</span>
       </div>
       <p class="lede">
         A drop-in MCP server that gives Claude Code, Bedrock-based agents, and other MCP/LLM
@@ -226,7 +226,7 @@
         <strong>Context Window Explorer</strong>, over a real MCP handshake.
       </p>
       <p>
-        Most agent observability tools re-show data your own UI already displays. Lumen shows
+        Most agent observability tools re-show data your own UI already displays. ctxwindow shows
         something you normally can't see at all: system prompt, tool specs, reasoning, tool calls
         and results, and the final answer, in the order they actually entered context. Each block
         is measured against the model's real context window and marked as either visible to the
@@ -306,7 +306,7 @@ uv run python -m mcp_server.server</code></pre>
       <p>claude.ai's Connectors feature speaks the MCP OAuth flow directly, so there's no token to copy:</p>
       <ol class="step-list">
         <li><strong>claude.ai → Settings → Connectors → Add custom connector.</strong></li>
-        <li>Paste the MCP server URL. Leave OAuth Client ID/Secret blank; Lumen registers itself dynamically per the MCP spec.</li>
+        <li>Paste the MCP server URL. Leave OAuth Client ID/Secret blank; ctxwindow registers itself dynamically per the MCP spec.</li>
         <li>claude.ai opens a Google sign-in prompt automatically. Sign in once.</li>
         <li>All 8 tools are now available in any claude.ai chat.</li>
       </ol>
@@ -320,7 +320,7 @@ uv run python -m mcp_server.server</code></pre>
 
     <section id="live-telemetry">
       <h2>Live telemetry, by hand</h2>
-      <p>Point Claude Code's own OpenTelemetry export at Lumen and sessions show up as they happen:</p>
+      <p>Point Claude Code's own OpenTelemetry export at ctxwindow and sessions show up as they happen:</p>
       <pre><code>export CLAUDE_CODE_ENABLE_TELEMETRY=1
 export OTEL_LOGS_EXPORTER=otlp
 export OTEL_METRICS_EXPORTER=otlp
@@ -334,7 +334,7 @@ export OTEL_LOGS_EXPORT_INTERVAL=5000
 export OTEL_LOG_RAW_API_BODIES=1   # opt-in: needed for the Context Explorer</code></pre>
       <p>
         The <code>OTEL_RESOURCE_ATTRIBUTES</code>/<code>*_INCLUDE_SESSION_ID</code> lines are what
-        let Lumen recognize the session as Claude Code's at all. Omit them and every session is
+        let ctxwindow recognize the session as Claude Code's at all. Omit them and every session is
         silently dropped.
       </p>
     </section>

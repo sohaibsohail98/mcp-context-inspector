@@ -1,4 +1,4 @@
-// mcp-context-inspector — mobile session-history webapp. Vanilla JS,
+// mcp-context-inspector: mobile session-history webapp. Vanilla JS,
 // no framework/build step (matches the project's existing zero-build
 // philosophy for the desktop dashboard's own inline JS in
 // mcp_server/routes/auth.py). Read-only: lists sessions from
@@ -11,7 +11,7 @@
   // --- Auth / storage ---------------------------------------------------
   // Namespaced distinctly from the desktop dashboard's own localStorage
   // keys (mci_token / mci_email, see routes/auth.py's persistSession) so
-  // signing into one surface doesn't collide with or clobber the other —
+  // signing into one surface doesn't collide with or clobber the other.
   // they're deliberately independent sessions even though both ultimately
   // hold an MCP bearer token for the same account.
   const LS_TOKEN = "mciw_token";
@@ -99,7 +99,7 @@
   }
 
   function timeAgo(ts) {
-    if (!ts) return "—";
+    if (!ts) return "n/a";
     const secs = Math.max(0, Date.now() / 1000 - ts);
     if (secs < 60) return "just now";
     if (secs < 3600) return Math.floor(secs / 60) + "m ago";
@@ -129,7 +129,7 @@
       <div class="gate">
         <div class="mark-lg">◈</div>
         <h1>Sign in to view your sessions</h1>
-        <p>Your session history, cost, and token usage — read-only, on the go. Sign in with the same Google account you use on the desktop dashboard.</p>
+        <p>Your session history, cost, and token usage, read-only and on the go. Sign in with the same Google account you use on the desktop dashboard.</p>
         <button class="btn-primary" onclick="(${redirectToLogin.toString()})()">Sign in with Google</button>
       </div>
     `;
@@ -220,12 +220,12 @@
           <div class="kpi-tile"><div class="kpi-label">Tokens</div><div class="kpi-value">${fmtTokens(m.total_tokens)}</div></div>
           <div class="kpi-tile"><div class="kpi-label">Cost</div><div class="kpi-value">${fmtCost(m.estimated_cost)}</div></div>
           <div class="kpi-tile"><div class="kpi-label">Tool calls</div><div class="kpi-value">${m.tool_call_count ?? 0}</div></div>
-          <div class="kpi-tile"><div class="kpi-label">Cache hit</div><div class="kpi-value">${cacheHitPct != null ? cacheHitPct + "%" : "—"}</div></div>
+          <div class="kpi-tile"><div class="kpi-label">Cache hit</div><div class="kpi-value">${cacheHitPct != null ? cacheHitPct + "%" : "n/a"}</div></div>
         </div>
       `;
 
       // Flat, ordered list: context blocks if the timeline has data,
-      // else fall back to the tool-call trace — either way, a single
+      // else fall back to the tool-call trace. Either way, a single
       // scrollable list with type/color coding, not the desktop's
       // tabbed Context Explorer (out of scope for this read-only view).
       let entries;
