@@ -34,6 +34,7 @@ from mcp_server.routes import oauth as routes_oauth  # noqa: F401,E402
 from mcp_server.routes import setup as routes_setup  # noqa: F401,E402
 from mcp_server.routes import webapp as routes_webapp  # noqa: F401,E402
 from mcp_server.routes import docs as routes_docs  # noqa: F401,E402
+from mcp_server.routes import demo as routes_demo  # noqa: F401,E402
 
 
 def _maybe_seed_demo_db(demo_seed_src, target_path):
