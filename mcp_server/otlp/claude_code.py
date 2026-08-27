@@ -41,8 +41,6 @@ Still unverified (no tool call happened in the captured session):
 import json
 from collections import Counter
 
-from metrics import store
-from metrics.errors import SessionOwnershipError
 from mcp_server.otlp.common import (
     CATEGORY_ANSWER,
     CATEGORY_REASONING,
@@ -56,6 +54,8 @@ from mcp_server.otlp.common import (
     truncate_content,
 )
 from mcp_server.otlp.redaction import redact
+from metrics import store
+from metrics.errors import SessionOwnershipError
 
 # Narrow, deliberate exception set for per-record try/except in the batch
 # loops below: KeyError/TypeError cover malformed/missing dict shape,

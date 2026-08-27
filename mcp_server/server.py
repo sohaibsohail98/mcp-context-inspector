@@ -21,20 +21,20 @@ import os
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.middleware.cors import CORSMiddleware
 
+# Importing the `tools` and `routes.*` modules below registers their
+# @server.tool()/@server.custom_route() handlers. Side-effect imports;
+# order doesn't matter between them.
+from mcp_server import tools  # noqa: F401,E402
 from mcp_server.app import server  # noqa: F401 (re-exported for tests/other modules)
 from mcp_server.middleware import MultiTokenAuthMiddleware, OAuthCORSMiddleware
-
-# Importing these registers their @server.tool()/@server.custom_route()
-# handlers. Side-effect imports; order doesn't matter between them.
-from mcp_server import tools  # noqa: F401,E402
 from mcp_server.routes import api as routes_api  # noqa: F401,E402
-from mcp_server.routes import otlp as routes_otlp  # noqa: F401,E402
 from mcp_server.routes import auth as routes_auth  # noqa: F401,E402
+from mcp_server.routes import demo as routes_demo  # noqa: F401,E402
+from mcp_server.routes import docs as routes_docs  # noqa: F401,E402
 from mcp_server.routes import oauth as routes_oauth  # noqa: F401,E402
+from mcp_server.routes import otlp as routes_otlp  # noqa: F401,E402
 from mcp_server.routes import setup as routes_setup  # noqa: F401,E402
 from mcp_server.routes import webapp as routes_webapp  # noqa: F401,E402
-from mcp_server.routes import docs as routes_docs  # noqa: F401,E402
-from mcp_server.routes import demo as routes_demo  # noqa: F401,E402
 
 
 def _maybe_seed_demo_db(demo_seed_src, target_path):

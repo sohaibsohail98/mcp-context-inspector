@@ -11,9 +11,10 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
-from mcp_server import local_setup, server as server_module
-from mcp_server.routes import auth as routes_auth
+from mcp_server import local_setup
+from mcp_server import server as server_module
 from mcp_server.auth.google import InvalidGoogleToken
+from mcp_server.routes import auth as routes_auth
 
 
 @pytest.fixture

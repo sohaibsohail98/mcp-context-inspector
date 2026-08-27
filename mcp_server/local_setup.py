@@ -72,10 +72,10 @@ def apply_settings_patch(patch, settings_path=SETTINGS_PATH):
         text = settings_path.read_text()
         try:
             existing = json.loads(text)
-        except ValueError:
+        except ValueError as err:
             raise ValueError(
                 f"{settings_path} exists but isn't valid JSON. Not touching it. Fix or back it up manually first."
-            )
+            ) from err
         if not isinstance(existing, dict):
             raise ValueError(f"{settings_path} isn't a JSON object. Not touching it.")
         backup_path = settings_path.with_name(settings_path.name + f".bak-{int(time.time())}")

@@ -24,9 +24,8 @@ so a regression here fails a test instead of only showing up as a live
 """
 
 import pytest
-from starlette.testclient import TestClient
-
 from mcp.server.transport_security import TransportSecuritySettings
+from starlette.testclient import TestClient
 
 from mcp_server import server as server_module
 

@@ -7,10 +7,9 @@ shared `server` instance."""
 from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse
 
-from metrics import store
-
 from mcp_server import dev_mode
 from mcp_server.app import current_owner, server
+from metrics import store
 
 
 @server.custom_route("/api/sessions", methods=["GET"])

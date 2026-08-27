@@ -19,18 +19,48 @@ dependencies = [
 # never imported by the running server, so it stays out of the main
 # dependency list; ffmpeg is a separate system binary, not a Python
 # package, so it isn't listed here at all.
-dev = ["pytest", "ruff", "playwright"]
+dev = ["pytest", "pytest-cov", "ruff", "playwright"]
 
 [tool.ruff]
 line-length = 120
 target-version = "py311"
 
 [tool.ruff.lint]
-# Default set (pyflakes + a slice of pycodestyle). This is a lint pass
-# to catch real mistakes (unused imports, undefined names, bare excepts),
-# not a full style-enforcement rewrite of an existing codebase.
-select = ["E", "F", "W"]
-ignore = ["E501"]  # line length handled by the formatter, not the linter
+# pyflakes + a slice of pycodestyle (E/F/W) catch real mistakes (unused
+# imports, undefined names, bare excepts). B (bugbear) and S (bandit) add
+# bug/security pattern detection; I (isort) gives free import-order
+# consistency. This is still a lint pass, not a style-enforcement rewrite.
+select = ["E", "F", "W", "B", "S", "I"]
+ignore = [
+    "E501",  # line length handled by the formatter, not the linter
+    # S608: the only interpolated SQL fragments are hardcoded internal
+    # strings (column lists, WHERE clauses built from literals) — never
+    # request data — and it also false-positives on f-string HTML
+    # templates. S105/S107: the flagged "passwords" are the public
+    # demo-mode token constant (inert unless CTXWINDOW_DEMO_MODE=1), an
+    # internal cache-key sentinel, and the OAuth RFC 7591
+    # `token_endpoint_auth_method="none"` parameter default.
+    "S608",
+    "S105",
+    "S107",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests legitimately use assert, spin up subprocesses, bind to 0.0.0.0,
+# and hardcode dummy secrets/tokens — all bandit (S) false positives here.
+"tests/**" = ["S"]
+"api_tests/**" = ["S"]
+"scripts/**" = ["S"]
+
+[tool.coverage.run]
+source = ["mcp_server", "metrics", "mci_common"]
+omit = ["scripts/*", "*/demo_capture.py"]
+
+[tool.coverage.report]
+# No fail_under gate on purpose: a threshold would just be gamed while
+# the frontend (dashboard JS, the auth-page templates) stays untested.
+# The number is reported so the gap stays visible, not enforced.
+show_missing = true
 
 [build-system]
 requires = ["hatchling"]

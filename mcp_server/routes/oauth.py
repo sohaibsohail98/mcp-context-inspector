@@ -38,8 +38,8 @@ from urllib.parse import urlencode, urlparse
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
-from mcp_server.auth import store as auth_store
 from mcp_server.app import current_owner, server
+from mcp_server.auth import store as auth_store
 from mcp_server.auth.google import InvalidGoogleToken, verify_credential
 from mcp_server.middleware import _public_origin
 from mcp_server.routes.auth import _PAGE_STYLE

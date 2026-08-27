@@ -8,8 +8,8 @@ import os
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
-from mcp_server.auth import store as auth_store
 from mcp_server.app import current_owner
+from mcp_server.auth import store as auth_store
 
 # Demo-capture bypass (see scripts/demo_capture.py and
 # mcp_server/routes/demo.py). A fixed, obviously-fake token rather than

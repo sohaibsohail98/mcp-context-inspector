@@ -11,10 +11,9 @@ import os
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse
 
-from mcp_server.auth import store as auth_store
 from mcp_server.app import server
+from mcp_server.auth import store as auth_store
 from mcp_server.auth.google import InvalidGoogleToken, verify_credential
-
 
 # /auth/* is the pre-auth flow that mints a per-user MCP token, so it is
 # deliberately NOT in MultiTokenAuthMiddleware's protected_prefixes.

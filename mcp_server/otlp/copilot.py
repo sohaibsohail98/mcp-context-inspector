@@ -56,8 +56,6 @@ exists):
 
 import json
 
-from metrics import store
-from metrics.errors import SessionOwnershipError
 from mcp_server.otlp.common import (
     CATEGORY_ANSWER,
     CATEGORY_REASONING,
@@ -69,6 +67,8 @@ from mcp_server.otlp.common import (
     estimate_tokens,
     truncate_content,
 )
+from metrics import store
+from metrics.errors import SessionOwnershipError
 
 _SESSION_ID_ATTR_CANDIDATES = ("session.id", "gen_ai.conversation.id", "conversation.id")
 _INPUT_TOKEN_ATTR_CANDIDATES = ("gen_ai.usage.input_tokens", "gen_ai.usage.prompt_tokens")
