@@ -33,12 +33,17 @@ DEFAULT_OUT_DIR = REPO_ROOT / "docs" / "_raw"
 
 VIEWPORT = {"width": 1100, "height": 720}
 
-# Category the choreography expands: tool specs consume a surprising
-# share of the window and most viewers have never thought about it,
-# which is exactly the "something a viewer would not have guessed"
-# the brief asks for. Matches the label seed_demo_db.py writes for
-# _TOOLS (see _context_blocks: "Tool specs (5 tools)").
-_EXPAND_LABEL_SUBSTRING = "Tool specs"
+# Candidate blocks to expand in the 4.5s-6.5s reveal step, each a real
+# illustration of "something consuming context you wouldn't have
+# guessed" (see seed_demo_db.py, which is the only place these three
+# blocks carry real content rather than the placeholder). Selected via
+# --variant; used to produce multiple candidate takes for comparison,
+# see docs/internal/demo-takes.md for how the final one was chosen.
+EXPAND_VARIANTS = {
+    "tools": "Tool specs",
+    "system": "System prompt",
+    "tool_result": "Tool result: list_services",
+}
 
 # A small circle rather than a stock arrow PNG, styled to sit inside the
 # warm dark palette (--accent) so it reads as part of the product, not a
@@ -90,7 +95,7 @@ async def _click_with_beats(page, locator):
     await page.wait_for_timeout(400)
 
 
-async def capture(server_url, out_dir, headless=True):
+async def capture(server_url, out_dir, headless=True, expand_label=EXPAND_VARIANTS["tools"]):
     """Returns (video_path, trim_start_seconds). Playwright's recordVideo
     starts from context creation, before the session is selected, so the
     raw file's opening frames show the "Select a session" empty state
@@ -164,7 +169,7 @@ async def capture(server_url, out_dir, headless=True):
         )
         await page.wait_for_timeout(700)
 
-        target_row = page.locator(".block-row", has_text=_EXPAND_LABEL_SUBSTRING).first
+        target_row = page.locator(".block-row", has_text=expand_label).first
         await _click_with_beats(page, target_row)
 
         # 6.5s to 8.0s: hold on the expanded state, the still that shows
@@ -185,9 +190,17 @@ def main():
     parser.add_argument("--server-url", default=DEFAULT_SERVER_URL)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     parser.add_argument("--headed", action="store_true", help="Run with a visible browser window, for debugging.")
+    parser.add_argument(
+        "--variant",
+        choices=sorted(EXPAND_VARIANTS),
+        default="tool_result",
+        help="Which context block to expand in the 4.5s-6.5s reveal step (candidate takes, see docs/internal/demo-takes.md).",
+    )
     args = parser.parse_args()
 
-    video_path, trim_start_seconds = asyncio.run(capture(args.server_url, args.out_dir, headless=not args.headed))
+    video_path, trim_start_seconds = asyncio.run(
+        capture(args.server_url, args.out_dir, headless=not args.headed, expand_label=EXPAND_VARIANTS[args.variant])
+    )
     print(f"Wrote raw capture to {video_path}")
     # Consumed by the Makefile's ffmpeg pass (-ss trim), printed as its
     # own line rather than folded into the sentence above so it's
