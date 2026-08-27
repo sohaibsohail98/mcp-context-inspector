@@ -104,6 +104,43 @@ _SYSTEM_PROMPT_CONTENT = (
     "what a tool call actually returned this session."
 )
 
+# The Context Window Explorer's fourth demo-candidate expand target: a
+# real user-prompt block. Every session's own prompt text (already
+# passed into _context_blocks below) is genuine, not a placeholder
+# string, so this just wires that existing text through as the block's
+# content instead of leaving it unset.
+
+# The Context Window Explorer's fifth demo-candidate expand target: a
+# real chain-of-reasoning excerpt, so expanding a "Reasoning (turn N)"
+# block (guided_tour's third tour step) shows an actual illustrative
+# thought rather than the "content wasn't captured" placeholder. Turn
+# numbers are per-session (see _context_blocks below), so this is keyed
+# by turn_n and reused across turns rather than one string per session;
+# real reasoning traces repeat this kind of "what should I check next"
+# structure turn over turn anyway, so a shared pool reads as authentic
+# rather than repetitive for a clip this short.
+_REASONING_CONTENT_BY_TURN = {
+    1: (
+        "The service list came back clean, but checkout-api's metrics haven't "
+        "been pulled yet. Before speculating about a cause, I should look at "
+        "its actual latency and error-rate numbers over the last hour, since "
+        "the user's question is specifically about elevated p99."
+    ),
+    2: (
+        "p99 is well above baseline and the timing lines up with a deploy "
+        "window. I don't want to assume the deploy caused it without "
+        "checking, so the next step is pulling recent deployments for this "
+        "service to see if a change actually landed around when latency "
+        "jumped."
+    ),
+    3: (
+        "A deployment did land right before the latency spike. That's "
+        "circumstantial, not proof, so I should search the service's logs "
+        "for errors in that window before attributing the regression to the "
+        "deploy."
+    ),
+}
+
 # The Context Window Explorer's third demo-candidate expand target: a
 # real tool_result payload, so a viewer can see the actual JSON an
 # answer was grounded in, not just a "225 tok" line item. Attached to
@@ -121,7 +158,7 @@ _SAMPLE_TOOL_RESULT_CONTENT = json.dumps(
 )
 
 
-def _context_blocks(turns, trace, answer_text, answer_label="Final answer"):
+def _context_blocks(turns, trace, prompt, answer_text, answer_label="Final answer"):
     blocks = [
         {
             "category": "system",
@@ -139,21 +176,35 @@ def _context_blocks(turns, trace, answer_text, answer_label="Final answer"):
             "turn_n": None,
             "content": _TOOL_SPECS_CONTENT,
         },
-        {"category": "user", "label": "User prompt", "char_count": 80, "token_estimate": 20, "turn_n": 0},
+        {
+            "category": "user",
+            "label": "User prompt",
+            "char_count": 80,
+            "token_estimate": 20,
+            "turn_n": 0,
+            "content": prompt,
+        },
     ]
     call_i = 0
     attached_sample_result = False
     for turn_n in range(turns):
         if turn_n > 0:
-            blocks.append(
-                {
-                    "category": "reasoning",
-                    "label": f"Reasoning (turn {turn_n})",
-                    "char_count": 220,
-                    "token_estimate": 55,
-                    "turn_n": turn_n,
-                }
-            )
+            reasoning_block = {
+                "category": "reasoning",
+                "label": f"Reasoning (turn {turn_n})",
+                "char_count": 220,
+                "token_estimate": 55,
+                "turn_n": turn_n,
+            }
+            # Only a handful of turns carry real illustrative text (see
+            # _REASONING_CONTENT_BY_TURN above); every other turn keeps
+            # falling back to the placeholder, same reasoning as the
+            # tool_result case below: most real historical sessions won't
+            # have every turn's reasoning captured either, so the demo
+            # shouldn't pretend that is the common case.
+            if turn_n in _REASONING_CONTENT_BY_TURN:
+                reasoning_block["content"] = _REASONING_CONTENT_BY_TURN[turn_n]
+            blocks.append(reasoning_block)
         if call_i < len(trace) and turn_n < turns - 1:
             call = trace[call_i]
             call_i += 1
@@ -210,6 +261,7 @@ def _session(session_id, ts_offset, prompt, model_id, trace, turn_latencies, ans
     context_blocks = _context_blocks(
         len(turns),
         trace,
+        prompt,
         answer_text,
         answer_label="Final answer (turn limit)" if hit_turn_limit else "Final answer",
     )

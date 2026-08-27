@@ -479,7 +479,10 @@ async def auth_login(request: Request):
     # production render is byte-identical to before this feature existed.
     demo_script_tag = ""
     if os.environ.get("CTXWINDOW_DEMO_MODE") == "1" and request.query_params.get("demo") == "1":
-        demo_script_tag = '<script src="/demo-static/demo_reveal.js"></script>'
+        demo_script_tag = (
+            '<script src="/demo-static/demo_transition.js"></script>'
+            '<script src="/demo-static/demo_reveal.js"></script>'
+        )
     intro = """
 <div class="ctxwindow-kicker"><span class="pulse"></span> updates automatically as you work</div>
 <h1 class="ctxwindow-h1">Watch your agent's <span class="ctxwindow-accent">context window</span> fill up as you work.</h1>

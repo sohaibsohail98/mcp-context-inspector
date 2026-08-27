@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>terminal</title>
+<style>
+  /* Standalone terminal mockup for the demo recording's opening beat
+     (scripts/demo_capture.py). A real terminal emulator was ruled out:
+     shelling out to an actual `claude` session would make the recording
+     depend on live model output and non-deterministic timing, which is
+     exactly what the seeded-database approach elsewhere in this pipeline
+     exists to avoid. A scripted, deterministic mockup that only has to
+     read as a terminal for a ten second clip is the pragmatic trade. */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    background: #17150f; /* matches the dashboard's own background so the tab switch reads as one product, not two */
+    display: flex; align-items: center; justify-content: center;
+  }
+  body { font-family: "JetBrains Mono", ui-monospace, monospace; }
+  .window {
+    width: 980px; height: 640px;
+    background: #1b1912;
+    border: 1px solid #3a3527;
+    border-radius: 10px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    overflow: hidden;
+    display: flex; flex-direction: column;
+  }
+  .chrome {
+    height: 38px; flex-shrink: 0;
+    display: flex; align-items: center; gap: 8px;
+    padding: 0 14px;
+    background: #221f16;
+    border-bottom: 1px solid #3a3527;
+  }
+  .dot { width: 11px; height: 11px; border-radius: 999px; }
+  .dot.r { background: #e0685a; } .dot.y { background: #d9a45c; } .dot.g { background: #6cbfa4; }
+  .chrome-title {
+    flex: 1; text-align: center; font-size: 12px; color: #9a927a; letter-spacing: 0.02em;
+    font-family: Archivo, sans-serif;
+  }
+  .body { flex: 1; padding: 22px 26px; color: #d8d2bf; font-size: 15.5px; line-height: 1.65; overflow: hidden; }
+  /* A real two-line shell prompt (user/host/cwd/git branch on its own
+     line, then a bare chevron for the actual input) is the oh-my-zsh /
+     starship convention most viewers will recognise; a bare "$" or ">"
+     on one line reads as an obvious mockup by comparison. */
+  .prompt-meta { color: #6a6450; margin-bottom: 2px; }
+  .prompt-user { color: #6cbfa4; font-weight: 700; }
+  .prompt-host { color: #6cbfa4; font-weight: 700; }
+  .prompt-path { color: #8ba3e0; font-weight: 650; }
+  .prompt-branch { color: #d9a45c; }
+  .prompt-line { display: flex; align-items: baseline; gap: 10px; }
+  .prompt-chevron { color: #6cbfa4; font-weight: 700; flex-shrink: 0; }
+  .typed { white-space: pre-wrap; word-break: break-word; }
+  .cursor {
+    display: inline-block; width: 8px; height: 1.1em; background: #6cbfa4;
+    vertical-align: text-bottom; margin-left: 1px;
+  }
+  .cursor.blink { animation: __blink 1s step-end infinite; }
+  @keyframes __blink { 50% { opacity: 0; } }
+  .response { margin-top: 18px; color: #9a927a; opacity: 0; transition: opacity 300ms ease-out; }
+  .response.show { opacity: 1; }
+  .response .lead { color: #6cbfa4; font-weight: 650; }
+</style>
+</head>
+<body>
+  <div class="window">
+    <div class="chrome">
+      <div class="dot r"></div><div class="dot y"></div><div class="dot g"></div>
+      <div class="chrome-title">claude &mdash; checkout-api-incident &mdash; 92x28</div>
+    </div>
+    <div class="body">
+      <div class="prompt-meta">
+        <span class="prompt-user">dev</span>@<span class="prompt-host">sre-01</span> <span class="prompt-path">~/checkout-api</span> git:(<span class="prompt-branch">incident/checkout-p99</span>)
+      </div>
+      <div class="prompt-line">
+        <span class="prompt-chevron">&#10148;</span>
+        <span class="typed" id="typed"></span><span class="cursor" id="cursor"></span>
+      </div>
+      <div class="response" id="response">
+        <div class="lead">&#10003; Claude Code is investigating&hellip;</div>
+        <div>Reading incident context, calling checkout-api tools, building a timeline.</div>
+      </div>
+    </div>
+  </div>
+<script>
+  // Typed rather than pasted in one paint: a static full line reads as a
+  // screenshot, the letter-by-letter reveal is what makes the opening
+  // beat read as "someone just typed this", matching the dashboard's own
+  // staged reveal further into the clip.
+  var PROMPT = new URLSearchParams(window.location.search).get("prompt") ||
+    "do a full multi-signal investigation of the checkout-api incident";
+
+  // A little pseudo-random per-character jitter (not real per-key
+  // timing, just enough variance that the typing doesn't read as a
+  // metronome) plus a small extra pause after a space, which is how
+  // most people's typing actually looks: word bursts, tiny gaps between
+  // them. Seeded (not Math.random) so the recording stays deterministic
+  // frame-for-frame across capture runs.
+  function jitter(seed) {
+    var x = Math.sin(seed * 12.9898) * 43758.5453;
+    return x - Math.floor(x);
+  }
+
+  function typeOut(text, el, cursorEl, msPerChar, onDone) {
+    var i = 0;
+    (function step() {
+      el.textContent = text.slice(0, i);
+      var justTyped = text[i - 1];
+      i++;
+      if (i <= text.length) {
+        var variance = (jitter(i) - 0.5) * msPerChar * 0.7; // +/-35% swing
+        var delay = Math.max(10, msPerChar + variance + (justTyped === " " ? msPerChar * 0.4 : 0));
+        setTimeout(step, delay);
+      } else {
+        cursorEl.classList.add("blink");
+        if (onDone) setTimeout(onDone, 420);
+      }
+    })();
+  }
+
+  window.__demoTerminalReady = new Promise(function (resolve) {
+    document.fonts.ready.then(function () {
+      typeOut(PROMPT, document.getElementById("typed"), document.getElementById("cursor"), 28, function () {
+        document.getElementById("response").classList.add("show");
+        resolve();
+      });
+    });
+  });
+</script>
+</body>
+</html>

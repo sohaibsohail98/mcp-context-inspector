@@ -9,12 +9,17 @@
 # system binary this target assumes is already on PATH).
 #
 # `make demo` produces the single shipped docs/demo.mp4 / docs/demo.gif,
-# expanding whichever block VARIANT names (default: tool_result, the
-# take picked as the best of the candidates, see
-# docs/internal/demo-takes.md for why). `make demo-candidates` renders
-# one take per entry in EXPAND_VARIANTS (scripts/demo_capture.py) into
-# the gitignored docs/_scratch/ so they can be compared side by side
-# before choosing.
+# playing whichever demo_reveal.js choreography REVEAL_MODE names. After
+# reviewing all four terminal-to-dashboard candidates (see
+# docs/internal/demo-takes.md and -v2.md), guided_tour is the sole
+# shipped concept: `make demo` (CUT=full, the default) renders
+# docs/demo.mp4 for LinkedIn, `make demo CUT=short` renders the tighter
+# docs/demo.gif for the README. CUT only affects guided_tour; the other
+# three modes ignore it and are kept only for `make demo-candidates`.
+# `make demo-candidates` renders one take per entry in REVEAL_MODES (each
+# with its own sample prompt and typing speed, see
+# scripts/demo_candidate_params.sh) into the gitignored docs/_scratch/ so
+# they can be compared side by side.
 
 .PHONY: demo demo-candidates
 
@@ -24,8 +29,16 @@ DEMO_HOST := 127.0.0.1
 DEMO_SERVER_URL := http://$(DEMO_HOST):$(DEMO_PORT)
 RAW_DIR := docs/_raw
 SCRATCH_DIR := docs/_scratch
-VARIANT ?= tool_result
-VARIANTS := tools system tool_result
+REVEAL_MODE ?= guided_tour
+CUT ?= full
+REVEAL_MODES := guided_tour cost_reveal surprise multi_turn
+
+# Per reveal-mode sample prompt and dashboard-half duration are looked
+# up via scripts/demo_candidate_params.sh rather than a Make define/call:
+# a shell `case` embedded in a Make define gets flattened onto one line
+# and loses its own statement separators (tried that first, hit a syntax
+# error), a real script file does not have that problem.
+PARAMS_SCRIPT := scripts/demo_candidate_params.sh
 
 demo:
 	@set -e; \
@@ -43,15 +56,18 @@ demo:
 		sleep 0.2; \
 	done; \
 	curl -sf $(DEMO_SERVER_URL)/health > /dev/null || (echo "server never came up" && exit 1); \
-	echo "==> Recording variant '$(VARIANT)' (Playwright + Chromium)"; \
-	CAPTURE_OUTPUT=$$(.venv/bin/python -m scripts.demo_capture --server-url $(DEMO_SERVER_URL) --out-dir $(RAW_DIR) --variant $(VARIANT)); \
+	PROMPT=$$(sh $(PARAMS_SCRIPT) prompt $(REVEAL_MODE) $(CUT)); \
+	DASHBOARD_SECONDS=$$(sh $(PARAMS_SCRIPT) seconds $(REVEAL_MODE) $(CUT)); \
+	echo "==> Recording reveal mode '$(REVEAL_MODE)' cut '$(CUT)' (Playwright + Chromium)"; \
+	CAPTURE_OUTPUT=$$(.venv/bin/python -m scripts.demo_capture --server-url $(DEMO_SERVER_URL) --out-dir $(RAW_DIR) --reveal-mode $(REVEAL_MODE) --cut $(CUT) --prompt "$$PROMPT"); \
 	echo "$$CAPTURE_OUTPUT"; \
-	RAW_VIDEO=$$(echo "$$CAPTURE_OUTPUT" | sed -n 's/^Wrote raw capture to //p'); \
+	TERMINAL_VIDEO=$$(echo "$$CAPTURE_OUTPUT" | sed -n 's/^Wrote terminal capture to //p'); \
+	DASHBOARD_VIDEO=$$(echo "$$CAPTURE_OUTPUT" | sed -n 's/^Wrote dashboard capture to //p'); \
 	TRIM_START=$$(echo "$$CAPTURE_OUTPUT" | sed -n 's/^TRIM_START_SECONDS=//p'); \
 	kill $$SERVER_PID 2>/dev/null || true; \
 	trap - EXIT; \
 	echo "==> Encoding docs/demo.mp4 and docs/demo.gif"; \
-	sh scripts/encode_demo_take.sh "$$RAW_VIDEO" "$$TRIM_START" docs/demo.mp4 docs/demo.gif $(RAW_DIR)/palette.png; \
+	sh scripts/encode_demo_take.sh "$$TERMINAL_VIDEO" "$$DASHBOARD_VIDEO" "$$TRIM_START" "$$DASHBOARD_SECONDS" docs/demo.mp4 docs/demo.gif $(RAW_DIR)/work; \
 	rm -rf $(RAW_DIR); \
 	echo "==> Done"; \
 	echo "docs/demo.mp4: $$(du -h docs/demo.mp4 | cut -f1), $$(ffprobe -v error -show_entries format=duration -of csv=p=0 docs/demo.mp4)s"; \
@@ -73,14 +89,17 @@ demo-candidates:
 		sleep 0.2; \
 	done; \
 	curl -sf $(DEMO_SERVER_URL)/health > /dev/null || (echo "server never came up" && exit 1); \
-	for variant in $(VARIANTS); do \
-		echo "==> Recording candidate '$$variant' (Playwright + Chromium)"; \
-		CAPTURE_OUTPUT=$$(.venv/bin/python -m scripts.demo_capture --server-url $(DEMO_SERVER_URL) --out-dir $(RAW_DIR)/$$variant --variant $$variant); \
+	for mode in $(REVEAL_MODES); do \
+		PROMPT=$$(sh $(PARAMS_SCRIPT) prompt $$mode); \
+		DASHBOARD_SECONDS=$$(sh $(PARAMS_SCRIPT) seconds $$mode); \
+		echo "==> Recording candidate '$$mode' (Playwright + Chromium)"; \
+		CAPTURE_OUTPUT=$$(.venv/bin/python -m scripts.demo_capture --server-url $(DEMO_SERVER_URL) --out-dir $(RAW_DIR)/$$mode --reveal-mode $$mode --prompt "$$PROMPT"); \
 		echo "$$CAPTURE_OUTPUT"; \
-		RAW_VIDEO=$$(echo "$$CAPTURE_OUTPUT" | sed -n 's/^Wrote raw capture to //p'); \
+		TERMINAL_VIDEO=$$(echo "$$CAPTURE_OUTPUT" | sed -n 's/^Wrote terminal capture to //p'); \
+		DASHBOARD_VIDEO=$$(echo "$$CAPTURE_OUTPUT" | sed -n 's/^Wrote dashboard capture to //p'); \
 		TRIM_START=$$(echo "$$CAPTURE_OUTPUT" | sed -n 's/^TRIM_START_SECONDS=//p'); \
-		sh scripts/encode_demo_take.sh "$$RAW_VIDEO" "$$TRIM_START" $(SCRATCH_DIR)/$$variant.mp4 $(SCRATCH_DIR)/$$variant.gif $(RAW_DIR)/$$variant/palette.png; \
-		echo "$(SCRATCH_DIR)/$$variant.mp4: $$(du -h $(SCRATCH_DIR)/$$variant.mp4 | cut -f1)"; \
+		sh scripts/encode_demo_take.sh "$$TERMINAL_VIDEO" "$$DASHBOARD_VIDEO" "$$TRIM_START" "$$DASHBOARD_SECONDS" $(SCRATCH_DIR)/$$mode.mp4 $(SCRATCH_DIR)/$$mode.gif $(RAW_DIR)/$$mode/work; \
+		echo "$(SCRATCH_DIR)/$$mode.mp4: $$(du -h $(SCRATCH_DIR)/$$mode.mp4 | cut -f1), $$(ffprobe -v error -show_entries format=duration -of csv=p=0 $(SCRATCH_DIR)/$$mode.mp4)s"; \
 	done; \
 	kill $$SERVER_PID 2>/dev/null || true; \
 	trap - EXIT; \
