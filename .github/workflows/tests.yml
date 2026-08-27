@@ -43,7 +43,10 @@ jobs:
       # locally once." api_tests/ is excluded here on purpose: those
       # hit a real deployed URL over the network (see api-e2e-tests
       # below) and would make this "no network calls" job a liar.
-      - run: uv run python -m pytest -v --ignore=api_tests
+      # --cov reports coverage (see pyproject.toml [tool.coverage]) with
+      # no fail_under gate: the number is surfaced in the job log so the
+      # untested-frontend gap stays visible, not enforced.
+      - run: uv run python -m pytest -v --ignore=api_tests --cov --cov-report=term-missing
 
   api-e2e-tests:
     runs-on: ubuntu-latest

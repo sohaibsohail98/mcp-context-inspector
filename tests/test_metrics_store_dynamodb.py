@@ -71,10 +71,7 @@ class FakeTable:
             return list(self.items)
         if expr.strip() == "sk = :sk AND #o = :owner":
             owner_attr = (names or {})["#o"]
-            return [
-                i for i in self.items
-                if i["sk"] == values[":sk"] and i.get(owner_attr) == values[":owner"]
-            ]
+            return [i for i in self.items if i["sk"] == values[":sk"] and i.get(owner_attr) == values[":owner"]]
         if expr.startswith("begins_with"):
             prefix = values[":prefix"]
             return [i for i in self.items if i["sk"].startswith(prefix)]
@@ -83,7 +80,14 @@ class FakeTable:
             return [i for i in self.items if i["sk"] == val]
         raise NotImplementedError(expr)
 
-    def scan(self, FilterExpression=None, ExpressionAttributeValues=None, ExpressionAttributeNames=None, ExclusiveStartKey=None, **_):
+    def scan(
+        self,
+        FilterExpression=None,
+        ExpressionAttributeValues=None,
+        ExpressionAttributeNames=None,
+        ExclusiveStartKey=None,
+        **_,
+    ):
         filtered = self._apply_filter(FilterExpression, ExpressionAttributeValues, ExpressionAttributeNames)
         start = ExclusiveStartKey or 0
         page = filtered[start : start + self.page_size]
@@ -96,10 +100,7 @@ class FakeTable:
     def query(self, KeyConditionExpression=None, ExpressionAttributeValues=None, Select=None, **_):
         sid = ExpressionAttributeValues[":sid"]
         prefix = ExpressionAttributeValues.get(":prefix")
-        items = [
-            i for i in self.items
-            if i["session_id"] == sid and (prefix is None or i["sk"].startswith(prefix))
-        ]
+        items = [i for i in self.items if i["session_id"] == sid and (prefix is None or i["sk"].startswith(prefix))]
         resp = {"Items": items}
         if Select == "COUNT":
             resp["Count"] = len(items)
@@ -119,7 +120,8 @@ class FakeTable:
         session_id+sk already exists, otherwise upserts."""
         existing_idx = next(
             (
-                idx for idx, i in enumerate(self.items)
+                idx
+                for idx, i in enumerate(self.items)
                 if i["session_id"] == Item["session_id"] and i["sk"] == Item["sk"]
             ),
             None,
@@ -147,7 +149,7 @@ class FakeTable:
             raise KeyError(f"FakeTable.update_item: no item for key {Key}")
         expr = UpdateExpression.strip()
         assert expr.startswith("SET "), f"unsupported UpdateExpression: {expr}"
-        for clause in expr[len("SET "):].split(","):
+        for clause in expr[len("SET ") :].split(","):
             field, rhs = clause.strip().split("=", 1)
             field = field.strip()
             rhs = rhs.strip()
@@ -199,8 +201,13 @@ def test_get_session_metrics_strips_internal_partition_field(fake_table):
     assert set(metrics.keys()) == {"session", "prompt_metrics"}
     assert set(metrics["session"].keys()) == {"session_id", "model", "timestamp", "source", "status"}
     assert set(metrics["prompt_metrics"].keys()) == {
-        "prompt", "input_tokens", "output_tokens",
-        "total_tokens", "latency_ms", "tool_call_count", "estimated_cost",
+        "prompt",
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "latency_ms",
+        "tool_call_count",
+        "estimated_cost",
     }
 
 
@@ -242,9 +249,7 @@ def test_get_recent_sessions_carries_cache_and_tool_error_aggregates(fake_table)
     fake_table.items.append(
         {"session_id": "s1", "sk": "TURN#0000", "cache_read_input_tokens": 300, "input_tokens": 100}
     )
-    fake_table.items.append(
-        {"session_id": "s1", "sk": "TURN#0001", "cache_read_input_tokens": 0, "input_tokens": 50}
-    )
+    fake_table.items.append({"session_id": "s1", "sk": "TURN#0001", "cache_read_input_tokens": 0, "input_tokens": 50})
     fake_table.items.append({"session_id": "s1", "sk": "TOOLCALL#0000", "tool_name": "a", "status": "success"})
     fake_table.items.append({"session_id": "s1", "sk": "TOOLCALL#0001", "tool_name": "b", "status": "error"})
     fake_table.items.append({"session_id": "s1", "sk": "TOOLCALL#0002", "tool_name": "c", "status": "error"})
@@ -334,7 +339,14 @@ def test_context_timeline_round_trip_and_cumulative_math(fake_table):
         "context_blocks": [
             {"category": "system", "label": "System prompt", "char_count": 400, "token_estimate": 100, "turn_n": None},
             {"category": "user", "label": "User prompt", "char_count": 40, "token_estimate": 10, "turn_n": 0},
-            {"category": "tool_result", "label": "Tool result: list_services", "char_count": 200, "token_estimate": 50, "turn_n": 0, "status": "error"},
+            {
+                "category": "tool_result",
+                "label": "Tool result: list_services",
+                "char_count": 200,
+                "token_estimate": 50,
+                "turn_n": 0,
+                "status": "error",
+            },
         ],
     }
     session_id = store_dynamodb.record_session("q", "us.anthropic.claude-sonnet-4-6", loop_result)
@@ -481,11 +493,18 @@ def test_append_turn_retries_past_index_collision(fake_table, monkeypatch):
     sid = store_dynamodb.start_or_get_session("otel-append-race", source="claude_code")
 
     # Simulate a concurrent writer that already claimed index 0.
-    fake_table.items.append({
-        "session_id": sid, "sk": "TURN#0000", "turn_n": 0,
-        "input_tokens": 1, "output_tokens": 1, "latency_ms": 1,
-        "cache_read_input_tokens": 0, "cache_write_input_tokens": 0,
-    })
+    fake_table.items.append(
+        {
+            "session_id": sid,
+            "sk": "TURN#0000",
+            "turn_n": 0,
+            "input_tokens": 1,
+            "output_tokens": 1,
+            "latency_ms": 1,
+            "cache_read_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+        }
+    )
 
     real_next_index = store_dynamodb._next_index
     calls = {"n": 0}
@@ -556,8 +575,12 @@ def test_append_context_block_round_trips_content(fake_table):
     store_dynamodb.append_context_block(
         sid,
         {
-            "category": "system", "label": "System prompt", "char_count": 20,
-            "token_estimate": 5, "turn_n": None, "content": "You are a helpful assistant.",
+            "category": "system",
+            "label": "System prompt",
+            "char_count": 20,
+            "token_estimate": 5,
+            "turn_n": None,
+            "content": "You are a helpful assistant.",
         },
     )
     store_dynamodb.append_context_block(
@@ -576,9 +599,15 @@ def test_close_session_marks_status_and_applies_final_totals(fake_table):
     store_dynamodb.append_turn(sid, {"input_tokens": 10, "output_tokens": 5, "latency_ms": 50})
     assert store_dynamodb.get_session_metrics(sid)["session"]["status"] == "open"
 
-    store_dynamodb.close_session(sid, final_totals={
-        "input_tokens": 999, "output_tokens": 111, "total_tokens": 1110, "latency_ms": 5000,
-    })
+    store_dynamodb.close_session(
+        sid,
+        final_totals={
+            "input_tokens": 999,
+            "output_tokens": 111,
+            "total_tokens": 1110,
+            "latency_ms": 5000,
+        },
+    )
 
     metrics = store_dynamodb.get_session_metrics(sid)
     assert metrics["session"]["status"] == "closed"

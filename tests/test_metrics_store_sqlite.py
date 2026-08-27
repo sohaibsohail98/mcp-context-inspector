@@ -104,8 +104,13 @@ def test_get_session_metrics_shape_has_no_backend_internals(isolated_sqlite_db):
     assert set(metrics.keys()) == {"session", "prompt_metrics"}
     assert set(metrics["session"].keys()) == {"session_id", "model", "timestamp", "source", "status"}
     assert set(metrics["prompt_metrics"].keys()) == {
-        "prompt", "input_tokens", "output_tokens",
-        "total_tokens", "latency_ms", "tool_call_count", "estimated_cost",
+        "prompt",
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "latency_ms",
+        "tool_call_count",
+        "estimated_cost",
     }
 
 
@@ -149,9 +154,22 @@ def test_context_timeline_round_trip_and_cumulative_math(isolated_sqlite_db):
         "us.anthropic.claude-sonnet-4-6",
         _fake_loop_result(
             context_blocks=[
-                {"category": "system", "label": "System prompt", "char_count": 400, "token_estimate": 100, "turn_n": None},
+                {
+                    "category": "system",
+                    "label": "System prompt",
+                    "char_count": 400,
+                    "token_estimate": 100,
+                    "turn_n": None,
+                },
                 {"category": "user", "label": "User prompt", "char_count": 40, "token_estimate": 10, "turn_n": 0},
-                {"category": "tool_result", "label": "Tool result: list_services", "char_count": 200, "token_estimate": 50, "turn_n": 0, "status": "error"},
+                {
+                    "category": "tool_result",
+                    "label": "Tool result: list_services",
+                    "char_count": 200,
+                    "token_estimate": 50,
+                    "turn_n": 0,
+                    "status": "error",
+                },
             ]
         ),
     )
@@ -317,8 +335,12 @@ def test_append_context_block_round_trips_content(isolated_sqlite_db):
     store.append_context_block(
         sid,
         {
-            "category": "system", "label": "System prompt", "char_count": 20,
-            "token_estimate": 5, "turn_n": None, "content": "You are a helpful assistant.",
+            "category": "system",
+            "label": "System prompt",
+            "char_count": 20,
+            "token_estimate": 5,
+            "turn_n": None,
+            "content": "You are a helpful assistant.",
         },
     )
     store.append_context_block(
@@ -338,9 +360,15 @@ def test_close_session_marks_status_and_applies_final_totals(isolated_sqlite_db)
     store.append_turn(sid, {"input_tokens": 10, "output_tokens": 5, "latency_ms": 50})
     assert store.get_session_metrics(sid)["session"]["status"] == "open"
 
-    store.close_session(sid, final_totals={
-        "input_tokens": 999, "output_tokens": 111, "total_tokens": 1110, "latency_ms": 5000,
-    })
+    store.close_session(
+        sid,
+        final_totals={
+            "input_tokens": 999,
+            "output_tokens": 111,
+            "total_tokens": 1110,
+            "latency_ms": 5000,
+        },
+    )
 
     metrics = store.get_session_metrics(sid)
     assert metrics["session"]["status"] == "closed"
@@ -397,8 +425,12 @@ def test_recent_sessions_carries_cache_and_tool_error_aggregates(isolated_sqlite
     bulk fetch as everything else, no per-session follow-up."""
     store = isolated_sqlite_db
     session_id = store.start_or_get_session("sess-1", source="claude_code")
-    store.append_turn(session_id, {"input_tokens": 100, "output_tokens": 20, "latency_ms": 10, "cache_read_input_tokens": 300})
-    store.append_turn(session_id, {"input_tokens": 50, "output_tokens": 10, "latency_ms": 10, "cache_read_input_tokens": 0})
+    store.append_turn(
+        session_id, {"input_tokens": 100, "output_tokens": 20, "latency_ms": 10, "cache_read_input_tokens": 300}
+    )
+    store.append_turn(
+        session_id, {"input_tokens": 50, "output_tokens": 10, "latency_ms": 10, "cache_read_input_tokens": 0}
+    )
     store.append_tool_call(session_id, {"tool": "a", "args": {}, "status": "success"})
     store.append_tool_call(session_id, {"tool": "b", "args": {}, "status": "error"})
     store.append_tool_call(session_id, {"tool": "c", "args": {}, "status": "error"})
@@ -417,17 +449,13 @@ def test_pre_latency_tool_calls_table_migrates(isolated_sqlite_db):
     spec) has neither column, so it must migrate instead of crashing reads."""
     store = isolated_sqlite_db
     conn = sqlite3.connect(store.DB_PATH)
-    conn.execute(
-        "CREATE TABLE tool_calls (session_id TEXT, seq INTEGER, tool_name TEXT, args TEXT, status TEXT)"
-    )
+    conn.execute("CREATE TABLE tool_calls (session_id TEXT, seq INTEGER, tool_name TEXT, args TEXT, status TEXT)")
     conn.execute("INSERT INTO tool_calls VALUES ('s1', 0, 'list_services', '{}', 'ok')")
     conn.commit()
     conn.close()
 
     trace = store.get_agent_trace("s1")
-    assert trace == [
-        {"tool": "list_services", "args": {}, "status": "ok", "latency_ms": 0, "timestamp": 0}
-    ]
+    assert trace == [{"tool": "list_services", "args": {}, "status": "ok", "latency_ms": 0, "timestamp": 0}]
 
 
 def test_append_tool_call_carries_latency_and_timestamp(isolated_sqlite_db):

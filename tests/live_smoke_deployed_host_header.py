@@ -105,23 +105,29 @@ def main():
     print(f"HTTP {status}")
 
     if status == 421:
-        print("\n❌ FAIL: 421 Invalid Host header. This is exactly the bug "
-              "fixed in commit e73d299 (or a regression of it): the deployed "
-              "server's Host-header allowlist (MCP_ALLOWED_HOSTS) no longer "
-              "covers the real hostname this request arrived with.")
+        print(
+            "\n❌ FAIL: 421 Invalid Host header. This is exactly the bug "
+            "fixed in commit e73d299 (or a regression of it): the deployed "
+            "server's Host-header allowlist (MCP_ALLOWED_HOSTS) no longer "
+            "covers the real hostname this request arrived with."
+        )
         print(text)
         return 1
 
     if status == 401:
-        print("\n⚠️  401 unauthorized: MCP_LIVE_SMOKE_TOKEN was rejected "
-              "before ever reaching the Host-header check, so this run "
-              "proves nothing about the 421 bug. Supply a real, valid "
-              "token and re-run.")
+        print(
+            "\n⚠️  401 unauthorized: MCP_LIVE_SMOKE_TOKEN was rejected "
+            "before ever reaching the Host-header check, so this run "
+            "proves nothing about the 421 bug. Supply a real, valid "
+            "token and re-run."
+        )
         return 1
 
     if status >= 400:
-        print(f"\n❌ FAIL: unexpected error status {status} (not the 421 "
-              "this test targets, but not a clean success either).")
+        print(
+            f"\n❌ FAIL: unexpected error status {status} (not the 421 "
+            "this test targets, but not a clean success either)."
+        )
         print(text)
         return 1
 

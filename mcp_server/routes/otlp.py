@@ -15,7 +15,6 @@ from starlette.responses import JSONResponse
 from mcp_server import otlp
 from mcp_server.app import current_owner, server
 
-
 # Raw request/response bodies can legitimately be large (full source
 # files, long conversations), but with no cap at all a single POST can
 # force the server to buffer an unbounded amount of memory before any

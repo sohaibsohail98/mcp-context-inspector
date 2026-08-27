@@ -174,3 +174,181 @@ def test_revoke_oauth_token_does_not_touch_the_users_own_sign_in_token(isolated_
 def test_revoke_oauth_token_unknown_token_does_not_crash(isolated_auth_store):
     store = isolated_auth_store
     store.revoke_oauth_token("not-a-real-token")  # must not raise
+
+
+# --- Per-device / per-session tokens ---------------------------------
+
+CHROME_MAC = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+)
+FIREFOX_WIN = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0"
+CLI_UA = "claude-code/1.2.3"
+
+
+def test_device_token_mints_and_validates_with_a_label(isolated_auth_store):
+    store = isolated_auth_store
+    token = store.get_or_create_device_token("sub123", "a@example.com", CHROME_MAC)
+    assert store.is_valid_token(token)
+    assert store.get_sub_for_token(token) == "sub123"
+    devices = store.list_tokens("sub123")
+    assert len(devices) == 1
+    assert devices[0]["label"] == "Chrome on macOS"
+    assert devices[0]["token_id"] and token not in devices[0]["token_id"]
+
+
+def test_device_token_is_idempotent_per_user_agent(isolated_auth_store):
+    """Re-signing-in from the same browser returns the SAME token (so a
+    config already pasted elsewhere isn't invalidated), a different
+    User-Agent gets its own token and its own device-list row."""
+    store = isolated_auth_store
+    first = store.get_or_create_device_token("sub123", "a@example.com", CHROME_MAC)
+    again = store.get_or_create_device_token("sub123", "a@example.com", CHROME_MAC)
+    other = store.get_or_create_device_token("sub123", "a@example.com", FIREFOX_WIN)
+    assert first == again
+    assert other != first
+    assert len(store.list_tokens("sub123")) == 2
+
+
+def test_unknown_user_agent_labels_as_unknown_device(isolated_auth_store):
+    store = isolated_auth_store
+    store.get_or_create_device_token("sub123", "a@example.com", "")
+    assert store.list_tokens("sub123")[0]["label"] == "Unknown device"
+
+
+def test_list_tokens_marks_the_current_token(isolated_auth_store):
+    store = isolated_auth_store
+    laptop = store.get_or_create_device_token("sub123", "a@example.com", CHROME_MAC)
+    store.get_or_create_device_token("sub123", "a@example.com", FIREFOX_WIN)
+    rows = store.list_tokens("sub123", current_token=laptop)
+    current = [r for r in rows if r["is_current"]]
+    assert len(current) == 1
+    assert current[0]["label"] == "Chrome on macOS"
+
+
+def test_list_tokens_never_returns_a_raw_token(isolated_auth_store):
+    store = isolated_auth_store
+    token = store.get_or_create_device_token("sub123", "a@example.com", CLI_UA)
+    for row in store.list_tokens("sub123"):
+        assert token not in row.values()
+        assert "token" not in row
+
+
+def test_list_tokens_is_scoped_to_the_caller(isolated_auth_store):
+    store = isolated_auth_store
+    store.get_or_create_device_token("alice", "alice@example.com", CHROME_MAC)
+    store.get_or_create_device_token("bob", "bob@example.com", FIREFOX_WIN)
+    assert len(store.list_tokens("alice")) == 1
+    assert len(store.list_tokens("bob")) == 1
+
+
+def test_revoke_token_kills_exactly_one(isolated_auth_store):
+    """The core property: revoking one device leaves every other token
+    for that account still valid."""
+    store = isolated_auth_store
+    laptop = store.get_or_create_device_token("sub123", "a@example.com", CHROME_MAC)
+    work = store.get_or_create_device_token("sub123", "a@example.com", FIREFOX_WIN)
+    work_id = next(r["token_id"] for r in store.list_tokens("sub123", current_token=work) if r["is_current"])
+
+    store.revoke_token("sub123", work_id)
+
+    assert store.is_valid_token(work) is False
+    assert store.is_valid_token(laptop) is True
+    assert len(store.list_tokens("sub123")) == 1
+
+
+def test_revoke_token_cannot_touch_another_users_token(isolated_auth_store):
+    store = isolated_auth_store
+    alice_laptop = store.get_or_create_device_token("alice", "alice@example.com", CHROME_MAC)
+    bob_laptop = store.get_or_create_device_token("bob", "bob@example.com", FIREFOX_WIN)
+    bob_id = store.list_tokens("bob")[0]["token_id"]
+
+    # Alice passes Bob's token_id; scoped by google_sub, so it matches nothing.
+    store.revoke_token("alice", bob_id)
+
+    assert store.is_valid_token(bob_laptop) is True
+    assert store.is_valid_token(alice_laptop) is True
+
+
+def test_revoke_token_is_idempotent(isolated_auth_store):
+    store = isolated_auth_store
+    token = store.get_or_create_device_token("sub123", "a@example.com", CHROME_MAC)
+    token_id = store.list_tokens("sub123")[0]["token_id"]
+    assert store.revoke_token("sub123", token_id) is True
+    assert store.revoke_token("sub123", token_id) is False  # already gone, no error
+    assert store.revoke_token("sub123", "never-existed") is False
+    assert store.is_valid_token(token) is False
+
+
+def test_account_wide_revoke_nukes_every_device_and_oauth_token(isolated_auth_store):
+    store = isolated_auth_store
+    shared = store.get_or_create_token("sub123", "a@example.com")
+    laptop = store.get_or_create_device_token("sub123", "a@example.com", CHROME_MAC)
+    work = store.get_or_create_device_token("sub123", "a@example.com", FIREFOX_WIN)
+    connector = store.mint_oauth_token("sub123", "a@example.com", "claude.ai")
+
+    store.revoke("sub123")
+
+    for t in (shared, laptop, work, connector):
+        assert store.is_valid_token(t) is False
+    assert store.list_tokens("sub123") == []
+
+
+def test_oauth_token_shows_up_in_list_tokens_as_a_connector(isolated_auth_store):
+    store = isolated_auth_store
+    store.mint_oauth_token("sub123", "a@example.com", "claude.ai")
+    rows = store.list_tokens("sub123")
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "connector"
+    assert "claude.ai" in rows[0]["label"]
+
+
+def test_revoke_token_can_revoke_a_connector_session(isolated_auth_store):
+    store = isolated_auth_store
+    sign_in = store.get_or_create_device_token("sub123", "a@example.com", CHROME_MAC)
+    connector = store.mint_oauth_token("sub123", "a@example.com", "claude.ai")
+    connector_id = next(r["token_id"] for r in store.list_tokens("sub123") if r["kind"] == "connector")
+
+    store.revoke_token("sub123", connector_id)
+
+    assert store.is_valid_token(connector) is False
+    assert store.is_valid_token(sign_in) is True
+
+
+def test_touch_token_refreshes_last_seen_at_most_hourly(isolated_auth_store, monkeypatch):
+    store = isolated_auth_store
+    token = store.get_or_create_device_token("sub123", "a@example.com", CHROME_MAC)
+    first_seen = store.list_tokens("sub123")[0]["last_seen_at"]
+
+    # A touch within the hour is a no-op.
+    store.touch_token(token)
+    assert store.list_tokens("sub123")[0]["last_seen_at"] == first_seen
+
+    # Force the stored value to look old, then a touch must move it.
+    import time as _t
+
+    monkeypatch.setattr(_t, "time", lambda: first_seen + store.LAST_SEEN_REFRESH_SECONDS + 60)
+    store.touch_token(token)
+    assert store.list_tokens("sub123")[0]["last_seen_at"] > first_seen
+
+
+def test_touch_token_on_unknown_token_does_not_raise(isolated_auth_store):
+    isolated_auth_store.touch_token("not-a-real-token")
+
+
+def test_predate_metadata_oauth_token_still_valid_and_listed(isolated_auth_store):
+    """Migration: an oauth_tokens row written before the metadata columns
+    existed (no token_id/label) must still authenticate and still appear
+    in the device list, just as 'Unknown device' / unlabelled."""
+    store = isolated_auth_store
+    token = store.mint_oauth_token("sub123", "a@example.com", "old-client")
+    # Simulate the pre-migration shape by blanking the new columns.
+    conn = store._connect()
+    conn.execute("UPDATE oauth_tokens SET token_id=NULL, label=NULL, last_seen_at=NULL WHERE token=?", (token,))
+    conn.commit()
+    conn.close()
+
+    assert store.is_valid_token(token) is True
+    rows = store.list_tokens("sub123")
+    assert len(rows) == 1
+    assert rows[0]["token_id"] is None
+    assert rows[0]["label"]  # falls back to a client-name label, never blank

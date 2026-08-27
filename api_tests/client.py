@@ -13,7 +13,6 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 
-
 # urllib's default User-Agent ("Python-urllib/3.x") is blocked outright by
 # this deployment's Cloudflare-fronted WAF/bot-fight-mode (confirmed live,
 # 2026-08-25: same request via curl succeeds, via bare urllib returns 403

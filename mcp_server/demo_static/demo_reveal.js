@@ -223,21 +223,23 @@
       var fillWindowMs = full ? 4200 : 2800; // short cut trims the fill too, not just the beats after it
       fillBreakdown(ctx.segments, ctx.rows, state.targetWidths, fillWindowMs, function () {
         restoreAndCountKpis(ctx.kpis, state.kpiOriginals, fillWindowMs);
-        // Full: all three block kinds, generous read time on each. Short:
-        // just the two most illustrative ones (user prompt, tool result),
-        // dropping the reasoning beat rather than shortening all three
-        // equally, since a README gif is glanced at rather than watched
-        // attentively and benefits more from fewer beats than from the
-        // same beats rushed.
+        // All three beats live in turn 0, which stays near the top of the
+        // (now turn-grouped) list, so opening them never scrolls the
+        // recording away from the block it is pointing at. "Injected
+        // context" is the lead beat on purpose: a <system-reminder> the
+        // harness prepends to every request is the single most
+        // surprising line item for a first-time viewer, more than the
+        // user's own prompt. Short cut drops that beat rather than
+        // rushing all three, since a README gif is glanced at.
         var tour = full
           ? [
-              { label: "User prompt", hold: 2600 },
-              { label: "Tool result", hold: 2600 },
-              { label: "Reasoning", hold: 2200 },
+              { label: "Injected context", hold: 2600 },
+              { label: "User prompt", hold: 2400 },
+              { label: "Tool result: list_services", hold: 2400 },
             ]
           : [
               { label: "User prompt", hold: 1100 },
-              { label: "Tool result", hold: 1100 },
+              { label: "Tool result: list_services", hold: 1100 },
             ];
         var t = full ? 400 : 300; // settle beat before the tour starts
         tour.forEach(function (step) {
@@ -327,13 +329,19 @@
 
   function stageReveal() {
     var bar = document.querySelector(".ctx-bar");
-    var list = document.querySelector(".block-list");
+    // The dashboard groups blocks into collapsible <div class="turn-group">
+    // sections (id="ctx-block-list"), all but the newest collapsed by
+    // default. The recording wants the whole tour visible, so expand
+    // every group first, then collect the .block-row descendants in
+    // document order regardless of nesting.
+    var list = document.getElementById("ctx-block-list");
     if (!bar || !list) return;
+    Array.prototype.slice.call(list.querySelectorAll(".turn-group.collapsed")).forEach(function (g) {
+      g.classList.remove("collapsed");
+    });
 
     var segments = Array.prototype.slice.call(bar.children);
-    var rows = Array.prototype.slice.call(list.children).filter(function (el) {
-      return el.classList.contains("block-row");
-    });
+    var rows = Array.prototype.slice.call(list.querySelectorAll(".block-row"));
     if (!segments.length || !rows.length) return;
 
     // The brief names #kpi-tokens/#kpi-cache/#kpi-cost/#kpi-context, but
@@ -367,7 +375,7 @@
     return !!(content && content.classList.contains("active"));
   }
 
-  waitFor(".block-list .block-row", function () {
+  waitFor("#ctx-block-list .block-row", function () {
     function waitForActiveTab(attempts) {
       if (contextTabIsActive()) {
         // One more frame so layout has settled before capturing "real"

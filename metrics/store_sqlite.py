@@ -296,8 +296,7 @@ def get_tool_metrics(session_id=None, owner=None):
             conn.close()
             return []
         rows = conn.execute(
-            "SELECT tool_name, status, COUNT(*) as calls FROM tool_calls "
-            "WHERE session_id=? GROUP BY tool_name, status",
+            "SELECT tool_name, status, COUNT(*) as calls FROM tool_calls WHERE session_id=? GROUP BY tool_name, status",
             (session_id,),
         ).fetchall()
     elif owner is not None:
@@ -309,8 +308,7 @@ def get_tool_metrics(session_id=None, owner=None):
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT tool_name, status, COUNT(*) as calls FROM tool_calls "
-            "GROUP BY tool_name, status"
+            "SELECT tool_name, status, COUNT(*) as calls FROM tool_calls GROUP BY tool_name, status"
         ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
@@ -322,8 +320,7 @@ def get_agent_trace(session_id, owner=None):
         conn.close()
         return []
     rows = conn.execute(
-        "SELECT tool_name, args, status, latency_ms, timestamp FROM tool_calls "
-        "WHERE session_id=? ORDER BY seq",
+        "SELECT tool_name, args, status, latency_ms, timestamp FROM tool_calls WHERE session_id=? ORDER BY seq",
         (session_id,),
     ).fetchall()
     conn.close()
@@ -342,9 +339,7 @@ def get_agent_trace(session_id, owner=None):
 def get_cost_estimate(session_id=None, period_seconds=None, owner=None):
     conn = _connect()
     if session_id:
-        row = conn.execute(
-            "SELECT estimated_cost, owner FROM sessions WHERE session_id=?", (session_id,)
-        ).fetchone()
+        row = conn.execute("SELECT estimated_cost, owner FROM sessions WHERE session_id=?", (session_id,)).fetchone()
         conn.close()
         if not row or not _visible(row["owner"], owner):
             return None
@@ -543,9 +538,7 @@ def append_tool_call(session_id, tool_call, owner=None):
             tool_call.get("timestamp") or time.time(),
         ),
     )
-    conn.execute(
-        "UPDATE sessions SET tool_call_count=tool_call_count+1 WHERE session_id=?", (session_id,)
-    )
+    conn.execute("UPDATE sessions SET tool_call_count=tool_call_count+1 WHERE session_id=?", (session_id,))
     conn.commit()
     conn.close()
 
@@ -607,8 +600,7 @@ def close_session(session_id, final_totals=None, owner=None):
     _check_ownership_or_raise(conn, session_id, owner)
     if final_totals:
         conn.execute(
-            "UPDATE sessions SET input_tokens=?, output_tokens=?, total_tokens=?, latency_ms=? "
-            "WHERE session_id=?",
+            "UPDATE sessions SET input_tokens=?, output_tokens=?, total_tokens=?, latency_ms=? WHERE session_id=?",
             (
                 final_totals["input_tokens"],
                 final_totals["output_tokens"],

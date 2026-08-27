@@ -45,11 +45,13 @@ async def apply_local_config(request: Request):
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=409)
 
-    return JSONResponse({
-        "ok": True,
-        "path": written_path,
-        "backed_up_to": backed_up_to,
-    })
+    return JSONResponse(
+        {
+            "ok": True,
+            "path": written_path,
+            "backed_up_to": backed_up_to,
+        }
+    )
 
 
 @server.custom_route("/setup/local-script", methods=["GET"])
@@ -98,31 +100,68 @@ async def issue_install_code(request: Request):
     return JSONResponse({"code": code, "expires_in": local_setup.INSTALL_CODE_TTL_SECONDS})
 
 
+def _wants_powershell(request: Request):
+    """POSIX `sh` is the default. PowerShell is served when the caller
+    asks for it explicitly with `?os=windows` (or `?os=win|powershell|
+    pwsh`, or the older `?shell=pwsh`), or -- with no such param -- when
+    the User-Agent looks like Windows PowerShell's Invoke-RestMethod.
+    `curl` on Windows is indistinguishable from curl elsewhere, so the
+    UA sniff is only a fallback; an explicit param always wins."""
+    os_param = (request.query_params.get("os") or request.query_params.get("shell") or "").lower()
+    if os_param:
+        return os_param in ("windows", "win", "powershell", "pwsh")
+    ua = request.headers.get("user-agent", "").lower()
+    return "powershell" in ua or "windows nt" in ua
+
+
 @server.custom_route("/setup/install", methods=["GET"])
 async def setup_install(request: Request):
-    """The curl-able one-liner's target: `curl -fsSL .../setup/install?t=<code> | sh`.
+    """The curl-able / irm-able one-liner's target.
+
+    POSIX:    curl -fsSL .../setup/install?t=<code> | sh
+    Windows:  irm .../setup/install?os=windows&t=<code> | iex
+
     Exchanges the short-lived code minted by /setup/issue-install-code for
     the same settings.json merge /setup/local-script's downloaded script
-    performs, just delivered as `sh` instead of Python (see
-    local_setup.render_install_shell_script). No Authorization header
-    involved here at all: the code IS the credential for this one
-    exchange, since a piped curl command can't carry a bearer header the
-    way a browser fetch can."""
+    performs, delivered as `sh` or PowerShell (both shell out to the same
+    embedded `python -c` merge body, see local_setup). No Authorization
+    header involved here at all: the code IS the credential for this one
+    exchange, since a piped shell command can't carry a bearer header the
+    way a browser fetch can. `Cache-Control: no-store` so a proxy never
+    replays a spent code."""
     code = request.query_params.get("t")
+    want_powershell = _wants_powershell(request)
     if not code:
         return PlainTextResponse("missing install code. Copy the command again from the setup page.\n", status_code=400)
 
     try:
         bearer_token = auth_store.redeem_install_code(code)
     except ValueError as e:
+        if want_powershell:
+            return PlainTextResponse(
+                f"Write-Error 'mcp-context-inspector: {e}. Copy the install command again from the page.'\nexit 1\n",
+                status_code=400,
+                media_type="text/plain; charset=utf-8",
+                headers={"Cache-Control": "no-store"},
+            )
         return PlainTextResponse(
             f"echo 'mcp-context-inspector: {e}. Copy the install command again from the page.' >&2\nexit 1\n",
             status_code=400,
             media_type="text/x-shellscript",
+            headers={"Cache-Control": "no-store"},
         )
 
     base = _public_origin(request)
+    if want_powershell:
+        script = local_setup.render_install_powershell_script(base, bearer_token)
+        return PlainTextResponse(
+            script,
+            media_type="text/plain; charset=utf-8",
+            headers={"Cache-Control": "no-store"},
+        )
     script = local_setup.render_install_shell_script(base, bearer_token)
-    return PlainTextResponse(script, media_type="text/x-shellscript")
-
-
+    return PlainTextResponse(
+        script,
+        media_type="text/x-shellscript",
+        headers={"Cache-Control": "no-store"},
+    )

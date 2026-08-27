@@ -11,9 +11,10 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
-from mcp_server import local_setup, server as server_module
-from mcp_server.routes import auth as routes_auth
+from mcp_server import local_setup
+from mcp_server import server as server_module
 from mcp_server.auth.google import InvalidGoogleToken
+from mcp_server.routes import auth as routes_auth
 
 
 @pytest.fixture
@@ -139,6 +140,67 @@ def test_auth_verify_mints_token_for_valid_credential(client, monkeypatch, isola
     body = resp.json()
     assert body["email"] == "a@example.com"
     assert isolated_auth_store.is_valid_token(body["mcp_token"])
+
+
+def test_auth_verify_sets_persistent_session_cookie(client, monkeypatch, isolated_auth_store):
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
+    monkeypatch.setattr(
+        routes_auth, "verify_credential", lambda credential, client_id: {"sub": "sub123", "email": "a@example.com"}
+    )
+    resp = client.post("/auth/verify", json={"credential": "fake-jwt"})
+    assert resp.status_code == 200
+    setc = resp.headers.get("set-cookie", "")
+    assert "mci_session=" in setc
+    assert "HttpOnly" in setc
+    assert "Max-Age=7776000" in setc  # 90 days
+    assert "SameSite=lax" in setc.replace("Lax", "lax")
+
+
+def test_auth_session_rehydrates_from_cookie_without_google(client, monkeypatch, isolated_auth_store):
+    """After /auth/verify sets the cookie, GET /auth/session returns the
+    token + email with no credential -- the re-login-avoidance path."""
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
+    monkeypatch.setattr(
+        routes_auth, "verify_credential", lambda credential, client_id: {"sub": "sub123", "email": "a@example.com"}
+    )
+    verify = client.post("/auth/verify", json={"credential": "fake-jwt"})
+    minted = verify.json()["mcp_token"]
+
+    # TestClient carries the Set-Cookie forward on the shared cookie jar.
+    resp = client.get("/auth/session")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["mcp_token"] == minted
+    assert body["email"] == "a@example.com"
+
+
+def test_auth_session_401_without_cookie(client):
+    resp = client.get("/auth/session")
+    assert resp.status_code == 401
+
+
+def test_auth_logout_clears_the_session_cookie(client, monkeypatch, isolated_auth_store):
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
+    monkeypatch.setattr(
+        routes_auth, "verify_credential", lambda credential, client_id: {"sub": "sub123", "email": "a@example.com"}
+    )
+    client.post("/auth/verify", json={"credential": "fake-jwt"})
+    out = client.post("/auth/logout")
+    assert out.status_code == 200
+    assert 'mci_session=""' in out.headers.get("set-cookie", "") or "Max-Age=0" in out.headers.get("set-cookie", "")
+    # session is gone now
+    assert client.get("/auth/session").status_code == 401
+
+
+def test_auth_session_after_revoke_returns_401_and_drops_cookie(client, monkeypatch, isolated_auth_store):
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
+    monkeypatch.setattr(
+        routes_auth, "verify_credential", lambda credential, client_id: {"sub": "sub123", "email": "a@example.com"}
+    )
+    client.post("/auth/verify", json={"credential": "fake-jwt"})
+    isolated_auth_store.revoke("sub123")
+    resp = client.get("/auth/session")
+    assert resp.status_code == 401
 
 
 def test_auth_verify_is_unauthenticated_itself(client, monkeypatch):
@@ -296,9 +358,7 @@ def test_include_test_sessions_ignored_for_non_dev_mode_account(client, isolated
         headers={"Authorization": f"Bearer {token}"},
     )
 
-    sessions = client.get(
-        "/api/sessions?include_test_sessions=1", headers={"Authorization": f"Bearer {token}"}
-    ).json()
+    sessions = client.get("/api/sessions?include_test_sessions=1", headers={"Authorization": f"Bearer {token}"}).json()
     assert test_id not in {s["session_id"] for s in sessions}
 
 
@@ -397,7 +457,9 @@ def test_every_protected_route_rejects_garbage_token(client, method, path):
     MultiTokenAuthMiddleware's prefix match would otherwise ship
     silently open."""
     resp = client.request(
-        method, path, json={} if method == "POST" else None,
+        method,
+        path,
+        json={} if method == "POST" else None,
         headers={"Authorization": "Bearer complete-nonsense-token"},
     )
     assert resp.status_code == 401
@@ -509,9 +571,7 @@ def test_otlp_debug_recent_skipped_is_owner_scoped(client, isolated_auth_store):
             }
         ]
     }
-    client.post(
-        "/otlp/v1/logs", json=undetected_vendor_logs, headers={"Authorization": f"Bearer {alice_token}"}
-    )
+    client.post("/otlp/v1/logs", json=undetected_vendor_logs, headers={"Authorization": f"Bearer {alice_token}"})
 
     alice_debug = client.get("/otlp/debug", headers={"Authorization": f"Bearer {alice_token}"}).json()
     bob_debug = client.get("/otlp/debug", headers={"Authorization": f"Bearer {bob_token}"}).json()
@@ -585,11 +645,17 @@ def test_apply_local_config_merges_without_clobbering_existing_entries(loopback_
     """An existing, unrelated mcpServers entry and env var must survive,
     this route merges into the file, it never replaces it wholesale."""
     settings_path = tmp_path / "settings.json"
-    settings_path.write_text(json.dumps({
-        "effortLevel": "medium",
-        "mcpServers": {"lockin": {"url": "https://lockin.example/mcp", "headers": {"Authorization": "Bearer lin_x"}}},
-        "env": {"SOME_OTHER_VAR": "keep-me"},
-    }))
+    settings_path.write_text(
+        json.dumps(
+            {
+                "effortLevel": "medium",
+                "mcpServers": {
+                    "lockin": {"url": "https://lockin.example/mcp", "headers": {"Authorization": "Bearer lin_x"}}
+                },
+                "env": {"SOME_OTHER_VAR": "keep-me"},
+            }
+        )
+    )
     monkeypatch.setattr(local_setup, "SETTINGS_PATH", settings_path)
 
     resp = loopback_client.post("/setup/apply-local-config", headers={"Authorization": "Bearer owner-secret"})
@@ -691,9 +757,7 @@ def test_setup_install_rejects_invalid_code(client):
 
 
 def test_setup_install_exchanges_valid_code_for_a_shell_script(client):
-    code = client.post(
-        "/setup/issue-install-code", headers={"Authorization": "Bearer owner-secret"}
-    ).json()["code"]
+    code = client.post("/setup/issue-install-code", headers={"Authorization": "Bearer owner-secret"}).json()["code"]
 
     resp = client.get("/setup/install", params={"t": code})
     assert resp.status_code == 200
@@ -704,9 +768,7 @@ def test_setup_install_exchanges_valid_code_for_a_shell_script(client):
 
 
 def test_setup_install_code_is_single_use(client):
-    code = client.post(
-        "/setup/issue-install-code", headers={"Authorization": "Bearer owner-secret"}
-    ).json()["code"]
+    code = client.post("/setup/issue-install-code", headers={"Authorization": "Bearer owner-secret"}).json()["code"]
 
     first = client.get("/setup/install", params={"t": code})
     second = client.get("/setup/install", params={"t": code})
@@ -717,9 +779,7 @@ def test_setup_install_code_is_single_use(client):
 def test_setup_install_rejects_expired_code(client, monkeypatch, isolated_auth_store):
     from mcp_server.auth import store_sqlite
 
-    code = client.post(
-        "/setup/issue-install-code", headers={"Authorization": "Bearer owner-secret"}
-    ).json()["code"]
+    code = client.post("/setup/issue-install-code", headers={"Authorization": "Bearer owner-secret"}).json()["code"]
 
     # Simulate the "copied the command, got pulled away, pasted it 20
     # minutes later" case the plan explicitly calls out as the common
@@ -741,9 +801,7 @@ def test_setup_install_script_is_valid_posix_shell(client):
     (syntax-check only, no execution) against the real script."""
     import subprocess
 
-    code = client.post(
-        "/setup/issue-install-code", headers={"Authorization": "Bearer owner-secret"}
-    ).json()["code"]
+    code = client.post("/setup/issue-install-code", headers={"Authorization": "Bearer owner-secret"}).json()["code"]
     script = client.get("/setup/install", params={"t": code}).text
 
     result = subprocess.run(["sh", "-n"], input=script, capture_output=True, text=True)
@@ -803,9 +861,7 @@ def test_setup_install_script_execution_applies_same_patch_as_local_script(clien
     result."""
     import subprocess
 
-    code = client.post(
-        "/setup/issue-install-code", headers={"Authorization": "Bearer owner-secret"}
-    ).json()["code"]
+    code = client.post("/setup/issue-install-code", headers={"Authorization": "Bearer owner-secret"}).json()["code"]
     script = client.get("/setup/install", params={"t": code}).text
 
     script_path = tmp_path / "install.sh"
@@ -819,6 +875,91 @@ def test_setup_install_script_execution_applies_same_patch_as_local_script(clien
     assert written["mcpServers"]["context-inspector"]["headers"]["Authorization"] == "Bearer owner-secret"
     assert written["env"]["CLAUDE_CODE_ENABLE_TELEMETRY"] == "1"
     assert written["env"]["OTEL_RESOURCE_ATTRIBUTES"] == "service.name=claude-code"
+
+
+# --- /setup/install PowerShell variant (?os=windows) --------------------
+
+
+def test_setup_install_serves_powershell_for_os_windows(client):
+    code = client.post("/setup/issue-install-code", headers={"Authorization": "Bearer owner-secret"}).json()["code"]
+    resp = client.get("/setup/install", params={"t": code, "os": "windows"})
+    assert resp.status_code == 200
+    assert "owner-secret" in resp.text
+    assert "/mcp" in resp.text and "/otlp" in resp.text
+    assert "$env:MCP_INSTALL_BEARER_TOKEN" in resp.text
+    assert not resp.text.startswith("#!/bin/sh")
+    assert "text/plain" in resp.headers["content-type"]
+    assert resp.headers.get("cache-control") == "no-store"
+
+
+def test_setup_install_still_serves_sh_without_os_param(client):
+    code = client.post("/setup/issue-install-code", headers={"Authorization": "Bearer owner-secret"}).json()["code"]
+    resp = client.get("/setup/install", params={"t": code})
+    assert resp.status_code == 200
+    assert resp.text.startswith("#!/bin/sh")
+
+
+def test_setup_install_powershell_still_requires_a_valid_code(client):
+    resp = client.get("/setup/install", params={"t": "bogus", "os": "windows"})
+    assert resp.status_code == 400
+    assert "Write-Error" in resp.text  # PS-flavoured error, not `echo ... >&2`
+
+
+def test_setup_install_powershell_code_is_single_use(client):
+    code = client.post("/setup/issue-install-code", headers={"Authorization": "Bearer owner-secret"}).json()["code"]
+    first = client.get("/setup/install", params={"t": code, "os": "windows"})
+    second = client.get("/setup/install", params={"t": code, "os": "windows"})
+    assert first.status_code == 200
+    assert second.status_code == 400
+
+
+def test_setup_install_ua_sniff_defaults_powershell(client):
+    code = client.post("/setup/issue-install-code", headers={"Authorization": "Bearer owner-secret"}).json()["code"]
+    resp = client.get(
+        "/setup/install",
+        params={"t": code},
+        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0) WindowsPowerShell/5.1.19041.1"},
+    )
+    assert not resp.text.startswith("#!/bin/sh")
+    assert "$env:MCP_INSTALL_BEARER_TOKEN" in resp.text
+
+
+def test_setup_install_powershell_embedded_python_applies_same_patch(client, tmp_path, monkeypatch):
+    """The PowerShell script's embedded `python -c` body must perform the
+    identical settings.json merge as the sh installer (it is the same
+    body). Extract and run it directly (no PowerShell needed on CI)."""
+    import subprocess
+    import sys
+
+    code = client.post("/setup/issue-install-code", headers={"Authorization": "Bearer owner-secret"}).json()["code"]
+    script = client.get("/setup/install", params={"t": code, "os": "windows"}).text
+
+    body = script.split('& $py -c "', 1)[1].rsplit('\n"\n', 1)[0]
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setenv("MCP_INSTALL_BASE_URL", "https://ctxwindow.uk")
+    monkeypatch.setenv("MCP_INSTALL_BEARER_TOKEN", "owner-secret")
+    result = subprocess.run([sys.executable, "-c", body], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+    written = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+    assert written["mcpServers"]["context-inspector"]["url"] == "https://ctxwindow.uk/mcp"
+    assert written["mcpServers"]["context-inspector"]["headers"]["Authorization"] == "Bearer owner-secret"
+    assert written["env"]["CLAUDE_CODE_ENABLE_TELEMETRY"] == "1"
+
+    # idempotent: a second run backs up (merge, not overwrite) and leaves
+    # the same result
+    result2 = subprocess.run([sys.executable, "-c", body], capture_output=True, text=True)
+    assert result2.returncode == 0, result2.stderr
+    assert list((tmp_path / ".claude").glob("settings.json.bak-*"))
+
+
+def test_render_powershell_single_quote_escaping():
+    from mcp_server import local_setup
+
+    out = local_setup.render_install_powershell_script("https://x.uk", "a'b")
+    assert "'a''b'" in out  # PowerShell doubled-quote escaping
+    assert "https://x.uk" in out
 
 
 def test_local_script_execution_applies_same_patch_as_apply_local_config(client, tmp_path, monkeypatch):
@@ -843,3 +984,93 @@ def test_local_script_execution_applies_same_patch_as_apply_local_config(client,
     assert written["mcpServers"]["context-inspector"]["headers"]["Authorization"] == "Bearer owner-secret"
     assert written["env"]["CLAUDE_CODE_ENABLE_TELEMETRY"] == "1"
     assert written["env"]["CLAUDE_CODE_OTEL_CONTENT_MAX_LENGTH"] == "1048576"
+
+
+# --- /auth/devices and /auth/revoke-device ---------------------------
+
+
+def _sign_in(client, monkeypatch, sub="sub123", email="a@example.com"):
+    """Drive the real /auth/verify flow and return the minted per-device
+    token (TestClient sends a constant User-Agent, so this is stable)."""
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
+    monkeypatch.setattr(routes_auth, "verify_credential", lambda credential, client_id: {"sub": sub, "email": email})
+    resp = client.post("/auth/verify", json={"credential": "fake-jwt"})
+    assert resp.status_code == 200
+    return resp.json()["mcp_token"]
+
+
+def test_auth_devices_requires_a_valid_token(client):
+    assert client.get("/auth/devices").status_code == 401
+    assert client.get("/auth/devices", headers={"Authorization": "Bearer nope"}).status_code == 401
+
+
+def test_auth_devices_lists_the_callers_own_devices(client, monkeypatch, isolated_auth_store):
+    token = _sign_in(client, monkeypatch)
+    resp = client.get("/auth/devices", headers={"Authorization": "Bearer " + token})
+    assert resp.status_code == 200
+    devices = resp.json()["devices"]
+    assert len(devices) == 1
+    assert devices[0]["is_current"] is True
+    assert devices[0]["label"]  # some label, never blank
+    # never leaks the raw token
+    assert token not in str(devices)
+
+
+def test_auth_devices_only_shows_your_own(client, monkeypatch, isolated_auth_store):
+    alice_token = _sign_in(client, monkeypatch, sub="alice", email="alice@example.com")
+    # A second device for alice, minted directly with a different UA.
+    isolated_auth_store.get_or_create_device_token("alice", "alice@example.com", "curl/8.0")
+    isolated_auth_store.get_or_create_device_token("bob", "bob@example.com", "curl/8.0")
+
+    devices = client.get("/auth/devices", headers={"Authorization": "Bearer " + alice_token}).json()["devices"]
+    assert len(devices) == 2  # alice's two, not bob's
+
+
+def test_auth_revoke_device_requires_a_valid_token(client):
+    assert client.post("/auth/revoke-device", json={"token_id": "x"}).status_code == 401
+
+
+def test_auth_revoke_device_revokes_one_and_only_one(client, monkeypatch, isolated_auth_store):
+    current = _sign_in(client, monkeypatch)
+    other = isolated_auth_store.get_or_create_device_token("sub123", "a@example.com", "curl/8.0")
+    devices = client.get("/auth/devices", headers={"Authorization": "Bearer " + current}).json()["devices"]
+    other_id = next(d["token_id"] for d in devices if not d["is_current"])
+
+    resp = client.post(
+        "/auth/revoke-device",
+        headers={"Authorization": "Bearer " + current},
+        json={"token_id": other_id},
+    )
+    assert resp.status_code == 200
+    assert isolated_auth_store.is_valid_token(other) is False
+    assert isolated_auth_store.is_valid_token(current) is True
+
+
+def test_auth_revoke_device_cannot_revoke_another_users_token(client, monkeypatch, isolated_auth_store):
+    alice_token = _sign_in(client, monkeypatch, sub="alice", email="alice@example.com")
+    bob_device = isolated_auth_store.get_or_create_device_token("bob", "bob@example.com", "curl/8.0")
+    bob_id = isolated_auth_store.list_tokens("bob")[0]["token_id"]
+
+    resp = client.post(
+        "/auth/revoke-device",
+        headers={"Authorization": "Bearer " + alice_token},
+        json={"token_id": bob_id},
+    )
+    assert resp.status_code == 200  # scoped query matched nothing, still a clean 200
+    assert isolated_auth_store.is_valid_token(bob_device) is True
+
+
+def test_auth_revoke_device_is_idempotent(client, monkeypatch, isolated_auth_store):
+    token = _sign_in(client, monkeypatch)
+    dev_id = isolated_auth_store.list_tokens("sub123")[0]["token_id"]
+    first = client.post("/auth/revoke-device", headers={"Authorization": "Bearer " + token}, json={"token_id": dev_id})
+    # token is now revoked, so a second call authenticates with a dead token -> 401
+    assert first.status_code == 200
+    second = client.post("/auth/revoke-device", headers={"Authorization": "Bearer " + token}, json={"token_id": dev_id})
+    assert second.status_code == 401
+
+
+def test_auth_revoke_device_missing_token_id_is_a_400(client, monkeypatch, isolated_auth_store):
+    token = _sign_in(client, monkeypatch)
+    resp = client.post("/auth/revoke-device", headers={"Authorization": "Bearer " + token}, json={})
+    assert resp.status_code == 400

@@ -498,7 +498,9 @@ def test_register_rate_limit_is_per_ip(client):
         assert resp.status_code == 201
     # 1.1.1.1 is now exhausted...
     resp = client.post(
-        "/oauth/register", json={"redirect_uris": ["https://example.com/blocked"]}, headers={"CF-Connecting-IP": "1.1.1.1"}
+        "/oauth/register",
+        json={"redirect_uris": ["https://example.com/blocked"]},
+        headers={"CF-Connecting-IP": "1.1.1.1"},
     )
     assert resp.status_code == 429
     # ...but a different IP is unaffected.

@@ -3,9 +3,8 @@ a caller's own remote agent to push its own data in. All thin wrappers
 around metrics/store.py; importing this module is what registers them
 on the shared `server` instance from mcp_server.app."""
 
-from metrics import store
-
 from mcp_server.app import _log_tool_errors, current_owner, server
+from metrics import store
 
 
 @server.tool()

@@ -91,9 +91,7 @@ def _next_seq_transactional(transaction, subcollection_ref):
     descending key scans"), so every sequenced doc carries its own
     zero-padded ID *and* this plain integer field purely so this query has
     something descending-sortable to read."""
-    docs = list(
-        transaction.get(subcollection_ref.order_by("_seq", direction=firestore.Query.DESCENDING).limit(1))
-    )
+    docs = list(transaction.get(subcollection_ref.order_by("_seq", direction=firestore.Query.DESCENDING).limit(1)))
     return docs[0].get("_seq") + 1 if docs else 0
 
 
@@ -212,13 +210,7 @@ def get_token_breakdown(session_id, owner=None):
     client = _client()
     if not _visible(_session_owner(client, session_id), owner):
         return []
-    docs = (
-        _sessions(client)
-        .document(session_id)
-        .collection("turns")
-        .order_by("_seq")
-        .stream()
-    )
+    docs = _sessions(client).document(session_id).collection("turns").order_by("_seq").stream()
     result = []
     for d in docs:
         data = d.to_dict()
@@ -281,13 +273,7 @@ def get_agent_trace(session_id, owner=None):
     client = _client()
     if not _visible(_session_owner(client, session_id), owner):
         return []
-    docs = (
-        _sessions(client)
-        .document(session_id)
-        .collection("tool_calls")
-        .order_by("_seq")
-        .stream()
-    )
+    docs = _sessions(client).document(session_id).collection("tool_calls").order_by("_seq").stream()
     result = []
     for d in docs:
         data = d.to_dict()
@@ -334,13 +320,7 @@ def get_context_timeline(session_id, owner=None):
     client = _client()
     if not _visible(_session_owner(client, session_id), owner):
         return []
-    docs = (
-        _sessions(client)
-        .document(session_id)
-        .collection("context_blocks")
-        .order_by("_seq")
-        .stream()
-    )
+    docs = _sessions(client).document(session_id).collection("context_blocks").order_by("_seq").stream()
     rows = (
         {
             "category": data["category"],
@@ -509,9 +489,7 @@ def append_turn(session_id, turn_data, owner=None):
             {
                 "input_tokens": firestore.Increment(turn_data["input_tokens"]),
                 "output_tokens": firestore.Increment(turn_data["output_tokens"]),
-                "total_tokens": firestore.Increment(
-                    turn_data["input_tokens"] + turn_data["output_tokens"]
-                ),
+                "total_tokens": firestore.Increment(turn_data["input_tokens"] + turn_data["output_tokens"]),
                 "latency_ms": firestore.Increment(turn_data["latency_ms"]),
             },
         )

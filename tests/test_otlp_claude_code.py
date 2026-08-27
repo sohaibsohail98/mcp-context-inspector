@@ -340,8 +340,7 @@ def test_shape_shift_does_not_triple_user_message_blocks(isolated_sqlite_db):
             {
                 "role": "user",
                 "content": (
-                    "<system-reminder>\nSome injected context here.\n</system-reminder>\n\n"
-                    "What's the deploy process?"
+                    "<system-reminder>\nSome injected context here.\n</system-reminder>\n\nWhat's the deploy process?"
                 ),
             },
             {"role": "user", "content": "<session>\nWhat's the deploy process?\n</session>"},
@@ -360,14 +359,25 @@ def test_shape_shift_does_not_triple_user_message_blocks(isolated_sqlite_db):
     )
 
     timeline = store.get_context_timeline("sess-shape")
-    user_blocks = [b for b in timeline if b["category"] == "user"]
-    assert len(user_blocks) == 2
 
+    # No block, of any category, is stored twice: the dedup must still
+    # line up after split_injected_context reshapes the walked list.
     seen = set()
-    for b in user_blocks:
+    for b in timeline:
         key = (b["category"], b["label"], b["content"])
         assert key not in seen, f"duplicate block found: {key}"
         seen.add(key)
+
+    # The <session>-wrapped message is one `injected` block (the whole
+    # <session> span; see split_injected_context's documented mislabel).
+    # The <system-reminder>...\n\nWhat's the deploy process? message
+    # splits into an `injected` block + a `user` block for the real
+    # prompt. So: exactly one genuine `user` block, and it is the typed
+    # prompt with the reminder peeled off.
+    user_blocks = [b for b in timeline if b["category"] == "user"]
+    assert len(user_blocks) == 1
+    assert user_blocks[0]["content"] == "What's the deploy process?"
+    assert any(b["category"] == "injected" for b in timeline)
 
 
 def test_third_identical_resend_appends_nothing(isolated_sqlite_db):
@@ -378,7 +388,10 @@ def test_third_identical_resend_appends_nothing(isolated_sqlite_db):
 
     request_body = {
         "messages": [
-            {"role": "user", "content": "<system-reminder>\nSome injected context here.\n</system-reminder>\n\nWhat's the deploy process?"},
+            {
+                "role": "user",
+                "content": "<system-reminder>\nSome injected context here.\n</system-reminder>\n\nWhat's the deploy process?",
+            },
             {"role": "user", "content": "<session>\nWhat's the deploy process?\n</session>"},
         ],
     }
@@ -391,8 +404,14 @@ def test_third_identical_resend_appends_nothing(isolated_sqlite_db):
         )
 
     timeline = store.get_context_timeline("sess-idempotent")
+    # Resent unchanged: nothing new appended on the 2nd or 3rd pass. The
+    # first message splits to injected + user; the <session> message is
+    # one injected block. One genuine user block, the peeled prompt.
     user_blocks = [b for b in timeline if b["category"] == "user"]
-    assert len(user_blocks) == 2
+    assert len(user_blocks) == 1
+    assert user_blocks[0]["content"] == "What's the deploy process?"
+    injected_blocks = [b for b in timeline if b["category"] == "injected"]
+    assert len(injected_blocks) == 2
 
 
 def test_byte_identical_tool_results_in_same_request_are_both_stored(isolated_sqlite_db):
@@ -592,3 +611,139 @@ def test_nonzero_value_metric_still_creates_a_session(isolated_sqlite_db):
     claude_code.handle_metrics(RESOURCE_ATTRS, [_token_usage_metric("sess-real-metric", 42)], owner=None)
 
     assert store.get_session_metrics("sess-real-metric") is not None
+
+
+# --- harness-injected context split (split_injected_context wiring) ---
+
+
+def test_pure_injected_user_message_is_its_own_block(isolated_sqlite_db):
+    """A user-role message whose entire content is a <system-reminder>
+    wrapper (CLAUDE.md / env context injected by the harness, no typed
+    text) must be an `injected` block, not `user` -- it never counted
+    toward what the human actually asked."""
+    store = isolated_sqlite_db
+    request_body = {
+        "messages": [
+            {
+                "role": "user",
+                "content": "<system-reminder>\n# currentDate\nToday is 2026-08-27.\n</system-reminder>",
+            },
+        ],
+    }
+    claude_code.handle_logs(
+        RESOURCE_ATTRS,
+        [_log_record("api_request_body", request_body, session_id="sess-inj-only")],
+        owner=None,
+    )
+    timeline = store.get_context_timeline("sess-inj-only")
+    cats = [b["category"] for b in timeline]
+    assert cats == ["injected"]
+    assert timeline[0]["label"] == "Injected context"
+    assert not any(b["category"] == "user" for b in timeline)
+
+
+def test_injected_prefix_is_split_from_the_real_prompt(isolated_sqlite_db):
+    """<system-reminder>...</system-reminder>\\n\\n<typed prompt> in one
+    string splits into an `injected` block + a `user` block, byte-exact,
+    with the token estimate divided (not re-estimated) so the total is
+    unchanged."""
+    store = isolated_sqlite_db
+    reminder = "<system-reminder>\nCLAUDE.md: be terse.\n</system-reminder>"
+    prompt = "Refactor the OTLP mapper and add tests."
+    whole = reminder + "\n\n" + prompt
+    request_body = {"messages": [{"role": "user", "content": whole}]}
+    claude_code.handle_logs(
+        RESOURCE_ATTRS,
+        [_log_record("api_request_body", request_body, session_id="sess-inj-split")],
+        owner=None,
+    )
+    timeline = store.get_context_timeline("sess-inj-split")
+    inj = [b for b in timeline if b["category"] == "injected"]
+    usr = [b for b in timeline if b["category"] == "user"]
+    assert len(inj) == 1 and len(usr) == 1
+    # byte-exact: the two fragments concatenate back to the original
+    assert inj[0]["content"] + usr[0]["content"] == whole
+    # token estimate preserved (divided, not re-estimated)
+    from mcp_server.otlp.common import estimate_tokens
+
+    assert inj[0]["token_estimate"] + usr[0]["token_estimate"] == estimate_tokens(whole)
+    assert inj[0]["char_count"] + usr[0]["char_count"] == len(whole)
+
+
+def test_slash_command_block_is_command_category(isolated_sqlite_db):
+    """The <command-name>/<command-message>/<command-args> group is
+    `command`, not `user`."""
+    store = isolated_sqlite_db
+    cmd = (
+        "<command-name>/review</command-name>\n"
+        "            <command-message>review</command-message>\n"
+        "            <command-args>--fast</command-args>"
+    )
+    request_body = {"messages": [{"role": "user", "content": cmd}]}
+    claude_code.handle_logs(
+        RESOURCE_ATTRS,
+        [_log_record("api_request_body", request_body, session_id="sess-cmd")],
+        owner=None,
+    )
+    timeline = store.get_context_timeline("sess-cmd")
+    assert [b["category"] for b in timeline] == ["command"]
+    assert timeline[0]["label"] == "Slash command"
+
+
+def test_assistant_trailing_system_reminder_is_split_as_injected(isolated_sqlite_db):
+    """A <system-reminder> appended after the assistant's real answer
+    (the 'deferred tools are available' notice) splits into an `answer`
+    block + a trailing `injected` block, not one big `answer` block."""
+    store = isolated_sqlite_db
+    answer = "Here is the plan."
+    notice = "<system-reminder>\nThe following deferred tools are now available.\n</system-reminder>"
+    whole = answer + "\n\n" + notice
+    response_body = {
+        "content": [{"type": "text", "text": whole}],
+        "usage": {"input_tokens": 5, "output_tokens": 30},
+    }
+    claude_code.handle_logs(
+        RESOURCE_ATTRS,
+        [_log_record("api_response_body", response_body, session_id="sess-asst-trail")],
+        owner=None,
+    )
+    timeline = store.get_context_timeline("sess-asst-trail")
+    cats = [b["category"] for b in timeline]
+    assert cats == ["answer", "injected"]
+    assert timeline[0]["content"] + timeline[1]["content"] == whole
+
+
+def test_backticked_tag_mention_in_prose_is_not_reclassified(isolated_sqlite_db):
+    """A user message that merely *mentions* `<system-reminder>` mid
+    sentence stays a single `user` block -- the split is boundary
+    anchored, not a substring match."""
+    store = isolated_sqlite_db
+    text = "Why does the `<system-reminder>` block show up as a user message in the dashboard?"
+    request_body = {"messages": [{"role": "user", "content": text}]}
+    claude_code.handle_logs(
+        RESOURCE_ATTRS,
+        [_log_record("api_request_body", request_body, session_id="sess-mention")],
+        owner=None,
+    )
+    timeline = store.get_context_timeline("sess-mention")
+    assert [b["category"] for b in timeline] == ["user"]
+    assert timeline[0]["content"] == text
+
+
+def test_prompt_backfill_uses_the_peeled_prompt_not_the_reminder(isolated_sqlite_db):
+    """sessions.prompt must be backfilled from the real typed prompt,
+    not the <system-reminder> that was prepended to it. This is the
+    reported bug: the dashboard showed the reminder text as the prompt."""
+    store = isolated_sqlite_db
+    whole = (
+        "<system-reminder>\n# claudeMd\nContents of CLAUDE.md: be terse.\n</system-reminder>\n\n"
+        "Add per-device token revoke to the auth store."
+    )
+    request_body = {"messages": [{"role": "user", "content": whole}]}
+    claude_code.handle_logs(
+        RESOURCE_ATTRS,
+        [_log_record("api_request_body", request_body, session_id="sess-prompt-peel")],
+        owner=None,
+    )
+    metrics = store.get_session_metrics("sess-prompt-peel")
+    assert metrics["prompt_metrics"]["prompt"] == "Add per-device token revoke to the auth store."

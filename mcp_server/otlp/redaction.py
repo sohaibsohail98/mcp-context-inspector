@@ -30,9 +30,7 @@ _EMAIL_PATTERN = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 # `/home/` substring inside unrelated text (e.g. a URL path segment).
 # Stops at whitespace/quote/paren/angle-bracket so it grabs just the path,
 # not trailing prose.
-_HOME_PATH_PATTERN = re.compile(
-    r"(?<![\w/])/(?:Users|home)/[^/\s\"'()<>]+(?:/[^\s\"'()<>]*)?"
-)
+_HOME_PATH_PATTERN = re.compile(r"(?<![\w/])/(?:Users|home)/[^/\s\"'()<>]+(?:/[^\s\"'()<>]*)?")
 
 _EMAIL_PLACEHOLDER = "[redacted-email]"
 _HOME_PATH_PLACEHOLDER = "[redacted-path]"

@@ -21,6 +21,4 @@ DEFAULT_PRICING = {"input": 0.003, "output": 0.015}
 
 def estimate_cost(model_id, input_tokens, output_tokens):
     rates = PRICING.get(model_id, DEFAULT_PRICING)
-    return round(
-        (input_tokens / 1000) * rates["input"] + (output_tokens / 1000) * rates["output"], 6
-    )
+    return round((input_tokens / 1000) * rates["input"] + (output_tokens / 1000) * rates["output"], 6)

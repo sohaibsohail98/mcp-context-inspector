@@ -96,7 +96,10 @@ REVEAL_MODE_HOLD_MS = {
 # demo_terminal.html's own per-character delay via the ?speed= param.
 TERMINAL_MS_PER_CHAR = {
     ("guided_tour", "full"): 24,
-    ("guided_tour", "short"): 16,  # the short cut is glanced at, not read closely, so the opening typing beat can move faster
+    (
+        "guided_tour",
+        "short",
+    ): 16,  # the short cut is glanced at, not read closely, so the opening typing beat can move faster
     ("cost_reveal", "full"): 20,  # quickest typing: this take is the most numbers-first, wants to get to the KPIs fast
     ("surprise", "full"): 28,
     ("multi_turn", "full"): 24,
@@ -146,10 +149,7 @@ async def capture(server_url, out_dir, headless=True, reveal_mode="guided_tour",
         # satisfied by the terminal chrome rather than the dashboard).
         terminal_page = await context.new_page()
         ms_per_char = TERMINAL_MS_PER_CHAR[(reveal_mode, cut)]
-        terminal_url = (
-            f"{server_url}/demo-static/demo_terminal.html"
-            f"?prompt={quote(prompt)}&speed={ms_per_char}"
-        )
+        terminal_url = f"{server_url}/demo-static/demo_terminal.html?prompt={quote(prompt)}&speed={ms_per_char}"
         await terminal_page.goto(terminal_url, wait_until="networkidle")
         await terminal_page.evaluate("document.fonts.ready")
         # Waits on the page's own typing promise rather than a fixed
@@ -164,7 +164,9 @@ async def capture(server_url, out_dir, headless=True, reveal_mode="guided_tour",
         # simulated with a CSS transition on one page.
         dashboard_page = await context.new_page()
         recording_started_at = time.monotonic()
-        await dashboard_page.goto(f"{server_url}/auth/login?demo=1&reveal={reveal_mode}&cut={cut}", wait_until="networkidle")
+        await dashboard_page.goto(
+            f"{server_url}/auth/login?demo=1&reveal={reveal_mode}&cut={cut}", wait_until="networkidle"
+        )
         await dashboard_page.evaluate("document.fonts.ready")
         # demo_transition.js has already painted a full-screen overlay in
         # the shared background colour by this point (it runs inline,
@@ -212,6 +214,30 @@ async def capture(server_url, out_dir, headless=True, reveal_mode="guided_tour",
         context_tab = dashboard_page.locator('.tab[data-tab="context"]')
         await context_tab.click()
 
+        # The dashboard now groups blocks into collapsible turn sections
+        # (id="ctx-block-list"). Bring the first real turn near the top of
+        # the panel and drop the legend/filter-actions row out of frame
+        # so the zoomed recording lands on the blocks themselves, not on
+        # "Context blocks" / the ALL / NONE controls.
+        await dashboard_page.evaluate(
+            """() => {
+                const list = document.getElementById('ctx-block-list');
+                const groups = [...(list?.querySelectorAll('.turn-group') || [])];
+                // Keep the pre-conversation group and turn 0 expanded (the
+                // guided tour opens injected / user prompt / first tool
+                // result, all in turn 0); collapse every later turn so the
+                // whole tour sits in one screenful and the reveal never
+                // scrolls away from the row it is pointing at.
+                groups.forEach((g, i) => g.classList.toggle('collapsed', i >= 2));
+                // Drop the legend/filter row out of frame for the zoomed shot.
+                const legend = document.querySelector('.tab-content.active[data-content="context"] .ctx-legend');
+                if (legend) legend.style.display = 'none';
+                // Pin turn 0's heading just under the panel top.
+                (groups[1] || list)?.scrollIntoView({ block: 'start' });
+            }"""
+        )
+        await dashboard_page.wait_for_timeout(200)
+
         # Zoom to the block list so the breakdown is the visual focus for
         # the remainder of the recording; a CSS transform on a wrapper,
         # not an ffmpeg crop, so it stays in this one recording pass.
@@ -225,8 +251,8 @@ async def capture(server_url, out_dir, headless=True, reveal_mode="guided_tour",
                 // panel settling into place) only decelerates, it does
                 // not also visibly accelerate out of rest first.
                 panel.style.transition = 'transform 600ms cubic-bezier(0.16, 1, 0.3, 1)';
-                panel.style.transformOrigin = 'center 60%';
-                panel.style.transform = 'scale(1.35)';
+                panel.style.transformOrigin = 'center 40%';
+                panel.style.transform = 'scale(1.2)';
             }"""
         )
 
@@ -244,7 +270,9 @@ async def capture(server_url, out_dir, headless=True, reveal_mode="guided_tour",
     # recording is always the longer one) rather than assumed sorted.
     recorded = sorted(video_dir.glob("*.webm"), key=lambda f: f.stat().st_size)
     if len(recorded) != 2:
-        raise RuntimeError(f"expected exactly two recorded videos (terminal, dashboard) in {video_dir}, found {len(recorded)}")
+        raise RuntimeError(
+            f"expected exactly two recorded videos (terminal, dashboard) in {video_dir}, found {len(recorded)}"
+        )
     terminal_video, dashboard_video = recorded[0], recorded[1]
     return terminal_video, dashboard_video, trim_start_seconds
 

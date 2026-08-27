@@ -41,10 +41,11 @@ Still unverified (no tool call happened in the captured session):
 import json
 from collections import Counter
 
-from metrics import store
-from metrics.errors import SessionOwnershipError
 from mcp_server.otlp.common import (
     CATEGORY_ANSWER,
+    CATEGORY_COMMAND,
+    CATEGORY_INJECTED,
+    CATEGORY_LABELS,
     CATEGORY_REASONING,
     CATEGORY_SYSTEM,
     CATEGORY_TOOL_CALL,
@@ -52,10 +53,15 @@ from mcp_server.otlp.common import (
     CATEGORY_TOOLS,
     CATEGORY_USER,
     attrs_list_to_dict,
+    distribute_int,
+    distribute_token_estimate,
     estimate_tokens,
+    split_injected_context,
     truncate_content,
 )
 from mcp_server.otlp.redaction import redact
+from metrics import store
+from metrics.errors import SessionOwnershipError
 
 # Narrow, deliberate exception set for per-record try/except in the batch
 # loops below: KeyError/TypeError cover malformed/missing dict shape,
@@ -97,10 +103,57 @@ def _mk_block(category, label, text, turn_n, status=None, capture_content=True):
     }
 
 
+# turn_n is intentionally NOT part of a block's dedup identity (see
+# _block_identity), so a split fragment inherits the parent message's
+# turn_n unchanged and dedup still lines up between a live-walked block
+# list and one rebuilt from storage.
+_TEXT_BLOCK_LABELS = {
+    CATEGORY_USER: "User message",
+    CATEGORY_ANSWER: "Assistant response",
+    CATEGORY_INJECTED: CATEGORY_LABELS[CATEGORY_INJECTED],
+    CATEGORY_COMMAND: CATEGORY_LABELS[CATEGORY_COMMAND],
+}
+
+
 def _mk_text_block(role, text, turn_n):
-    if role == "user":
-        return _mk_block(CATEGORY_USER, "User message", text, turn_n)
-    return _mk_block(CATEGORY_ANSWER, "Assistant response", text, turn_n)
+    """Returns a LIST of blocks (usually one). Claude Code prepends
+    harness-injected context (<system-reminder> with CLAUDE.md/memory/
+    date, <command-*> slash-command machinery, <fork-boilerplate>, ...)
+    to a message's real text inside one string. split_injected_context
+    peels a boundary-anchored leading run (or an assistant-side trailing
+    <system-reminder>) off as its own `injected`/`command` block so it no
+    longer inflates the user's / assistant's share of the context window
+    (and so the first genuine `user` block, not a reminder, backfills
+    sessions.prompt). The peeled fragments are byte-exact adjacent slices
+    of the original; per-fragment token_estimate/char_count are the
+    original whole re-divided proportionally (never re-estimated), so a
+    session's totals and the dashboard's cumulative_pct are identical
+    whether it was live-ingested or run through the reclassification
+    migration."""
+    base_category = CATEGORY_USER if role == "user" else CATEGORY_ANSWER
+    text = text or ""
+    frags = split_injected_context(text, base_category)
+    if not frags:
+        return [_mk_block(base_category, _TEXT_BLOCK_LABELS[base_category], text, turn_n)]
+    if len(frags) == 1:
+        # One fragment, but it may still be reclassified: a message whose
+        # ENTIRE content is a wrapper run (e.g. a standalone
+        # <system-reminder> or <session> block) comes back as a single
+        # `injected`/`command` fragment, not `user`/`answer`.
+        frag_text, frag_category = frags[0]
+        return [_mk_block(frag_category, _TEXT_BLOCK_LABELS[frag_category], frag_text, turn_n)]
+
+    char_counts = [len(f) for f, _ in frags]
+    whole_tokens = estimate_tokens(text)
+    tok_split = distribute_token_estimate(char_counts, whole_tokens)
+    cc_split = distribute_int(char_counts, len(text))
+    blocks = []
+    for (frag_text, frag_category), tok, cc in zip(frags, tok_split, cc_split, strict=True):
+        block = _mk_block(frag_category, _TEXT_BLOCK_LABELS[frag_category], frag_text, turn_n)
+        block["token_estimate"] = tok
+        block["char_count"] = cc
+        blocks.append(block)
+    return blocks
 
 
 def _mk_tool_use_block(item, turn_n):
@@ -161,14 +214,14 @@ def _blocks_from_message(msg, turn_n):
     content = msg.get("content")
     blocks = []
     if isinstance(content, str):
-        blocks.append(_mk_text_block(role, content, turn_n))
+        blocks.extend(_mk_text_block(role, content, turn_n))
     elif isinstance(content, list):
         for item in content:
             if not isinstance(item, dict):
                 continue
             item_type = item.get("type")
             if item_type == "text":
-                blocks.append(_mk_text_block(role, item.get("text", ""), turn_n))
+                blocks.extend(_mk_text_block(role, item.get("text", ""), turn_n))
             elif item_type == "tool_use":
                 blocks.append(_mk_tool_use_block(item, turn_n))
             elif item_type == "tool_result":
@@ -195,9 +248,7 @@ def _is_genuine_user_turn(msg):
     if isinstance(content, str):
         return bool(content)
     if isinstance(content, list):
-        return any(
-            isinstance(item, dict) and item.get("type") != "tool_result" for item in content
-        )
+        return any(isinstance(item, dict) and item.get("type") != "tool_result" for item in content)
     return False
 
 
@@ -285,6 +336,26 @@ def _block_identity(block):
     return (block.get("category"), block.get("label"), block.get("content") or "")
 
 
+def _split_stored_block_identity(block):
+    """Yield the _block_identity of each fragment a stored block would
+    split into under split_injected_context, so the dedup below lines up
+    even against blocks written before the split logic existed (and not
+    yet rewritten by scripts/migrate_reclassify_injected.py). A block
+    already stored in split form, or one with no peelable wrapper, yields
+    its own single identity unchanged."""
+    category = block.get("category")
+    content = block.get("content") or ""
+    if category not in (CATEGORY_USER, CATEGORY_ANSWER) or not content:
+        yield _block_identity(block)
+        return
+    frags = split_injected_context(content, category)
+    if len(frags) <= 1:
+        yield _block_identity(block)
+        return
+    for frag_text, frag_category in frags:
+        yield (frag_category, _TEXT_BLOCK_LABELS[frag_category], frag_text)
+
+
 def _handle_request_body(session_id, attrs, owner):
     body = _parse_body(attrs)
     if not isinstance(body, dict):
@@ -304,7 +375,13 @@ def _handle_request_body(session_id, attrs, owner):
     # That skips a block whose position merely shifted, while still
     # admitting genuine repeats (e.g. two byte-identical "OK" tool
     # results) beyond what's already stored.
-    existing_counts = Counter(_block_identity(b) for b in existing)
+    #
+    # `existing` is normalised through the same split, so a session that
+    # still has pre-split user/answer blocks stored (deploy happened
+    # before its migration run) doesn't re-append every reminder as a
+    # duplicate: the old blob's fragment identities are what fresh_blocks
+    # now carries.
+    existing_counts = Counter(ident for b in existing for ident in _split_stored_block_identity(b))
     seen_counts = Counter()
     for block in fresh_blocks:
         identity = _block_identity(block)

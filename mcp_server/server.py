@@ -21,20 +21,20 @@ import os
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.middleware.cors import CORSMiddleware
 
+# Importing the `tools` and `routes.*` modules below registers their
+# @server.tool()/@server.custom_route() handlers. Side-effect imports;
+# order doesn't matter between them.
+from mcp_server import tools  # noqa: F401,E402
 from mcp_server.app import server  # noqa: F401 (re-exported for tests/other modules)
 from mcp_server.middleware import MultiTokenAuthMiddleware, OAuthCORSMiddleware
-
-# Importing these registers their @server.tool()/@server.custom_route()
-# handlers. Side-effect imports; order doesn't matter between them.
-from mcp_server import tools  # noqa: F401,E402
 from mcp_server.routes import api as routes_api  # noqa: F401,E402
-from mcp_server.routes import otlp as routes_otlp  # noqa: F401,E402
 from mcp_server.routes import auth as routes_auth  # noqa: F401,E402
+from mcp_server.routes import demo as routes_demo  # noqa: F401,E402
+from mcp_server.routes import docs as routes_docs  # noqa: F401,E402
 from mcp_server.routes import oauth as routes_oauth  # noqa: F401,E402
+from mcp_server.routes import otlp as routes_otlp  # noqa: F401,E402
 from mcp_server.routes import setup as routes_setup  # noqa: F401,E402
 from mcp_server.routes import webapp as routes_webapp  # noqa: F401,E402
-from mcp_server.routes import docs as routes_docs  # noqa: F401,E402
-from mcp_server.routes import demo as routes_demo  # noqa: F401,E402
 
 
 def _maybe_seed_demo_db(demo_seed_src, target_path):
@@ -84,9 +84,7 @@ if __name__ == "__main__":
     if not mcp_auth_token:
         mcp_auth_token = secrets.token_urlsafe(24)
         print(
-            "\n─── No MCP_AUTH_TOKEN set, generated one for this run "
-            + "─" * 10
-            + f"\n\n    {mcp_auth_token}\n\n"
+            "\n─── No MCP_AUTH_TOKEN set, generated one for this run " + "─" * 10 + f"\n\n    {mcp_auth_token}\n\n"
             "This is YOUR (owner) token. Paste it into your MCP-config-based "
             "client (Claude Code, curl) to authenticate. The chat "
             "UI's own MCP panel uses Google sign-in instead, not this token.\n",
@@ -103,7 +101,9 @@ if __name__ == "__main__":
         # JavaScript origin. Console setup (README) uses localhost too.
         print(f"Google sign-in enabled. Friends can get their own token at http://localhost:{server_port}/auth/login\n")
     else:
-        print("GOOGLE_OAUTH_CLIENT_ID not set: /auth/login will report sign-in as unavailable; only the owner token above works.\n")
+        print(
+            "GOOGLE_OAUTH_CLIENT_ID not set: /auth/login will report sign-in as unavailable; only the owner token above works.\n"
+        )
 
     # server.run(transport="streamable-http") doesn't expose the
     # underlying Starlette app for CORS configuration, and a browser-side

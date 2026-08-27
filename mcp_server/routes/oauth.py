@@ -38,8 +38,8 @@ from urllib.parse import urlencode, urlparse
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
-from mcp_server.auth import store as auth_store
 from mcp_server.app import current_owner, server
+from mcp_server.auth import store as auth_store
 from mcp_server.auth.google import InvalidGoogleToken, verify_credential
 from mcp_server.middleware import _public_origin
 from mcp_server.routes.auth import _PAGE_STYLE
@@ -113,7 +113,9 @@ def _mcp_resource_url(request):
     return _public_origin(request) + "/mcp"
 
 
-def _validate_oauth_request(client_id, redirect_uri, code_challenge, code_challenge_method, resource, request, state=None):
+def _validate_oauth_request(
+    client_id, redirect_uri, code_challenge, code_challenge_method, resource, request, state=None
+):
     """Shared validation for both the GET (initial request) and POST
     (post-Google-sign-in completion) halves of /oauth/authorize. Raises
     ValueError with a message safe to show the caller; returns
@@ -180,11 +182,13 @@ async def oauth_protected_resource_metadata(request: Request):
     if request.method == "OPTIONS":
         return _oauth_cors_json({})
     origin = _public_origin(request)
-    return _oauth_cors_json({
-        "resource": _mcp_resource_url(request),
-        "authorization_servers": [origin],
-        "bearer_methods_supported": ["header"],
-    })
+    return _oauth_cors_json(
+        {
+            "resource": _mcp_resource_url(request),
+            "authorization_servers": [origin],
+            "bearer_methods_supported": ["header"],
+        }
+    )
 
 
 @server.custom_route("/.well-known/oauth-authorization-server", methods=["GET", "OPTIONS"])
@@ -194,17 +198,19 @@ async def oauth_authorization_server_metadata(request: Request):
     if request.method == "OPTIONS":
         return _oauth_cors_json({})
     origin = _public_origin(request)
-    return _oauth_cors_json({
-        "issuer": origin,
-        "authorization_endpoint": origin + "/oauth/authorize",
-        "token_endpoint": origin + "/oauth/token",
-        "registration_endpoint": origin + "/oauth/register",
-        "response_types_supported": ["code"],
-        "grant_types_supported": ["authorization_code"],
-        "code_challenge_methods_supported": ["S256"],
-        "token_endpoint_auth_methods_supported": ["none"],
-        "scopes_supported": ["mcp"],
-    })
+    return _oauth_cors_json(
+        {
+            "issuer": origin,
+            "authorization_endpoint": origin + "/oauth/authorize",
+            "token_endpoint": origin + "/oauth/token",
+            "registration_endpoint": origin + "/oauth/register",
+            "response_types_supported": ["code"],
+            "grant_types_supported": ["authorization_code"],
+            "code_challenge_methods_supported": ["S256"],
+            "token_endpoint_auth_methods_supported": ["none"],
+            "scopes_supported": ["mcp"],
+        }
+    )
 
 
 @server.custom_route("/oauth/register", methods=["POST", "OPTIONS"])
@@ -217,7 +223,10 @@ async def oauth_register(request: Request):
         return _oauth_cors_json({})
     if _register_rate_limited(request):
         return _oauth_cors_json(
-            {"error": "invalid_client_metadata", "error_description": "too many registration attempts, try again later"},
+            {
+                "error": "invalid_client_metadata",
+                "error_description": "too many registration attempts, try again later",
+            },
             429,
         )
     try:
@@ -287,13 +296,15 @@ async def oauth_authorize_page(request: Request):
     # spoofed without also controlling that domain, so it's the signal
     # worth a user's attention, not the name.
     redirect_host = urlparse(q.get("redirect_uri")).netloc
-    oauth_params_json = _json_for_script({
-        "client_id": client["client_id"],
-        "redirect_uri": q.get("redirect_uri"),
-        "code_challenge": q.get("code_challenge"),
-        "state": q.get("state"),
-        "resource": resource,
-    })
+    oauth_params_json = _json_for_script(
+        {
+            "client_id": client["client_id"],
+            "redirect_uri": q.get("redirect_uri"),
+            "code_challenge": q.get("code_challenge"),
+            "state": q.get("state"),
+            "resource": resource,
+        }
+    )
     return HTMLResponse(f"""<!doctype html>
 <html><head><title>Authorize &middot; ctxwindow</title>
 <style>{_PAGE_STYLE}</style>
@@ -346,7 +357,9 @@ async def oauth_authorize_complete(request: Request):
     a one-time authorization code the client exchanges at /oauth/token."""
     google_client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID")
     if not google_client_id:
-        return JSONResponse({"error": "server_error", "error_description": "GOOGLE_OAUTH_CLIENT_ID not configured"}, status_code=503)
+        return JSONResponse(
+            {"error": "server_error", "error_description": "GOOGLE_OAUTH_CLIENT_ID not configured"}, status_code=503
+        )
 
     try:
         body = await request.json()
@@ -375,7 +388,9 @@ async def oauth_authorize_complete(request: Request):
     try:
         identity = verify_credential(credential, google_client_id)
     except InvalidGoogleToken as e:
-        return JSONResponse({"error": "access_denied", "error_description": f"invalid Google credential: {e}"}, status_code=401)
+        return JSONResponse(
+            {"error": "access_denied", "error_description": f"invalid Google credential: {e}"}, status_code=401
+        )
 
     code = auth_store.issue_oauth_code(
         client["client_id"],
@@ -421,18 +436,22 @@ async def oauth_token(request: Request):
 
     client = auth_store.get_oauth_client(client_id)
     client_name = (client or {}).get("client_name") or "OAuth client"
-    token = auth_store.mint_oauth_token(google_sub, email, client_name)
-    return _oauth_cors_json({
-        "access_token": token,
-        "token_type": "Bearer",
-        # This server's bearer tokens don't actually expire (see
-        # auth_store), a large-but-finite value here rather than
-        # omitting the field, since some clients treat a missing
-        # expires_in as "unknown, refresh soon" rather than "doesn't
-        # expire."
-        "expires_in": 60 * 60 * 24 * 365,
-        "scope": "mcp",
-    })
+    token = auth_store.mint_oauth_token(
+        google_sub, email, client_name, user_agent=request.headers.get("user-agent", "")
+    )
+    return _oauth_cors_json(
+        {
+            "access_token": token,
+            "token_type": "Bearer",
+            # This server's bearer tokens don't actually expire (see
+            # auth_store), a large-but-finite value here rather than
+            # omitting the field, since some clients treat a missing
+            # expires_in as "unknown, refresh soon" rather than "doesn't
+            # expire."
+            "expires_in": 60 * 60 * 24 * 365,
+            "scope": "mcp",
+        }
+    )
 
 
 def _require_owner(request):
@@ -480,5 +499,3 @@ async def api_revoke_oauth_token(request: Request):
         return JSONResponse({"error": "owner token required"}, status_code=403)
     auth_store.revoke_oauth_token(request.path_params["token_prefix"])
     return JSONResponse({"ok": True})
-
-

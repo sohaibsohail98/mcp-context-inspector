@@ -56,19 +56,25 @@ exists):
 
 import json
 
-from metrics import store
-from metrics.errors import SessionOwnershipError
 from mcp_server.otlp.common import (
     CATEGORY_ANSWER,
+    CATEGORY_COMMAND,
+    CATEGORY_INJECTED,
+    CATEGORY_LABELS,
     CATEGORY_REASONING,
     CATEGORY_SYSTEM,
     CATEGORY_TOOL_CALL,
     CATEGORY_TOOL_RESULT,
     CATEGORY_USER,
     attrs_list_to_dict,
+    distribute_int,
+    distribute_token_estimate,
     estimate_tokens,
+    split_injected_context,
     truncate_content,
 )
+from metrics import store
+from metrics.errors import SessionOwnershipError
 
 _SESSION_ID_ATTR_CANDIDATES = ("session.id", "gen_ai.conversation.id", "conversation.id")
 _INPUT_TOKEN_ATTR_CANDIDATES = ("gen_ai.usage.input_tokens", "gen_ai.usage.prompt_tokens")
@@ -154,9 +160,7 @@ def handle_traces(resource_attrs, spans, owner):
         if trace_id in trace_session:
             return trace_session[trace_id]
         session_id = _resolve_session_id(span_attrs, resource_attrs, trace_id)
-        store.start_or_get_session(
-            session_id, owner=owner, source="copilot", model=trace_model.get(trace_id)
-        )
+        store.start_or_get_session(session_id, owner=owner, source="copilot", model=trace_model.get(trace_id))
         trace_session[trace_id] = session_id
         return session_id
 
@@ -235,17 +239,13 @@ def _handle_chat_span(span, span_attrs, session_id, owner):
     )
 
     event_attr_dicts = [
-        attrs_list_to_dict(ev.get("attributes", []))
-        for ev in (span.get("events") or [])
-        if isinstance(ev, dict)
+        attrs_list_to_dict(ev.get("attributes", [])) for ev in (span.get("events") or []) if isinstance(ev, dict)
     ]
 
     input_messages = _find_attr_value(span_attrs, event_attr_dicts, "gen_ai.input.messages")
     output_messages = _find_attr_value(span_attrs, event_attr_dicts, "gen_ai.output.messages")
 
-    blocks = _messages_to_blocks(input_messages, turn_n) + _messages_to_blocks(
-        output_messages, turn_n
-    )
+    blocks = _messages_to_blocks(input_messages, turn_n) + _messages_to_blocks(output_messages, turn_n)
     if not blocks:
         return
 
@@ -306,18 +306,50 @@ def _message_to_blocks(msg, turn_n):
         text, category = _part_to_text_and_category(part, role)
         if not text:
             continue
-        blocks.append(
-            {
-                "category": category,
-                "label": f"copilot.{category}",
-                "char_count": len(text),
-                "token_estimate": estimate_tokens(text),
-                "turn_n": turn_n,
-                "status": None,
-                "content": truncate_content(text),
-            }
-        )
+        blocks.extend(_split_part_into_blocks(text, category, turn_n))
     return blocks
+
+
+# Copilot forwards the same Claude Code / editor context wrappers
+# (<system-reminder>, <command-*>, ...) inside its message text, so a
+# user/answer part gets the same boundary-anchored peel the Claude Code
+# mapper applies. Non-text categories (tool_call/tool_result/reasoning/
+# system) are passed straight through -- they never carry a wrapper.
+_SPLITTABLE_CATEGORIES = frozenset({CATEGORY_USER, CATEGORY_ANSWER})
+_COPILOT_SPLIT_LABELS = {
+    CATEGORY_INJECTED: CATEGORY_LABELS[CATEGORY_INJECTED],
+    CATEGORY_COMMAND: CATEGORY_LABELS[CATEGORY_COMMAND],
+}
+
+
+def _split_part_into_blocks(text, category, turn_n):
+    def _mk(frag_text, frag_category, tok, cc):
+        label = _COPILOT_SPLIT_LABELS.get(frag_category, f"copilot.{frag_category}")
+        return {
+            "category": frag_category,
+            "label": label,
+            "char_count": cc,
+            "token_estimate": tok,
+            "turn_n": turn_n,
+            "status": None,
+            "content": truncate_content(frag_text),
+        }
+
+    if category not in _SPLITTABLE_CATEGORIES:
+        return [_mk(text, category, estimate_tokens(text), len(text))]
+
+    frags = split_injected_context(text, category)
+    if len(frags) <= 1:
+        frag_text, frag_category = frags[0] if frags else (text, category)
+        return [_mk(frag_text, frag_category, estimate_tokens(frag_text), len(frag_text))]
+
+    char_counts = [len(f) for f, _ in frags]
+    tok_split = distribute_token_estimate(char_counts, estimate_tokens(text))
+    cc_split = distribute_int(char_counts, len(text))
+    return [
+        _mk(frag_text, frag_category, tok, cc)
+        for (frag_text, frag_category), tok, cc in zip(frags, tok_split, cc_split, strict=True)
+    ]
 
 
 def _part_to_text_and_category(part, role):
@@ -362,12 +394,7 @@ def _category_for_role(role):
 
 
 def _handle_tool_span(span, span_attrs, session_id, owner):
-    tool_name = (
-        span_attrs.get("gen_ai.tool.name")
-        or span_attrs.get("tool.name")
-        or span.get("name")
-        or "unknown_tool"
-    )
+    tool_name = span_attrs.get("gen_ai.tool.name") or span_attrs.get("tool.name") or span.get("name") or "unknown_tool"
     args = _parse_maybe_json(span_attrs.get("gen_ai.tool.call.arguments"))
     status = "error" if _tool_span_errored(span) else "success"
     store.append_tool_call(

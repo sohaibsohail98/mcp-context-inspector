@@ -37,8 +37,16 @@ def _invoke_agent_span(trace_id, span_id):
     }
 
 
-def _chat_span(trace_id, span_id, parent_span_id, input_messages, output_messages,
-                input_tokens=100, output_tokens=20, model="gpt-4o"):
+def _chat_span(
+    trace_id,
+    span_id,
+    parent_span_id,
+    input_messages,
+    output_messages,
+    input_tokens=100,
+    output_tokens=20,
+    model="gpt-4o",
+):
     return {
         "traceId": trace_id,
         "spanId": span_id,
@@ -161,12 +169,8 @@ def test_execute_tool_span_appends_tool_call_with_status(isolated_sqlite_db):
     trace_id = "trace-3"
     spans = [
         _invoke_agent_span(trace_id, "span-agent"),
-        _execute_tool_span(
-            trace_id, "span-tool-ok", "span-agent", "read_file", {"path": "foo.py"}
-        ),
-        _execute_tool_span(
-            trace_id, "span-tool-err", "span-agent", "run_tests", {"suite": "all"}, errored=True
-        ),
+        _execute_tool_span(trace_id, "span-tool-ok", "span-agent", "read_file", {"path": "foo.py"}),
+        _execute_tool_span(trace_id, "span-tool-err", "span-agent", "run_tests", {"suite": "all"}, errored=True),
     ]
 
     copilot.handle_traces({}, spans, owner=None)

@@ -108,7 +108,13 @@ def test_record_session_round_trip(isolated_firestore_db):
 
     trace = store.get_agent_trace(session_id)
     assert trace == [
-        {"tool": "list_services", "args": {"x": 1}, "status": "ok", "latency_ms": 20, "timestamp": trace[0]["timestamp"]}
+        {
+            "tool": "list_services",
+            "args": {"x": 1},
+            "status": "ok",
+            "latency_ms": 20,
+            "timestamp": trace[0]["timestamp"],
+        }
     ]
 
     timeline = store.get_context_timeline(session_id)
@@ -321,9 +327,15 @@ def test_close_session_marks_status_and_applies_final_totals(isolated_firestore_
     store.append_turn(sid, {"input_tokens": 10, "output_tokens": 5, "latency_ms": 50})
     assert store.get_session_metrics(sid)["session"]["status"] == "open"
 
-    store.close_session(sid, final_totals={
-        "input_tokens": 999, "output_tokens": 111, "total_tokens": 1110, "latency_ms": 5000,
-    })
+    store.close_session(
+        sid,
+        final_totals={
+            "input_tokens": 999,
+            "output_tokens": 111,
+            "total_tokens": 1110,
+            "latency_ms": 5000,
+        },
+    )
 
     metrics = store.get_session_metrics(sid)
     assert metrics["session"]["status"] == "closed"
@@ -353,8 +365,12 @@ def test_first_user_context_block_backfills_prompt(isolated_firestore_db):
     store.append_context_block(
         sid,
         {
-            "category": "user", "label": "first message", "char_count": 20,
-            "token_estimate": 5, "turn_n": 0, "content": "what is degraded right now?",
+            "category": "user",
+            "label": "first message",
+            "char_count": 20,
+            "token_estimate": 5,
+            "turn_n": 0,
+            "content": "what is degraded right now?",
         },
     )
     assert store.get_session_metrics(sid)["prompt_metrics"]["prompt"] == "what is degraded right now?"
@@ -366,15 +382,23 @@ def test_second_user_context_block_does_not_overwrite_prompt(isolated_firestore_
     store.append_context_block(
         sid,
         {
-            "category": "user", "label": "first", "char_count": 10,
-            "token_estimate": 3, "turn_n": 0, "content": "first user message",
+            "category": "user",
+            "label": "first",
+            "char_count": 10,
+            "token_estimate": 3,
+            "turn_n": 0,
+            "content": "first user message",
         },
     )
     store.append_context_block(
         sid,
         {
-            "category": "user", "label": "second", "char_count": 10,
-            "token_estimate": 3, "turn_n": 1, "content": "a much later second user message",
+            "category": "user",
+            "label": "second",
+            "char_count": 10,
+            "token_estimate": 3,
+            "turn_n": 1,
+            "content": "a much later second user message",
         },
     )
     assert store.get_session_metrics(sid)["prompt_metrics"]["prompt"] == "first user message"
@@ -387,8 +411,12 @@ def test_prompt_backfill_truncates_long_content(isolated_firestore_db):
     store.append_context_block(
         sid,
         {
-            "category": "user", "label": "long", "char_count": 500,
-            "token_estimate": 125, "turn_n": 0, "content": long_text,
+            "category": "user",
+            "label": "long",
+            "char_count": 500,
+            "token_estimate": 125,
+            "turn_n": 0,
+            "content": long_text,
         },
     )
     prompt = store.get_session_metrics(sid)["prompt_metrics"]["prompt"]
@@ -401,8 +429,12 @@ def test_non_user_context_block_does_not_set_prompt(isolated_firestore_db):
     store.append_context_block(
         sid,
         {
-            "category": "system", "label": "sys", "char_count": 10,
-            "token_estimate": 3, "turn_n": None, "content": "system prompt text",
+            "category": "system",
+            "label": "sys",
+            "char_count": 10,
+            "token_estimate": 3,
+            "turn_n": None,
+            "content": "system prompt text",
         },
     )
     assert store.get_session_metrics(sid)["prompt_metrics"]["prompt"] is None

@@ -46,7 +46,7 @@ def _parse_response(resp):
             if line.startswith("data: "):
                 import json
 
-                last = json.loads(line[len("data: "):])
+                last = json.loads(line[len("data: ") :])
     return last
 
 
@@ -79,16 +79,18 @@ class RawMcpClient:
         return _parse_response(resp)
 
     def initialize(self):
-        init_response = self._send({
-            "jsonrpc": "2.0",
-            "id": self._next_id,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2025-06-18",
-                "capabilities": {},
-                "clientInfo": {"name": "pytest-raw-client", "version": "1.0.0"},
-            },
-        })
+        init_response = self._send(
+            {
+                "jsonrpc": "2.0",
+                "id": self._next_id,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "pytest-raw-client", "version": "1.0.0"},
+                },
+            }
+        )
         self._next_id += 1
         assert "error" not in init_response, init_response
         self._send({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
@@ -101,12 +103,14 @@ class RawMcpClient:
         {"result": value}; a list/dict return has no structuredContent,
         each JSON-parsed content block being one list item (or the
         single dict, for a dict-returning tool)."""
-        response = self._send({
-            "jsonrpc": "2.0",
-            "id": self._next_id,
-            "method": "tools/call",
-            "params": {"name": name, "arguments": arguments},
-        })
+        response = self._send(
+            {
+                "jsonrpc": "2.0",
+                "id": self._next_id,
+                "method": "tools/call",
+                "params": {"name": name, "arguments": arguments},
+            }
+        )
         self._next_id += 1
         assert "error" not in response, response
         result = response["result"]

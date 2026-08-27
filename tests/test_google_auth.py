@@ -12,7 +12,10 @@ def test_verify_credential_returns_sub_and_email(monkeypatch):
         google_auth.id_token,
         "verify_oauth2_token",
         lambda credential, request, client_id: {
-            "sub": "12345", "email": "a@example.com", "email_verified": True, "aud": client_id,
+            "sub": "12345",
+            "email": "a@example.com",
+            "email_verified": True,
+            "aud": client_id,
         },
     )
     identity = google_auth.verify_credential("fake-jwt", "my-client-id")
@@ -27,7 +30,9 @@ def test_verify_credential_rejects_unverified_email(monkeypatch):
         google_auth.id_token,
         "verify_oauth2_token",
         lambda credential, request, client_id: {
-            "sub": "12345", "email": "a@example.com", "email_verified": False,
+            "sub": "12345",
+            "email": "a@example.com",
+            "email_verified": False,
         },
     )
     with pytest.raises(google_auth.InvalidGoogleToken):

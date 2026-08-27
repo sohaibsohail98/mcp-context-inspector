@@ -72,10 +72,10 @@ def apply_settings_patch(patch, settings_path=SETTINGS_PATH):
         text = settings_path.read_text()
         try:
             existing = json.loads(text)
-        except ValueError:
+        except ValueError as err:
             raise ValueError(
                 f"{settings_path} exists but isn't valid JSON. Not touching it. Fix or back it up manually first."
-            )
+            ) from err
         if not isinstance(existing, dict):
             raise ValueError(f"{settings_path} isn't a JSON object. Not touching it.")
         backup_path = settings_path.with_name(settings_path.name + f".bak-{int(time.time())}")
@@ -97,7 +97,7 @@ def apply_settings_patch(patch, settings_path=SETTINGS_PATH):
 # importing this module, since the downloaded file has to run standalone
 # on the user's machine with no mcp_context_inspector package installed:
 # stdlib only (json, time, pathlib).
-LOCAL_SCRIPT_TEMPLATE = '''#!/usr/bin/env python3
+LOCAL_SCRIPT_TEMPLATE = """#!/usr/bin/env python3
 # This script contains your personal mcp-context-inspector token. Treat it
 # like a password: don't share this file, and delete it after running.
 #
@@ -174,7 +174,7 @@ print("Restart any running Claude Code sessions to pick it up.")
 print()
 print("This script has no further use and still contains your token. Delete it now:")
 print(f"    rm {{__file__}}")
-'''
+"""
 
 
 def render_local_script(base_url, bearer_token, script_name="mcp-context-inspector-setup.py"):
@@ -199,7 +199,7 @@ def render_local_script(base_url, bearer_token, script_name="mcp-context-inspect
 # (piped-curl and downloaded-script) execute the literal same Python.
 # python3 is a stated dependency, not a silent assumption: the script
 # checks for it first and fails with a clear message otherwise.
-INSTALL_SHELL_TEMPLATE = '''#!/bin/sh
+INSTALL_SHELL_TEMPLATE = """#!/bin/sh
 # mcp-context-inspector installer. Safe to re-run (idempotent merge of
 # your ~/.claude/settings.json, never a plain overwrite; your existing
 # file is backed up first). Not comfortable piping into a shell? Save
@@ -292,7 +292,7 @@ echo "integrations) and open a fresh one. Env vars only load once at"
 echo "process startup, so an already-open session won't pick this up."
 echo ""
 echo "Then run one prompt and check \\"Test my connection\\" on the page."
-'''
+"""
 
 
 def _sh_single_quote(value):
@@ -313,4 +313,130 @@ def render_install_shell_script(base_url, bearer_token):
         bearer_token=bearer_token,
         base_url_shell_quoted=_sh_single_quote(base_url.rstrip("/")),
         bearer_token_shell_quoted=_sh_single_quote(bearer_token),
+    )
+
+
+# The `irm .../setup/install?os=windows | iex` one-liner's target (see
+# routes/setup.py). PowerShell 5.1 (ships in Windows 10/11) and 7+ both
+# run this. Mirrors INSTALL_SHELL_TEMPLATE exactly: it does NOT
+# reimplement the JSON backup/merge in PowerShell (a second, drifting
+# copy) -- it shells out to `python -c` with the identical merge body
+# the sh installer already carries. python is a stated dependency: the
+# script checks for it (python, then python3) and fails with a clear
+# message otherwise.
+#
+# BASE_URL / BEARER_TOKEN travel as process env vars
+# ($env:MCP_INSTALL_BASE_URL / $env:MCP_INSTALL_BEARER_TOKEN), never
+# interpolated into the double-quoted python -c body, so a token
+# containing $, a backtick, or a quote can't be expanded or executed by
+# PowerShell on the way in (the same threat _sh_single_quote guards
+# against for sh). The two values are emitted as single-quoted
+# PowerShell literals; the only metacharacter inside a PowerShell
+# single-quoted string is `'` itself, escaped by doubling it.
+INSTALL_POWERSHELL_TEMPLATE = r"""# mcp-context-inspector installer (Windows / PowerShell).
+# Safe to re-run: idempotent merge of your %USERPROFILE%\.claude\settings.json,
+# never a plain overwrite; your existing file is backed up first.
+# Not comfortable piping into iex? Download and read it first:
+#     irm "{base_url}/setup/install?os=windows&t=<code>" -OutFile install.ps1
+#     Get-Content install.ps1
+#     .\install.ps1
+
+$ErrorActionPreference = "Stop"
+
+$py = $null
+foreach ($cand in @("python", "python3")) {{
+    if (Get-Command $cand -ErrorAction SilentlyContinue) {{ $py = $cand; break }}
+}}
+if (-not $py) {{
+    Write-Error "mcp-context-inspector: Python 3 is required but wasn't found on PATH. Install it from python.org, reopen PowerShell, then re-run this command."
+    exit 1
+}}
+
+$env:MCP_INSTALL_BASE_URL = {base_url_ps_quoted}
+$env:MCP_INSTALL_BEARER_TOKEN = {bearer_token_ps_quoted}
+
+& $py -c "
+import json
+import os
+import time
+from pathlib import Path
+
+BASE_URL = os.environ['MCP_INSTALL_BASE_URL']
+BEARER_TOKEN = os.environ['MCP_INSTALL_BEARER_TOKEN']
+SETTINGS_PATH = Path.home() / '.claude' / 'settings.json'
+
+patch = {{
+    'mcpServers': {{
+        'context-inspector': {{
+            'url': BASE_URL + '/mcp',
+            'headers': {{'Authorization': 'Bearer ' + BEARER_TOKEN}},
+        }},
+    }},
+    'env': {{
+        'CLAUDE_CODE_ENABLE_TELEMETRY': '1',
+        'OTEL_LOGS_EXPORTER': 'otlp',
+        'OTEL_METRICS_EXPORTER': 'otlp',
+        'OTEL_EXPORTER_OTLP_PROTOCOL': 'http/json',
+        'OTEL_EXPORTER_OTLP_ENDPOINT': BASE_URL + '/otlp',
+        'OTEL_EXPORTER_OTLP_HEADERS': 'Authorization=Bearer ' + BEARER_TOKEN,
+        'OTEL_LOG_RAW_API_BODIES': '1',
+        'CLAUDE_CODE_OTEL_CONTENT_MAX_LENGTH': '1048576',
+        'OTEL_RESOURCE_ATTRIBUTES': 'service.name=claude-code',
+        'OTEL_METRICS_INCLUDE_SESSION_ID': 'true',
+        'OTEL_LOGS_INCLUDE_SESSION_ID': 'true',
+        'OTEL_LOGS_EXPORT_INTERVAL': '5000',
+    }},
+}}
+
+SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+existing = {{}}
+backed_up_to = None
+if SETTINGS_PATH.exists():
+    text = SETTINGS_PATH.read_text()
+    try:
+        existing = json.loads(text)
+    except ValueError:
+        raise SystemExit(f'{{SETTINGS_PATH}} exists but is not valid JSON. Not touching it. Fix or back it up manually first.')
+    if not isinstance(existing, dict):
+        raise SystemExit(f'{{SETTINGS_PATH}} is not a JSON object. Not touching it.')
+    backup_path = SETTINGS_PATH.with_name(SETTINGS_PATH.name + f'.bak-{{int(time.time())}}')
+    backup_path.write_text(text)
+    backed_up_to = str(backup_path)
+
+existing.setdefault('mcpServers', {{}})
+existing['mcpServers'].update(patch['mcpServers'])
+existing.setdefault('env', {{}})
+existing['env'].update(patch['env'])
+
+SETTINGS_PATH.write_text(json.dumps(existing, indent=2) + chr(10))
+
+print(f'Done. Wrote to {{SETTINGS_PATH}}')
+if backed_up_to:
+    print(f'Previous version backed up to {{backed_up_to}}')
+"
+
+Write-Host ""
+Write-Host "Close any running Claude Code sessions (terminal windows or editor"
+Write-Host "integrations) and open a fresh one. Env vars only load once at"
+Write-Host "process startup, so an already-open session won't pick this up."
+Write-Host ""
+Write-Host "Then run one prompt and check 'Test my connection' on the page."
+"""
+
+
+def _ps_single_quote(value):
+    """PowerShell single-quoted string literal: the only special
+    character inside '...' is the single quote itself, escaped by
+    doubling it ('' -> one literal '). Same role as _sh_single_quote for
+    the sh installer: `$env:NAME = value` is still parsed by PowerShell,
+    so the value needs real PowerShell quoting, not repr()."""
+    return "'" + value.replace("'", "''") + "'"
+
+
+def render_install_powershell_script(base_url, bearer_token):
+    return INSTALL_POWERSHELL_TEMPLATE.format(
+        base_url=base_url.rstrip("/"),
+        base_url_ps_quoted=_ps_single_quote(base_url.rstrip("/")),
+        bearer_token_ps_quoted=_ps_single_quote(bearer_token),
     )
