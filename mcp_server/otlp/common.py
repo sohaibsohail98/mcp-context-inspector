@@ -4,6 +4,8 @@ chars-per-token fallback estimate. Both mappers import from here rather
 than duplicating this parsing.
 """
 
+import re
+
 from mci_common.config import CHARS_PER_TOKEN_ESTIMATE
 
 # The context_blocks categories the dashboard's CATEGORY_COLORS map
@@ -17,6 +19,340 @@ CATEGORY_REASONING = "reasoning"
 CATEGORY_TOOL_CALL = "tool_call"
 CATEGORY_TOOL_RESULT = "tool_result"
 CATEGORY_ANSWER = "answer"
+
+# Two new categories for harness-injected context that Claude Code
+# prepends to (or appends to) a message string before the model ever
+# sees it. These are NOT user- or assistant-authored, so labelling them
+# "user"/"answer" (the old blanket rule) overstated how much of the
+# context window the human actually drove.
+CATEGORY_INJECTED = "injected"  # dashboard label "Injected context"
+CATEGORY_COMMAND = "command"  # dashboard label "Slash command"
+
+CATEGORY_LABELS = {
+    CATEGORY_INJECTED: "Injected context",
+    CATEGORY_COMMAND: "Slash command",
+}
+
+
+# ---------------------------------------------------------------------------
+# Harness-injected context splitting
+# ---------------------------------------------------------------------------
+#
+# Claude Code wraps machine-generated context around a message's real
+# text before it is sent to the Anthropic Messages API. A transcript
+# inventory of this repo's own sessions found nine wrapper families in
+# two classes:
+#
+#   injected (CATEGORY_INJECTED)
+#     <system-reminder>...</system-reminder>      (user AND assistant side)
+#     <ide_opened_file>...</ide_opened_file>
+#     <session>...</session>                      + its trailing title instructions
+#     <fork-boilerplate>...</fork-boilerplate>
+#     <task-notification>...</task-notification>  (frame + plumbing children)
+#     <user-prompt-submit-hook>...</user-prompt-submit-hook>
+#
+#   command (CATEGORY_COMMAND)
+#     <local-command-caveat>...</local-command-caveat>
+#     <command-name>/<command-message>/<command-args>/<command-contents>
+#     <local-command-stdout>/<local-command-stderr>
+#     <bash-input>/<bash-stdout>/<bash-stderr>
+#
+# HARD RULES from the inventory (these are correctness, not style):
+#
+#  * ANCHOR ON A FRAGMENT BOUNDARY, NOT A BARE SUBSTRING. Every one of
+#    these tag names also appears constantly quoted in backticks inside
+#    genuine prose in this repo's transcripts. A wrapper is only peeled
+#    when the fragment IS exactly the wrapper, OR the fragment STARTS
+#    with `<wrapper>...</wrapper>` immediately followed by exactly "\n\n",
+#    OR the fragment ENDS with "\n\n<wrapper>...</wrapper>" (the
+#    assistant-side deferred-tools notice). A mid-sentence mention is
+#    never reclassified.
+#
+#  * THE SEPARATOR IS ALWAYS EXACTLY "\n\n" (two newlines -- never
+#    spaces, never one or three) and it is assigned to the INJECTED
+#    side, so `original == injected_part + prose_part` (leading case) or
+#    `original == prose_part + injected_part` (trailing case) is
+#    byte-exact. No separator char is dropped or stored nowhere.
+#
+#  * AT MOST TWO PARTS, FIXED ORDER: `[injected][user]` for a user turn,
+#    `[answer][injected]` for an assistant turn. Never three-way. The
+#    <command-*> group is always its own synthetic message, separate
+#    from the typed human prompt, so command + injected + typed prose
+#    never co-occur in one string.
+#
+# Regex notes: <command-*>/<bash-*> sub-tag lines are indented (~12
+# spaces) so the leading-run scanner tolerates leading whitespace and
+# does not `^`-anchor each sub-tag. <task-notification> nests and its
+# <usage> children use underscores (subagent_tokens), and a <result>
+# body can itself contain a literal "</result>", so the notification is
+# matched to its LAST "</task-notification>" and its children are NOT
+# sub-split for accounting. Wrapper bodies are never `.strip()`ed when
+# sized -- a trailing "\n" before "</system-reminder>" counts.
+
+# Injected-class wrappers. Order within the alternation does not matter
+# (each is a distinct tag name); DOTALL because every one is routinely
+# multi-line.
+_INJECTED_TAGS = (
+    "system-reminder",
+    "ide_opened_file",
+    "session",
+    "fork-boilerplate",
+    "user-prompt-submit-hook",
+)
+# task-notification handled separately: greedy to the LAST close tag so a
+# literal "</task-notification>" inside a nested <result> body doesn't
+# truncate it.
+_TASK_NOTIFICATION_RE = r"<task-notification>.*</task-notification>"
+
+_COMMAND_TAGS = (
+    "local-command-caveat",
+    "command-name",
+    "command-message",
+    "command-args",
+    "command-contents",
+    "local-command-stdout",
+    "local-command-stderr",
+    "bash-input",
+    "bash-stdout",
+    "bash-stderr",
+)
+
+# A single wrapper span: an open tag, a lazy body, and the SAME tag's
+# close tag, for any of the injected- or command-class names; or the
+# greedy task-notification (matched to its LAST close tag so a nested
+# literal "</task-notification>" in a <result> body can't truncate it).
+#
+# The open/close pairing is done with an explicit
+# `<name>...</name>|<name2>...</name2>|...` alternation rather than one
+# backreferenced `(?P<name>...)...</(?P=name)>`, because this sub-pattern
+# is embedded MULTIPLE times inside _LEADING_RUN_RE and Python's `re`
+# forbids the same group name appearing twice in one compiled pattern.
+# The per-name alternation has no named groups, so it nests freely.
+_ALL_PAIRED_TAGS = _INJECTED_TAGS + _COMMAND_TAGS
+_ONE_WRAPPER = (
+    r"(?:"
+    + "|".join(rf"<{re.escape(t)}>.*?</{re.escape(t)}>" for t in _ALL_PAIRED_TAGS)
+    + r"|"
+    + _TASK_NOTIFICATION_RE
+    + r")"
+)
+_ONE_WRAPPER_RE = re.compile(_ONE_WRAPPER, re.DOTALL)
+_COMMAND_TAG_SET = frozenset(_COMMAND_TAGS)
+# Recognise which class a peeled run belongs to by scanning its open tags.
+_OPEN_TAG_RE = re.compile(r"<([a-z][a-z0-9_-]*)>")
+
+# A LEADING run: one-or-more wrapper spans, each separated from the next
+# by nothing or whitespace, starting at string start, and the whole run
+# followed by exactly "\n\n" then more (prose) OR the run IS the whole
+# string. Leading whitespace before the first tag is tolerated (indented
+# <command-*> groups).
+_LEADING_RUN_RE = re.compile(
+    r"\A\s*(?:" + _ONE_WRAPPER + r")(?:\s*(?:" + _ONE_WRAPPER + r"))*",
+    re.DOTALL,
+)
+# A TRAILING wrapper: "\n\n" then exactly one wrapper span then end of
+# string. Used for the assistant-side "deferred tools are available"
+# system-reminder appended after the real answer.
+_TRAILING_WRAPPER_RE = re.compile(
+    r"\n\n(?:" + _ONE_WRAPPER + r")\Z",
+    re.DOTALL,
+)
+
+
+def _run_is_all_command(run_text):
+    """True if every wrapper span in a leading run is command-class, so
+    the peeled block is tagged CATEGORY_COMMAND rather than
+    CATEGORY_INJECTED. A mixed run (shouldn't occur per rule 4, but be
+    safe) or an empty scan is treated as injected."""
+    open_tags = _OPEN_TAG_RE.findall(run_text)
+    if not open_tags:
+        return False
+    return all(t in _COMMAND_TAG_SET for t in open_tags)
+
+
+def contains_injected_wrappers(text, base_category=CATEGORY_USER):
+    """True iff split_injected_context would actually peel something off
+    `text` -- i.e. there is a boundary-anchored leading run or trailing
+    wrapper, NOT merely a backticked mention somewhere in the prose.
+    The migration uses this as its idempotency guard: a row it already
+    split has no peelable wrapper left."""
+    if not text:
+        return False
+    frags = split_injected_context(text, base_category)
+    if len(frags) > 1:
+        return True
+    return bool(frags) and frags[0][1] != base_category
+
+
+def split_injected_context(text, base_category):
+    """Split one message string into at most two ordered, byte-exact,
+    non-overlapping fragments, each tagged with the category it belongs
+    to. This is the SINGLE shared implementation imported by both the
+    one-off reclassification migration
+    (``scripts/migrate_reclassify_injected.py``) and the Claude Code
+    OTLP mapper.
+
+    Returns a list of ``(fragment_text, category)`` tuples:
+
+      * ``[]`` if ``text`` is ``None`` or empty.
+      * ``[(text, base_category)]`` if nothing is peelable -- no
+        boundary-anchored wrapper. A mid-prose backticked mention of a
+        tag name is NOT peelable and lands here unchanged.
+      * ``[(wrapper_run, injected_or_command)]`` if the whole string IS a
+        wrapper run and nothing else.
+      * ``[(wrapper_run, injected_or_command), (prose, base_category)]``
+        -- a LEADING run of harness wrappers (``<command-*>`` group,
+        ``<system-reminder>``, ``<session>``, ``<fork-boilerplate>``,
+        ``<ide_opened_file>``, ``<task-notification>``, ...) followed by
+        exactly ``"\\n\\n"`` and then the real typed prose. The
+        ``"\\n\\n"`` separator is kept ON the wrapper fragment.
+      * ``[(prose, base_category), (wrapper, CATEGORY_INJECTED)]`` -- the
+        assistant-side case: real answer text, then exactly
+        ``"\\n\\n"`` then a single trailing ``<system-reminder>`` (the
+        "deferred tools are available" notice). The ``"\\n\\n"`` stays on
+        the injected fragment.
+
+    ``injected_or_command`` is ``CATEGORY_COMMAND`` when every wrapper in
+    the peeled leading run is command-class (``<command-*>``,
+    ``<local-command-*>``, ``<bash-*>``), else ``CATEGORY_INJECTED``.
+
+    CONTRACT / INVARIANTS (both callers depend on these):
+
+    1. BYTE-EXACT RECONSTRUCTION. ``"".join(f for f, _ in
+       split_injected_context(text, c)) == text`` for every input. The
+       fragments are adjacent slices of the original; nothing is
+       inserted, dropped, reordered, trimmed, or normalised. The only
+       separator between a wrapper fragment and a prose fragment is the
+       canonical ``"\\n\\n"``, and it is INCLUDED in the wrapper
+       fragment's text (never stored nowhere).
+
+    2. AT MOST TWO FRAGMENTS, FIXED ORDER. Never three-way. A user turn
+       peels to ``[injected/command, user]``; an assistant turn peels to
+       ``[answer, injected]``. Both fragments are non-empty.
+
+    3. BOUNDARY ANCHORING. A wrapper is peeled only when it sits exactly
+       at the start of the string (optionally after whitespace, for
+       indented ``<command-*>`` groups) and is either the whole string
+       or immediately followed by ``"\\n\\n"``; or when it sits exactly
+       at the end of the string preceded by ``"\\n\\n"``. A wrapper tag
+       quoted mid-sentence in genuine prose is left alone.
+
+    4. TOKEN DISTRIBUTION IS THE CALLER'S JOB, PROPORTIONALLY. This
+       function does NOT compute per-fragment ``token_estimate``.
+       ``estimate_tokens(a) + estimate_tokens(b)`` differs from
+       ``estimate_tokens(a + b)`` by a token or two at the cut, because
+       ``estimate_tokens`` is ``max(1, len // CHARS_PER_TOKEN_ESTIMATE)``
+       (integer floor division, floor of 1). To keep a session's total
+       ``token_estimate`` -- and therefore the dashboard's
+       ``cumulative_pct`` and per-category ``%`` totals -- IDENTICAL
+       before and after a split, the caller must:
+         a. take the ORIGINAL row's stored ``token_estimate`` as the
+            whole (computed once, at ingest, from the full untruncated
+            text);
+         b. split it across the fragments by ``char_count`` proportion
+            via ``distribute_token_estimate`` in this module, which
+            dumps the rounding remainder on the LAST fragment so
+            ``sum(sub.token_estimate) == whole.token_estimate`` EXACTLY.
+       Fragments are NEVER independently re-estimated. ``char_count`` is
+       likewise reconciled to the original row's stored ``char_count``
+       (which can exceed ``len(content)`` when the stored content was
+       redacted/truncated) with the remainder on the last fragment.
+
+    5. IDEMPOTENCE. After a split, a prose fragment has no
+       boundary-anchored wrapper left (``contains_injected_wrappers`` is
+       False) and a wrapper fragment is already categorised
+       injected/command (the migration skips it by category). Re-running
+       the migration ``--apply`` is a no-op.
+
+    ACCEPTED MINOR MISLABELS (documented, deliberate -- the alternative
+    is sub-parsing a wrapper body, which is fragile and not worth it at
+    this scale):
+
+      * ``<session>...</session>``: the whole span is tagged
+        ``injected``. The inventory notes the inner text is really
+        user-authored, but it is a small, bounded amount and peeling the
+        two ``<session>`` tags while keeping the middle as ``user``
+        would make this a three-way split (violating rule 2). Tagged
+        injected wholesale.
+      * ``<task-notification>...</task-notification>``: the whole frame
+        (including any ``<result>`` body that is really assistant
+        output) is tagged ``injected``. Same reasoning.
+    """
+    if not text:
+        return []
+
+    # --- trailing single wrapper (assistant deferred-tools notice) ---
+    tm = _TRAILING_WRAPPER_RE.search(text)
+    if tm and tm.start() > 0:
+        prose = text[: tm.start()]
+        wrapper = text[tm.start() :]  # includes the leading "\n\n"
+        if prose:
+            return [(prose, base_category), (wrapper, CATEGORY_INJECTED)]
+
+    # --- leading wrapper run ---
+    lm = _LEADING_RUN_RE.match(text)
+    if lm:
+        run_end = lm.end()
+        run_text = text[:run_end]
+        rest = text[run_end:]
+        run_category = CATEGORY_COMMAND if _run_is_all_command(run_text) else CATEGORY_INJECTED
+        if not rest:
+            # whole string is the wrapper run
+            return [(run_text, run_category)]
+        if rest.startswith("\n\n"):
+            prose = rest[2:]
+            if not prose:
+                # wrapper run + trailing "\n\n" and nothing else: still a
+                # single fragment (no empty prose fragment emitted).
+                return [(run_text + "\n\n", run_category)]
+            # canonical separator: keep it ON the wrapper fragment
+            return [(run_text + "\n\n", run_category), (prose, base_category)]
+        # A leading wrapper NOT followed by the canonical "\n\n" is not a
+        # clean harness boundary (e.g. a wrapper name backticked at the
+        # very start of prose, or a non-canonical separator). Leave the
+        # whole string as base_category rather than guess.
+
+    return [(text, base_category)]
+
+
+def distribute_token_estimate(char_counts, whole_token_estimate):
+    """Split ``whole_token_estimate`` across N fragments in proportion to
+    their ``char_counts``, dumping the rounding remainder on the LAST
+    fragment so ``sum(result) == whole_token_estimate`` EXACTLY.
+
+    This is how the reclassification migration keeps a session's total
+    token estimate -- and the dashboard's ``cumulative_pct`` /
+    per-category ``%`` -- unchanged when one context_block row becomes
+    two: the fragments are never independently re-estimated (that would
+    drift by a token or two per cut, see
+    ``split_injected_context``'s contract), they just re-divide the
+    original row's already-stored estimate.
+
+    ``char_counts``: list of per-fragment char counts (must sum > 0).
+    Returns a list of ints, same length, each >= 0, summing to
+    ``whole_token_estimate``.
+    """
+    total_chars = sum(char_counts)
+    if total_chars <= 0 or not char_counts:
+        # degenerate: put it all on the last fragment
+        return [0] * (len(char_counts) - 1) + [whole_token_estimate] if char_counts else []
+    out = []
+    running = 0
+    for cc in char_counts[:-1]:
+        share = whole_token_estimate * cc // total_chars
+        out.append(share)
+        running += share
+    out.append(whole_token_estimate - running)  # remainder on the last
+    return out
+
+
+def distribute_int(char_counts, whole):
+    """Same proportional-split-with-remainder-on-last as
+    ``distribute_token_estimate``, for any integer total (used to
+    reconcile ``char_count`` to the original row's stored value when the
+    stored ``content`` was redacted/truncated and is shorter than the
+    original text the count was taken from)."""
+    return distribute_token_estimate(char_counts, whole)
 
 
 def estimate_tokens(text):
