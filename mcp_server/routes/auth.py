@@ -6,6 +6,7 @@ with heavy string interpolation, and splitting the template strings out
 from the route handler risks subtly breaking escaped JS). auth_verify
 completes Google sign-in and mints this user's MCP token."""
 
+import json
 import os
 
 from starlette.requests import Request
@@ -14,9 +15,39 @@ from starlette.responses import HTMLResponse, JSONResponse
 from mcp_server.app import server
 from mcp_server.auth import store as auth_store
 from mcp_server.auth.google import InvalidGoogleToken, verify_credential
+from mcp_server.middleware import _public_origin
 
 # /auth/* is the pre-auth flow that mints a per-user MCP token, so it is
 # deliberately NOT in MultiTokenAuthMiddleware's protected_prefixes.
+
+# Persistent browser-session cookie. Its value IS the caller's per-device
+# MCP token (already one row per browser via User-Agent in device_tokens,
+# and non-expiring server-side), so /auth/session can hand it straight
+# back with no Google re-prompt when localStorage was cleared. httpOnly
+# so page JS can't read it (the token is still shown in the UI and used
+# for fetches from the localStorage copy; the cookie is purely the
+# recovery path). SameSite=Lax so a top-level nav back from an external
+# link still carries it. Secure because ctxwindow.uk is always https at
+# the edge; on plain-http localhost dev Starlette drops the Secure flag
+# itself when the request scheme is http, so sign-in still works there.
+_SESSION_COOKIE = "mci_session"
+_SESSION_MAX_AGE = 60 * 60 * 24 * 90  # 90 days
+
+
+def _set_session_cookie(response, token, secure):
+    response.set_cookie(
+        _SESSION_COOKIE,
+        token,
+        max_age=_SESSION_MAX_AGE,
+        httponly=True,
+        secure=secure,
+        samesite="lax",
+        path="/",
+    )
+
+
+def _clear_session_cookie(response):
+    response.delete_cookie(_SESSION_COOKIE, path="/")
 
 
 _PAGE_STYLE = """
@@ -803,6 +834,15 @@ async def auth_login(request: Request):
   </a>
 </div>
 """
+    # The canonical public origin (PUBLIC_ORIGIN env, e.g.
+    # https://ctxwindow.uk), injected so every URL we hand the user to
+    # paste elsewhere -- the MCP connector URL, the config snippet, the
+    # OTLP endpoint, the curl and install commands -- reads the same no
+    # matter which host they loaded this page from. The old
+    # *.workers.dev URL is still live and would otherwise show through
+    # via window.location.origin. Same-origin fetch()es keep using
+    # relative paths, so they still work on either host.
+    canonical_origin_json = json.dumps(_public_origin(request))
     client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID")
     if not client_id:
         return HTMLResponse(f"""<!doctype html>
@@ -843,7 +883,14 @@ async def auth_login(request: Request):
 </div>
 <div id="dashboard-screen" class="hidden"></div>
 <script>
-  const mcpUrl = window.location.origin + "/mcp";
+  // Server-injected canonical origin (PUBLIC_ORIGIN), so the connector
+  // URL / config snippet / OTLP endpoint / curl + install commands are
+  // always https://ctxwindow.uk/... regardless of the host this page
+  // was loaded from. window.location.origin is still used for
+  // same-origin fetch()es (relative paths would do too) and for the
+  // localhost-detection UI branch.
+  const canonicalOrigin = {canonical_origin_json};
+  const mcpUrl = canonicalOrigin + "/mcp";
 
   function connectPage(email, token) {{
     const isLocalHost = ["localhost", "127.0.0.1"].includes(window.location.hostname);
@@ -856,8 +903,8 @@ async def auth_login(request: Request):
       }}
     }}, null, 2);
     const rawHeader = "Authorization: Bearer " + token;
-    const curlCmd = 'curl -H "Authorization: Bearer ' + token + '" ' + window.location.origin + '/api/sessions';
-    const otlpUrl = window.location.origin + "/otlp";
+    const curlCmd = 'curl -H "Authorization: Bearer ' + token + '" ' + canonicalOrigin + '/api/sessions';
+    const otlpUrl = canonicalOrigin + "/otlp";
     const claudeOtelSnippet = [
       "export CLAUDE_CODE_ENABLE_TELEMETRY=1",
       "export OTEL_LOGS_EXPORTER=otlp",
@@ -976,40 +1023,39 @@ async def auth_login(request: Request):
           <button class="icon-btn" onclick="checkConnection()" style="margin-top:0.6rem;" id="test-connection-btn">&#8635; Check now</button>
         </div>
 
-        <p class="card-hint" style="margin-top: 0.9rem;">
-          Prefer not to run a script? <a href="https://claude.ai/new#settings/customize-connectors" target="_blank" rel="noopener" onclick="document.querySelector('details').open=true;">Connect via claude.ai Connectors instead &rarr;</a>
-          Opens claude.ai's Connectors settings in a new tab. Paste just the MCP server URL from
-          "Your connection" above (no token needed, since you'll sign in with Google right there) under
-          <strong>Add custom connector</strong>. Full steps in the "Advanced" section below.
-        </p>
+      </div>
+      `) + (isLocalHost ? `` : `
+
+      <div class="card">
+        <h3>Connect with Claude chat</h3>
+        <p class="card-hint">Use ctxwindow's MCP tools from a claude.ai chat &mdash; ask
+        "what did my last session cost?" or "show the token breakdown for session X" in any
+        conversation, everywhere, with nothing written to a local file. This is separate from
+        the Claude Code setup above; do both if you want the live dashboard <em>and</em>
+        chat access.</p>
+        <ol class="card-hint" style="padding-left: 1.2rem; margin: 0.8rem 0;">
+          <li>Copy the MCP server URL: <code>` + mcpUrl + `</code>
+            <button class="copy" onclick="copyText('connect-chat-url')" style="margin-left:0.4rem;">Copy</button>
+            <span id="connect-chat-url" class="hidden">` + mcpUrl + `</span></li>
+          <li>In claude.ai, open <strong>Settings &rarr; Connectors</strong> (or
+            <strong>Customize &rarr; Connectors</strong>) and click <strong>Add custom connector</strong>.</li>
+          <li>Paste the URL and click <strong>Add</strong>. Leave the OAuth Client ID / Secret
+            fields blank &mdash; they aren't used here.</li>
+          <li>claude.ai opens a Google sign-in for this server automatically. Sign in and the
+            connector goes live. No token to copy anywhere.</li>
+        </ol>
+        <a class="copy" href="https://claude.ai/settings/connectors" target="_blank" rel="noopener" style="display:inline-block; text-decoration:none;">Open claude.ai Connectors &rarr;</a>
+        <p class="card-hint" style="margin-top: 0.8rem;"><strong>Separate sign-in from Claude Code.</strong>
+        The connector mints a token scoped to claude.ai only; your Claude Code CLI keeps its own
+        token from the setup above. It also can't carry the OTLP telemetry env vars, so the
+        dashboard won't auto-populate from chat use &mdash; run the "Claude Code (live telemetry)"
+        snippet below for that.</p>
       </div>
       `) + `
 
       <details>
         <summary>Advanced: manual setup, or connecting a different client</summary>
         <div style="padding-left: 1.7rem;">
-        ` + (isLocalHost ? `` : `
-        <div id="connectors-info" style="margin-bottom: 1.1rem;">
-          <p class="card-hint"><strong>claude.ai Connectors</strong>: this server can't write to your local
-          Claude Code config from here; it can only do that for itself when it's the one running on your
-          machine (self-hosted at <code>localhost</code>). But claude.ai's own Connectors feature gets you MCP
-          query access (ask "what did session X cost") in every session, everywhere, with zero local files
-          touched. It just can't carry the OTLP env vars that power automatic telemetry, so the dashboard
-          won't auto-populate as you code unless you also paste the "Claude Code (live telemetry)" snippet
-          below once per machine.</p>
-          <ol class="card-hint" style="padding-left: 1.2rem; margin: 0.7rem 0;">
-            <li>Copy the MCP server URL above.</li>
-            <li>Go to <strong>claude.ai &rarr; Customize &rarr; Connectors &rarr; Add custom connector.</strong></li>
-            <li>Paste the URL and click <strong>Add</strong>, leaving the OAuth Client ID/Secret fields blank,
-            those aren't used here. claude.ai will open a Google sign-in page for this server automatically;
-            once you sign in, the connector is live. No token to copy or paste anywhere.</li>
-          </ol>
-          <a class="copy" href="https://claude.ai/new#settings/customize-connectors" target="_blank" rel="noopener" style="display:inline-block; text-decoration:none;">Open claude.ai Connectors</a>
-          <p class="card-hint" style="margin-top: 0.7rem;"><strong>This is a separate sign-in from Claude Code.</strong>
-          Connecting here mints a token scoped to claude.ai only. Your Claude Code CLI still needs its own
-          token from the "Claude Code" tab above. Disconnecting one never affects the other.</p>
-        </div>
-        `) + `
         <div class="tab-row" style="margin-top: 0.9rem;">
           <button class="tab-btn active" data-tab="claude" onclick="showConnectTab('claude')">Claude Code</button>
           <button class="tab-btn" data-tab="api" onclick="showConnectTab('api')">API / curl</button>
@@ -1329,7 +1375,7 @@ async def auth_login(request: Request):
       if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
       const codeParam = "t=" + encodeURIComponent(data.code);
       if (installOs === "windows") {{
-        const url = window.location.origin + "/setup/install?os=windows&" + codeParam;
+        const url = canonicalOrigin + "/setup/install?os=windows&" + codeParam;
         cmdEl.textContent = 'irm "' + url + '" | iex';
         if (inspectEl) {{
           inspectEl.textContent = 'irm "' + url + '" -OutFile install.ps1\\n'
@@ -1337,7 +1383,7 @@ async def auth_login(request: Request):
             + '.\\\\install.ps1';
         }}
       }} else {{
-        const url = window.location.origin + "/setup/install?" + codeParam;
+        const url = canonicalOrigin + "/setup/install?" + codeParam;
         cmdEl.textContent = "curl -fsSL " + url + " | sh";
         if (inspectEl) {{
           inspectEl.textContent = "curl -fsSL " + url + " -o install.sh\\nless install.sh"
@@ -2345,6 +2391,9 @@ async def auth_login(request: Request):
   function signOut() {{
     localStorage.removeItem(SS_TOKEN);
     localStorage.removeItem(SS_EMAIL);
+    // Best-effort: also drop the httpOnly session cookie so a reload
+    // doesn't silently sign back in via /auth/session.
+    fetch("/auth/logout", {{ method: "POST" }}).catch(() => {{}});
     pendingCredential = null;
     currentEmail = null;
     currentToken = null;
@@ -2356,6 +2405,27 @@ async def auth_login(request: Request):
     document.getElementById("intro").classList.remove("hidden");
   }}
 
+  // Distinguishes "this token is dead" (401/403 -> sign out, it was
+  // revoked server-side) from "the server hiccuped" (5xx, 429, a network
+  // blip, offline, an extension blocking the request -> keep the stored
+  // token, the user is still signed in, just retry on the next load or
+  // dashboard refresh). Previously ANY non-2xx or network failure on the
+  // load-time probe wiped localStorage and forced a full Google
+  // re-login: a single Cloud Run cold-start 503 or a moment offline was
+  // enough, which is the "logged out several times a week" report.
+  async function verifyStoredToken(token) {{
+    let res;
+    try {{
+      res = await fetch("/api/sessions?limit=1", {{
+        headers: {{ Authorization: "Bearer " + token }},
+      }});
+    }} catch (e) {{
+      return "transient";  // offline / DNS / connection reset
+    }}
+    if (res.status === 401 || res.status === 403) return "revoked";
+    return "ok";  // 2xx, or a 5xx/429 we choose to ride out
+  }}
+
   // Runs once on load. A stored token is trusted enough to go straight
   // to the dashboard screen (no flash of the sign-in screen for a
   // returning visitor), but then verified with a real request. A
@@ -2364,9 +2434,27 @@ async def auth_login(request: Request):
   // fetch. The connect/config cards render into #landing too (kept
   // hidden) so "Token & config" on the dashboard topbar has content
   // ready without a page reload.
-  function rehydrateFromStorage() {{
-    const token = localStorage.getItem(SS_TOKEN);
-    const email = localStorage.getItem(SS_EMAIL);
+  //
+  // Fallback path: if localStorage was cleared (private window, "clear
+  // site data", a different browser profile) but the httpOnly session
+  // cookie set at /auth/verify is still valid, /auth/session hands the
+  // token straight back with no Google re-prompt.
+  async function rehydrateFromStorage() {{
+    let token = localStorage.getItem(SS_TOKEN);
+    let email = localStorage.getItem(SS_EMAIL);
+    if (!token || !email) {{
+      try {{
+        const r = await fetch("/auth/session");  // sends the mci_session cookie
+        if (r.ok) {{
+          const d = await r.json();
+          if (d && d.mcp_token && d.email) {{
+            token = d.mcp_token;
+            email = d.email;
+            persistSession(token, email);
+          }}
+        }}
+      }} catch (e) {{ /* fall through to the sign-in screen */ }}
+    }}
     if (!token || !email) return;
     currentEmail = email;
     currentToken = token;
@@ -2376,7 +2464,11 @@ async def auth_login(request: Request):
     landing.innerHTML = successBanner(email) + connectPage(email, token);
     refreshInstallCommand();
     goToDashboard();
-    apiGet(token, "/api/sessions?limit=1").catch(() => signOut());
+    verifyStoredToken(token).then((state) => {{
+      if (state === "revoked") signOut();
+      // "transient" / "ok" -> stay signed in; dashboard fetches retry on
+      // their own refresh cycle.
+    }});
   }}
 
   rehydrateFromStorage();
@@ -2416,7 +2508,49 @@ async def auth_verify(request: Request):
     auth_store.get_or_create_token(identity["sub"], identity["email"])
     user_agent = request.headers.get("user-agent", "")
     token = auth_store.get_or_create_device_token(identity["sub"], identity["email"], user_agent)
-    return JSONResponse({"mcp_token": token, "email": identity["email"]})
+    resp = JSONResponse({"mcp_token": token, "email": identity["email"]})
+    _set_session_cookie(resp, token, secure=request.url.scheme == "https")
+    return resp
+
+
+@server.custom_route("/auth/session", methods=["GET"])
+async def auth_session(request: Request):
+    """Recovery path for a returning visitor whose localStorage was
+    cleared but who still has a valid mci_session cookie: hands the token
+    and email back so the dashboard rehydrates without a fresh Google
+    sign-in. Returns 401 (no body worth leaking) when there is no cookie,
+    the cookie's token was revoked, or it has no account identity."""
+    token = request.cookies.get(_SESSION_COOKIE)
+    if not token or not auth_store.is_valid_token(token):
+        resp = JSONResponse({"error": "no session"}, status_code=401)
+        if token:
+            _clear_session_cookie(resp)  # stale cookie, drop it
+        return resp
+    google_sub = auth_store.get_sub_for_token(token)
+    email = None
+    if google_sub:
+        for u in auth_store.list_users():
+            if u.get("google_sub") == google_sub:
+                email = u.get("email")
+                break
+    if not email:
+        return JSONResponse({"error": "no session"}, status_code=401)
+    resp = JSONResponse({"mcp_token": token, "email": email})
+    # Sliding refresh: bump the 90-day window on every successful use so
+    # an active visitor's cookie never lapses.
+    _set_session_cookie(resp, token, secure=request.url.scheme == "https")
+    return resp
+
+
+@server.custom_route("/auth/logout", methods=["POST"])
+async def auth_logout(request: Request):
+    """Clears the browser session cookie. The MCP token itself is not
+    revoked here (a config pasted into a client elsewhere keeps working);
+    use the dashboard's Devices list or the account-wide revoke for
+    that."""
+    resp = JSONResponse({"ok": True})
+    _clear_session_cookie(resp)
+    return resp
 
 
 def _caller_token(request):

@@ -142,6 +142,67 @@ def test_auth_verify_mints_token_for_valid_credential(client, monkeypatch, isola
     assert isolated_auth_store.is_valid_token(body["mcp_token"])
 
 
+def test_auth_verify_sets_persistent_session_cookie(client, monkeypatch, isolated_auth_store):
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
+    monkeypatch.setattr(
+        routes_auth, "verify_credential", lambda credential, client_id: {"sub": "sub123", "email": "a@example.com"}
+    )
+    resp = client.post("/auth/verify", json={"credential": "fake-jwt"})
+    assert resp.status_code == 200
+    setc = resp.headers.get("set-cookie", "")
+    assert "mci_session=" in setc
+    assert "HttpOnly" in setc
+    assert "Max-Age=7776000" in setc  # 90 days
+    assert "SameSite=lax" in setc.replace("Lax", "lax")
+
+
+def test_auth_session_rehydrates_from_cookie_without_google(client, monkeypatch, isolated_auth_store):
+    """After /auth/verify sets the cookie, GET /auth/session returns the
+    token + email with no credential -- the re-login-avoidance path."""
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
+    monkeypatch.setattr(
+        routes_auth, "verify_credential", lambda credential, client_id: {"sub": "sub123", "email": "a@example.com"}
+    )
+    verify = client.post("/auth/verify", json={"credential": "fake-jwt"})
+    minted = verify.json()["mcp_token"]
+
+    # TestClient carries the Set-Cookie forward on the shared cookie jar.
+    resp = client.get("/auth/session")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["mcp_token"] == minted
+    assert body["email"] == "a@example.com"
+
+
+def test_auth_session_401_without_cookie(client):
+    resp = client.get("/auth/session")
+    assert resp.status_code == 401
+
+
+def test_auth_logout_clears_the_session_cookie(client, monkeypatch, isolated_auth_store):
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
+    monkeypatch.setattr(
+        routes_auth, "verify_credential", lambda credential, client_id: {"sub": "sub123", "email": "a@example.com"}
+    )
+    client.post("/auth/verify", json={"credential": "fake-jwt"})
+    out = client.post("/auth/logout")
+    assert out.status_code == 200
+    assert 'mci_session=""' in out.headers.get("set-cookie", "") or "Max-Age=0" in out.headers.get("set-cookie", "")
+    # session is gone now
+    assert client.get("/auth/session").status_code == 401
+
+
+def test_auth_session_after_revoke_returns_401_and_drops_cookie(client, monkeypatch, isolated_auth_store):
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
+    monkeypatch.setattr(
+        routes_auth, "verify_credential", lambda credential, client_id: {"sub": "sub123", "email": "a@example.com"}
+    )
+    client.post("/auth/verify", json={"credential": "fake-jwt"})
+    isolated_auth_store.revoke("sub123")
+    resp = client.get("/auth/session")
+    assert resp.status_code == 401
+
+
 def test_auth_verify_is_unauthenticated_itself(client, monkeypatch):
     """Verifying doesn't require an existing MCP token; you're getting
     your FIRST token here."""
