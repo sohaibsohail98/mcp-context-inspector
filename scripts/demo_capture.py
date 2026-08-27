@@ -214,6 +214,30 @@ async def capture(server_url, out_dir, headless=True, reveal_mode="guided_tour",
         context_tab = dashboard_page.locator('.tab[data-tab="context"]')
         await context_tab.click()
 
+        # The dashboard now groups blocks into collapsible turn sections
+        # (id="ctx-block-list"). Bring the first real turn near the top of
+        # the panel and drop the legend/filter-actions row out of frame
+        # so the zoomed recording lands on the blocks themselves, not on
+        # "Context blocks" / the ALL / NONE controls.
+        await dashboard_page.evaluate(
+            """() => {
+                const list = document.getElementById('ctx-block-list');
+                const groups = [...(list?.querySelectorAll('.turn-group') || [])];
+                // Keep the pre-conversation group and turn 0 expanded (the
+                // guided tour opens injected / user prompt / first tool
+                // result, all in turn 0); collapse every later turn so the
+                // whole tour sits in one screenful and the reveal never
+                // scrolls away from the row it is pointing at.
+                groups.forEach((g, i) => g.classList.toggle('collapsed', i >= 2));
+                // Drop the legend/filter row out of frame for the zoomed shot.
+                const legend = document.querySelector('.tab-content.active[data-content="context"] .ctx-legend');
+                if (legend) legend.style.display = 'none';
+                // Pin turn 0's heading just under the panel top.
+                (groups[1] || list)?.scrollIntoView({ block: 'start' });
+            }"""
+        )
+        await dashboard_page.wait_for_timeout(200)
+
         # Zoom to the block list so the breakdown is the visual focus for
         # the remainder of the recording; a CSS transform on a wrapper,
         # not an ffmpeg crop, so it stays in this one recording pass.
@@ -227,8 +251,8 @@ async def capture(server_url, out_dir, headless=True, reveal_mode="guided_tour",
                 // panel settling into place) only decelerates, it does
                 // not also visibly accelerate out of rest first.
                 panel.style.transition = 'transform 600ms cubic-bezier(0.16, 1, 0.3, 1)';
-                panel.style.transformOrigin = 'center 60%';
-                panel.style.transform = 'scale(1.35)';
+                panel.style.transformOrigin = 'center 40%';
+                panel.style.transform = 'scale(1.2)';
             }"""
         )
 

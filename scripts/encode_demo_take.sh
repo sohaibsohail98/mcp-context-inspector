@@ -57,7 +57,14 @@ cp "$JOINED" "$OUT_MP4"
 # paletteuse with dither=bayer:bayer_scale=3): a single pass produces a
 # dithered mess (see the brief). -update 1 is needed for a modern
 # ffmpeg's image2 muxer to accept a single-frame PNG output.
-ffmpeg -y -i "$JOINED" -vf "fps=15,scale=900:-1:flags=lanczos,palettegen=stats_mode=diff" -update 1 "$PALETTE"
+#
+# 12fps / 800px / max_colors=128: the turn-grouped Context Explorer has
+# much more on-screen text (the injected <system-reminder> and the JSON
+# tool result both expand in full), which blew a 15fps/900px/full-palette
+# gif past 3MB. These three cuts bring it back under ~2MB for the README
+# embed with no visible quality loss at glance-speed.
+GIF_FILTERS="fps=12,scale=800:-1:flags=lanczos"
+ffmpeg -y -i "$JOINED" -vf "$GIF_FILTERS,palettegen=stats_mode=diff:max_colors=128" -update 1 "$PALETTE"
 ffmpeg -y -i "$JOINED" -i "$PALETTE" \
-	-lavfi "fps=15,scale=900:-1:flags=lanczos [x]; [x][1:v] paletteuse=dither=bayer:bayer_scale=3" \
+	-lavfi "$GIF_FILTERS [x]; [x][1:v] paletteuse=dither=bayer:bayer_scale=3" \
 	"$OUT_GIF"
