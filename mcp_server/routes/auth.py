@@ -471,6 +471,15 @@ _PAGE_STYLE = """
 
 @server.custom_route("/auth/login", methods=["GET"])
 async def auth_login(request: Request):
+    # Demo-only staged-reveal script (see demo_static/demo_reveal.js and
+    # scripts/demo_capture.py). Double-gated: the env var alone isn't
+    # enough, ?demo=1 must also be on the request, so a stray real visit
+    # to a demo deployment doesn't get the staged-reveal treatment.
+    # Empty string, not omitted, when either gate is off, so the
+    # production render is byte-identical to before this feature existed.
+    demo_script_tag = ""
+    if os.environ.get("CTXWINDOW_DEMO_MODE") == "1" and request.query_params.get("demo") == "1":
+        demo_script_tag = '<script src="/demo-static/demo_reveal.js"></script>'
     intro = """
 <div class="ctxwindow-kicker"><span class="pulse"></span> updates automatically as you work</div>
 <h1 class="ctxwindow-h1">Watch your agent's <span class="ctxwindow-accent">context window</span> fill up as you work.</h1>
@@ -1907,6 +1916,7 @@ async def auth_login(request: Request):
 
   rehydrateFromStorage();
 </script>
+{demo_script_tag}
 </body></html>""")
 
 
