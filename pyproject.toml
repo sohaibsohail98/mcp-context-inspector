@@ -52,6 +52,17 @@ ignore = [
 "api_tests/**" = ["S"]
 "scripts/**" = ["S"]
 
+[tool.pytest.ini_options]
+# `pytest` from the repo root only collects the unit suite; api_tests/
+# hits a real deployed URL and is run explicitly in CI (see
+# .github/workflows/tests.yml). filterwarnings stays permissive for now:
+# there is one known ResourceWarning from an error-path sqlite
+# connection leak in store_sqlite.py -- flip this to
+# "error::ResourceWarning" once that is wrapped in try/finally so it
+# can't regress.
+testpaths = ["tests"]
+addopts = "--ignore=api_tests"
+
 [tool.coverage.run]
 source = ["mcp_server", "metrics", "mci_common"]
 omit = ["scripts/*", "*/demo_capture.py"]
