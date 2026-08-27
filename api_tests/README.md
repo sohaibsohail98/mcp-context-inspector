@@ -18,7 +18,7 @@ Needs two env vars — this suite refuses to guess a target, since these are
 live tests that write real data:
 
 ```bash
-export API_TEST_BASE_URL="https://mcp-inspector.sohaibsohail.workers.dev"
+export API_TEST_BASE_URL="https://ctxwindow.uk"
 export API_TEST_TOKEN="<a valid owner or per-user bearer token>"
 uv run python -m pytest api_tests/ -v
 ```

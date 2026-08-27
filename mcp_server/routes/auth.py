@@ -220,9 +220,10 @@ _PAGE_STYLE = """
   .lumen-demo-legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
   .lumen-demo-legend i { width: 7px; height: 7px; border-radius: 999px; display: inline-block; }
   .lumen-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.6rem; }
-  .lumen-kpi { background: var(--bg-raised-2); border: 1px solid var(--border-soft); border-radius: 8px; padding: 0.6rem 0.75rem; }
-  .lumen-kpi .k-label { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dimmer); font-weight: 650; margin-bottom: 0.25rem; }
+  .lumen-kpi { background: var(--bg-raised-2); border: 1px solid var(--border-soft); border-radius: 8px; padding: 0.6rem 0.75rem; min-width: 0; }
+  .lumen-kpi .k-label { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dimmer); font-weight: 650; margin-bottom: 0.25rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .lumen-kpi .k-value { font-weight: 650; font-size: 0.98rem; font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace; }
+  @media (max-width: 480px) { .lumen-kpis { grid-template-columns: repeat(2, 1fr); } }
 
   .byline { text-align: center; font-size: 0.82rem; color: var(--text-dimmer); margin: 2rem 0 0; }
   .byline a { color: var(--text-dim); }

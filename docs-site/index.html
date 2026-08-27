@@ -237,7 +237,7 @@
     <section id="try-it">
       <h2>Try it in 30 seconds</h2>
       <p>
-        Live demo: <a href="https://mcp-inspector.sohaibsohail.workers.dev" target="_blank" rel="noopener">mcp-inspector.sohaibsohail.workers.dev</a>
+        Live demo: <a href="https://ctxwindow.uk" target="_blank" rel="noopener">ctxwindow.uk</a>
       </p>
       <p>Seeded with fixture data. Writes made behind Google sign-in don't survive a cold start on the demo, since it runs on SQLite.</p>
       <p>Not yet published to PyPI, so run it from source:</p>
@@ -277,7 +277,7 @@ uv run python -m mcp_server.server</code></pre>
         a terminal. It writes the MCP connection and telemetry config into your own
         <code>~/.claude/settings.json</code> (backed up first, merged, never overwritten):
       </p>
-      <pre><code>curl -fsSL https://mcp-inspector.sohaibsohail.workers.dev/setup/install?t=&lt;code&gt; | sh</code></pre>
+      <pre><code>curl -fsSL https://ctxwindow.uk/setup/install?t=&lt;code&gt; | sh</code></pre>
       <p>
         The <code>?t=</code> code is single-use and short-lived, so your real token is never in
         the command itself.
@@ -294,7 +294,7 @@ uv run python -m mcp_server.server</code></pre>
       <pre><code>{
   "mcpServers": {
     "context-inspector": {
-      "url": "https://mcp-inspector.sohaibsohail.workers.dev/mcp",
+      "url": "https://ctxwindow.uk/mcp",
       "headers": { "Authorization": "Bearer &lt;your-token&gt;" }
     }
   }
@@ -325,7 +325,7 @@ uv run python -m mcp_server.server</code></pre>
 export OTEL_LOGS_EXPORTER=otlp
 export OTEL_METRICS_EXPORTER=otlp
 export OTEL_EXPORTER_OTLP_PROTOCOL=http/json
-export OTEL_EXPORTER_OTLP_ENDPOINT=https://mcp-inspector.sohaibsohail.workers.dev/otlp
+export OTEL_EXPORTER_OTLP_ENDPOINT=https://ctxwindow.uk/otlp
 export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer &lt;your-token&gt;"
 export OTEL_RESOURCE_ATTRIBUTES=service.name=claude-code
 export OTEL_METRICS_INCLUDE_SESSION_ID=true
@@ -436,6 +436,17 @@ export OTEL_LOG_RAW_API_BODIES=1   # opt-in: needed for the Context Explorer</co
     { rootMargin: '-15% 0px -70% 0px' }
   );
   sections.forEach((s) => observer.observe(s));
+
+  // IntersectionObserver's -70% bottom rootMargin never fires for the final
+  // section once the page is scrolled all the way down, so handle that edge
+  // case with a plain scroll check.
+  window.addEventListener('scroll', () => {
+    const atBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2;
+    if (atBottom) {
+      links.forEach((a) => a.classList.remove('active'));
+      links[links.length - 1].classList.add('active');
+    }
+  });
 </script>
 
 </body>

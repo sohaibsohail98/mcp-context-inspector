@@ -102,4 +102,4 @@ jobs:
       - name: Smoke-test the Worker proxy
         run: |
           sleep 5
-          curl -sf "https://mcp-inspector.sohaibsohail.workers.dev/health" | grep -q '"status":"ok"'
+          curl -sf "https://ctxwindow.uk/health" | grep -q '"status":"ok"'

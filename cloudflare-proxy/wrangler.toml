@@ -2,6 +2,21 @@ name = "mcp-inspector"
 main = "worker.js"
 compatibility_date = "2026-08-19"
 
+# ctxwindow.uk is a real owned domain in this Cloudflare account (bought
+# specifically to sidestep is-a.dev's blocklist against CNAMEing to
+# *.workers.dev, and Cloud Run's requirement to verify a domain's parent
+# zone before mapping a subdomain to it — see todo.md's Domain section).
+# The old workers.dev URL stays live below it so existing bookmarks and
+# configured client URLs keep working.
+routes = [
+  { pattern = "ctxwindow.uk", custom_domain = true },
+  { pattern = "www.ctxwindow.uk", custom_domain = true }
+]
+# Adding `routes` disables the workers.dev subdomain by default — keep it
+# on explicitly so the old mcp-inspector.<account>.workers.dev URL (still
+# used in existing bookmarks and configured client URLs) keeps working.
+workers_dev = true
+
 [vars]
 ORIGIN = "https://mcp-context-inspector-1097847824883.us-central1.run.app"
 

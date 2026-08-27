@@ -3,7 +3,7 @@ that broke (commit e73d299: production requests hard-rejected with 421
 "Invalid Host header"). test_transport_security.py regression-tests the
 fixed code path in-process; this file instead hits the real deployed
 URL the way the real chat UI's browser does: a genuine cross-origin POST
-to https://mcp-inspector.sohaibsohail.workers.dev/mcp, with an Origin
+to https://ctxwindow.uk/mcp, with an Origin
 header matching the deployed chat UI
 (https://sre-agent.sohaibsohail.workers.dev) and — critically — a real
 Host header that naturally follows from hitting the real URL over the
@@ -40,7 +40,7 @@ import sys
 import urllib.error
 import urllib.request
 
-DEPLOYED_MCP_URL = "https://mcp-inspector.sohaibsohail.workers.dev/mcp"
+DEPLOYED_MCP_URL = "https://ctxwindow.uk/mcp"
 CHAT_UI_ORIGIN = "https://sre-agent.sohaibsohail.workers.dev"
 
 

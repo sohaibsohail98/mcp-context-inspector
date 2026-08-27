@@ -20,7 +20,7 @@
 
 Package/repo name on disk: `mcp-context-inspector`. The product is Lumen.
 
-**[Docs site →](https://mcp-inspector.sohaibsohail.workers.dev/docs)**: same content as this
+**[Docs site →](https://ctxwindow.uk/docs)**: same content as this
 README, laid out as a proper single-page reference with section nav.
 
 ## Why this exists
@@ -41,7 +41,7 @@ motivated wanting the same visibility for an arbitrary agent loop, not just Clau
 
 ## Try it in 30 seconds
 
-Live demo: **https://mcp-inspector.sohaibsohail.workers.dev**
+Live demo: **https://ctxwindow.uk**
 
 It's seeded with fixture data and runs on SQLite, so writes made behind Google sign-in
 don't survive a cold start. That's the right tradeoff for a free public demo, not a
@@ -117,7 +117,7 @@ command to paste into a terminal. It writes the MCP connection and telemetry con
 your own `~/.claude/settings.json` (backed up first, merged, never overwritten):
 
 ```sh
-curl -fsSL https://mcp-inspector.sohaibsohail.workers.dev/setup/install?t=<code> | sh
+curl -fsSL https://ctxwindow.uk/setup/install?t=<code> | sh
 ```
 
 The `?t=` code is single-use and short-lived, so your real token is never in the command
@@ -132,7 +132,7 @@ page.
 {
   "mcpServers": {
     "context-inspector": {
-      "url": "https://mcp-inspector.sohaibsohail.workers.dev/mcp",
+      "url": "https://ctxwindow.uk/mcp",
       "headers": { "Authorization": "Bearer <your-token>" }
     }
   }
@@ -145,7 +145,7 @@ claude.ai's Connectors feature speaks the MCP OAuth flow directly, so there's no
 to copy:
 
 1. **claude.ai → Settings → Connectors → Add custom connector.**
-2. Paste the MCP server URL (`https://mcp-inspector.sohaibsohail.workers.dev/mcp`).
+2. Paste the MCP server URL (`https://ctxwindow.uk/mcp`).
    Leave OAuth Client ID/Secret blank; this server registers itself dynamically per the
    MCP spec.
 3. claude.ai opens a Google sign-in prompt automatically. Sign in once.
@@ -166,7 +166,7 @@ Once connected, ask it things like:
 
 ```json
 {
-  "mcp_servers": [{"type": "url", "url": "https://mcp-inspector.sohaibsohail.workers.dev/mcp", "name": "context-inspector", "authorization_token": "<your-token>"}],
+  "mcp_servers": [{"type": "url", "url": "https://ctxwindow.uk/mcp", "name": "context-inspector", "authorization_token": "<your-token>"}],
   "tools": [{"type": "mcp_toolset", "mcp_server_name": "context-inspector"}]
 }
 ```
@@ -186,7 +186,7 @@ export CLAUDE_CODE_ENABLE_TELEMETRY=1
 export OTEL_LOGS_EXPORTER=otlp
 export OTEL_METRICS_EXPORTER=otlp
 export OTEL_EXPORTER_OTLP_PROTOCOL=http/json
-export OTEL_EXPORTER_OTLP_ENDPOINT=https://mcp-inspector.sohaibsohail.workers.dev/otlp
+export OTEL_EXPORTER_OTLP_ENDPOINT=https://ctxwindow.uk/otlp
 export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <your-token>"
 export OTEL_RESOURCE_ATTRIBUTES=service.name=claude-code
 export OTEL_METRICS_INCLUDE_SESSION_ID=true
@@ -196,7 +196,7 @@ export OTEL_LOG_RAW_API_BODIES=1   # opt-in: needed for the Context Explorer
 
 # GitHub Copilot
 export COPILOT_OTEL_ENABLED=true
-export OTEL_EXPORTER_OTLP_ENDPOINT=https://mcp-inspector.sohaibsohail.workers.dev/otlp
+export OTEL_EXPORTER_OTLP_ENDPOINT=https://ctxwindow.uk/otlp
 export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <your-token>"
 export COPILOT_OTEL_CAPTURE_CONTENT=true   # opt-in: needed for the Context Explorer
 ```
@@ -361,7 +361,7 @@ revision.
 Relevant env vars once deployed:
 
 - `PUBLIC_ORIGIN`: the real public origin (e.g.
-  `https://mcp-inspector.sohaibsohail.workers.dev`), needed because behind the proxy
+  `https://ctxwindow.uk`), needed because behind the proxy
   `request.base_url` reflects Cloud Run's internal origin, not what a real caller used.
   Every URL Lumen generates about itself (OAuth metadata, the install command) needs the
   real one.
