@@ -305,6 +305,15 @@ def split_injected_context(text, base_category):
                 # wrapper run + trailing "\n\n" and nothing else: still a
                 # single fragment (no empty prose fragment emitted).
                 return [(run_text + "\n\n", run_category)]
+            # A leading <session> wrapper's trailing text is the harness's
+            # own title-generation instructions ("Write the title in the
+            # predominant language of the session ..."), NOT user prose.
+            # <session> only ever appears in that title-gen subagent, so
+            # the whole string is injected -- splitting here would (and
+            # did, on prod data) leave that instruction as the session's
+            # "prompt".
+            if run_text.startswith("<session>"):
+                return [(text, CATEGORY_INJECTED)]
             # canonical separator: keep it ON the wrapper fragment
             return [(run_text + "\n\n", run_category), (prose, base_category)]
         # A leading wrapper NOT followed by the canonical "\n\n" is not a

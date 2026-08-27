@@ -89,13 +89,22 @@ def test_ide_opened_file_and_fork_boilerplate_are_injected():
         assert _recon(frags) == text
 
 
-def test_session_wrapper_tagged_injected_documented_mislabel():
-    text = _SESSION + "\n\nrest of prompt"
+def test_session_wrapper_and_its_trailing_instructions_are_all_injected():
+    # <session> only ever appears in the harness's title-generation
+    # subagent, where the text after </session> is that subagent's own
+    # "Write the title in the predominant language ..." instruction, not
+    # user prose. So the WHOLE string is one injected fragment -- peeling
+    # a `user` remainder here made that instruction the session's stored
+    # prompt on real prod data.
+    text = _SESSION + "\n\nWrite the title in the predominant language of the session."
     frags = split_injected_context(text, CATEGORY_USER)
-    # whole <session> span is injected (accepted minor mislabel of the
-    # inner user text -- see docstring)
-    assert frags[0] == (_SESSION + "\n\n", CATEGORY_INJECTED)
-    assert frags[1] == ("rest of prompt", CATEGORY_USER)
+    assert frags == [(text, CATEGORY_INJECTED)]
+    assert _recon(frags) == text
+
+
+def test_session_wrapper_alone_is_injected():
+    frags = split_injected_context(_SESSION, CATEGORY_USER)
+    assert frags == [(_SESSION, CATEGORY_INJECTED)]
 
 
 def test_multiple_leading_wrappers_collapse_into_one_run():
