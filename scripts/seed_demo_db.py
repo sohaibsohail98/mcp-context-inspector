@@ -84,9 +84,53 @@ _TOOL_SPECS_CONTENT = json.dumps(
 )
 
 
+# System prompts read as boilerplate until you actually see one; this is
+# the second demo-candidate expand target (see scripts/demo_capture.py's
+# --expand flag), included because it carries injected operational
+# reminders (turn limits, redaction policy) most viewers wouldn't guess
+# are sitting in every single request's context window, not just the
+# first one.
+_SYSTEM_PROMPT_CONTENT = (
+    "You are an SRE assistant with read access to service health, deployment, "
+    "and cost data via the tools below. Investigate before answering; do not "
+    "guess at root cause.\n\n"
+    "Constraints:\n"
+    "- Never claim a fix is confirmed unless a tool result directly supports it.\n"
+    "- If evidence is inconclusive, say so explicitly rather than picking the "
+    "most likely story.\n"
+    "- You have a hard limit of 15 turns per session; if you hit it, say what "
+    "you found so far and mark the answer as partial.\n"
+    "- Do not fabricate service names, metrics, or deployment IDs; only use "
+    "what a tool call actually returned this session."
+)
+
+# The Context Window Explorer's third demo-candidate expand target: a
+# real tool_result payload, so a viewer can see the actual JSON an
+# answer was grounded in, not just a "225 tok" line item. Attached to
+# the first ok tool call in a trace inside _context_blocks below.
+_SAMPLE_TOOL_RESULT_CONTENT = json.dumps(
+    {
+        "service": "checkout-api",
+        "p50_ms": 82,
+        "p99_ms": 1240,
+        "error_rate": 0.021,
+        "window_minutes": 60,
+        "note": "p99 rose sharply at 14:02, coincides with the last deploy",
+    },
+    indent=2,
+)
+
+
 def _context_blocks(turns, trace, answer_text, answer_label="Final answer"):
     blocks = [
-        {"category": "system", "label": "System prompt", "char_count": 1400, "token_estimate": 350, "turn_n": None},
+        {
+            "category": "system",
+            "label": "System prompt",
+            "char_count": 1400,
+            "token_estimate": 350,
+            "turn_n": None,
+            "content": _SYSTEM_PROMPT_CONTENT,
+        },
         {
             "category": "tools",
             "label": f"Tool specs ({len(_TOOLS)} tools)",
@@ -98,6 +142,7 @@ def _context_blocks(turns, trace, answer_text, answer_label="Final answer"):
         {"category": "user", "label": "User prompt", "char_count": 80, "token_estimate": 20, "turn_n": 0},
     ]
     call_i = 0
+    attached_sample_result = False
     for turn_n in range(turns):
         if turn_n > 0:
             blocks.append(
@@ -121,16 +166,24 @@ def _context_blocks(turns, trace, answer_text, answer_label="Final answer"):
                     "turn_n": turn_n,
                 }
             )
-            blocks.append(
-                {
-                    "category": "tool_result",
-                    "label": f"Tool result: {call['tool']}",
-                    "char_count": 900 if call["status"] == "ok" else 90,
-                    "token_estimate": 225 if call["status"] == "ok" else 22,
-                    "turn_n": turn_n,
-                    "status": call["status"],
-                }
-            )
+            result_block = {
+                "category": "tool_result",
+                "label": f"Tool result: {call['tool']}",
+                "char_count": 900 if call["status"] == "ok" else 90,
+                "token_estimate": 225 if call["status"] == "ok" else 22,
+                "turn_n": turn_n,
+                "status": call["status"],
+            }
+            # Only the first successful tool_result per session carries
+            # real content (see _SAMPLE_TOOL_RESULT_CONTENT above); every
+            # other block deliberately keeps falling back to the "content
+            # wasn't captured" placeholder, since real deployments won't
+            # have raw bodies for most historical sessions either, and
+            # the demo shouldn't misrepresent that as the common case.
+            if not attached_sample_result and call["status"] == "ok":
+                result_block["content"] = _SAMPLE_TOOL_RESULT_CONTENT
+                attached_sample_result = True
+            blocks.append(result_block)
     blocks.append(
         {
             "category": "answer",
