@@ -153,8 +153,30 @@ def _plan_fragments(row):
         return None
 
     frags = split_injected_context(content, category)
-    if len(frags) <= 1:
-        return None  # nothing peelable at a clean boundary
+    if not frags:
+        return None
+    if len(frags) == 1:
+        # Not a two-way split, but the whole block still reclassifies:
+        # a message whose ENTIRE content is a wrapper run (a standalone
+        # <system-reminder>, a <session> title-gen block, a <command-*>
+        # group) comes back as one injected/command fragment, not
+        # user/answer. contains_injected_wrappers already gated this in,
+        # so frags[0][1] != category here; rewrite the row in place with
+        # the new category + label, counts unchanged.
+        new_category = frags[0][1]
+        if new_category == category:
+            return None
+        return [
+            {
+                "category": new_category,
+                "label": CATEGORY_LABELS.get(new_category, row["label"]),
+                "char_count": row["char_count"],
+                "token_estimate": row["token_estimate"],
+                "turn_n": row["turn_n"],
+                "status": None if new_category in (CATEGORY_INJECTED, CATEGORY_COMMAND) else row.get("status"),
+                "content": frags[0][0],
+            }
+        ]
 
     frag_chars = [len(f) for f, _ in frags]
     # Re-divide the ORIGINAL row's stored totals across the fragments by
@@ -192,11 +214,16 @@ def _plan_fragments(row):
 def _first_genuine_user_text(rows):
     """rows: the session's context_blocks in final (post-split) seq
     order. Returns the ~200-char prompt preview from the first
-    category=="user" block's content, mirroring append_context_block's
-    backfill, or None if there is no user block."""
+    category=="user" block with real content, mirroring
+    append_context_block's backfill. Returns None when there is no such
+    block -- the caller then leaves sessions.prompt as it was rather than
+    blanking it (a session whose only user text lived inside a <session>
+    title-gen wrapper has no better prompt to offer)."""
     for r in rows:
         if r["category"] == CATEGORY_USER:
-            return (r.get("content") or r.get("label") or "")[:200]
+            text = (r.get("content") or "").strip()
+            if text:
+                return text[:200]
     return None
 
 
@@ -468,9 +495,14 @@ def _print_session_diff(session_id, report):
     )
     if report["prompt_changed"]:
         before = (report["prompt_before"] or "")[:80].replace("\n", " ")
-        after = (report["prompt_after"] or "")[:80].replace("\n", " ")
         print(f"  prompt: {before!r}")
-        print(f"       -> {after!r}")
+        if report["prompt_after"] is None:
+            # No genuine user block after reclassification (the session's
+            # only user text was inside a <session> wrapper). The write
+            # step leaves sessions.prompt untouched rather than blanking it.
+            print("       -> (kept: no genuine user block to derive a prompt from)")
+        else:
+            print(f"       -> {report['prompt_after'][:80].replace(chr(10), ' ')!r}")
 
 
 def run(apply=False, only_session=None):
