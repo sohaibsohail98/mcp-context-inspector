@@ -295,7 +295,7 @@ async def oauth_authorize_page(request: Request):
         "resource": resource,
     })
     return HTMLResponse(f"""<!doctype html>
-<html><head><title>Authorize &middot; mcp-context-inspector</title>
+<html><head><title>Authorize &middot; ctxwindow</title>
 <style>{_PAGE_STYLE}</style>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head><body>
@@ -303,7 +303,7 @@ async def oauth_authorize_page(request: Request):
 <div class="card accent">
   <h3>Authorize {escape(client_name)}</h3>
   <p class="card-hint">Sign in with Google to let <strong>{escape(client_name)}</strong>
-  (<code>{escape(redirect_host)}</code>) connect to mcp-context-inspector as you. It gets the
+  (<code>{escape(redirect_host)}</code>) connect to ctxwindow as you. It gets the
   same access your own signed-in session already has: your own data only, scoped to your
   account. <strong>Check the domain in parentheses</strong>, since a display name alone can say
   anything; that domain is where your data actually goes.</p>

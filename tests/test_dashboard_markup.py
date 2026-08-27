@@ -99,3 +99,22 @@ def test_settings_toggle_reuses_existing_tab_pattern(monkeypatch):
     assert "function toggleSettings()" in body
     assert 'id="dash-root"' in body
     assert 'id="settings-root"' in body
+
+
+def test_context_block_label_is_escaped_before_innerhtml(monkeypatch):
+    """renderContextBlockRow() puts b.label/b.category into innerHTML.
+    Both come from record_session/append_context_block, caller-supplied
+    data from any signed-in user; the owner token can see every user's
+    sessions (see _visible() in metrics/store_sqlite.py), so an
+    unescaped label is a stored XSS that fires in the owner's browser,
+    where their bearer token sits in localStorage. Guard against a
+    regression back to the raw '+ (b.label || b.category) +' form."""
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
+    app = server_module.server.streamable_http_app()
+    with TestClient(app) as client:
+        resp = client.get("/auth/login")
+
+    body = resp.text
+    assert "escapeHtml(b.label || b.category)" in body
+    assert "(b.label || b.category) + '</span>'" not in body
+    assert "': (b.label || b.category)" not in body

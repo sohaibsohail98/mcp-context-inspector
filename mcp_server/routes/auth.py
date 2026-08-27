@@ -975,17 +975,17 @@ async def auth_login(request: Request):
       }});
       const data = await res.json();
       if (res.ok && data.ok) {{
-        result.innerHTML = '<span style="color:var(--ok);">&check; Done. Wrote to <code>' + data.path + '</code>'
-          + (data.backed_up_to ? ' (previous version backed up to <code>' + data.backed_up_to + '</code>)' : '')
+        result.innerHTML = '<span style="color:var(--ok);">&check; Done. Wrote to <code>' + escapeHtml(data.path) + '</code>'
+          + (data.backed_up_to ? ' (previous version backed up to <code>' + escapeHtml(data.backed_up_to) + '</code>)' : '')
           + '. Restart any running Claude Code sessions to pick it up.</span>';
         btn.textContent = "Applied";
       }} else {{
-        result.innerHTML = '<span style="color:var(--err);">' + (data.error || "Something went wrong.") + '</span>';
+        result.innerHTML = '<span style="color:var(--err);">' + escapeHtml(data.error || "Something went wrong.") + '</span>';
         btn.disabled = false;
         btn.textContent = "Apply to my Claude Code config";
       }}
     }} catch (err) {{
-      result.innerHTML = '<span style="color:var(--err);">' + err.message + '</span>';
+      result.innerHTML = '<span style="color:var(--err);">' + escapeHtml(err.message) + '</span>';
       btn.disabled = false;
       btn.textContent = "Apply to my Claude Code config";
     }}
@@ -994,7 +994,7 @@ async def auth_login(request: Request):
   // Mints a fresh short-lived install code (see POST
   // /setup/issue-install-code) and renders both the piped one-liner and
   // the inspect-first (download, read, then run) variant of the exact
-  // same command; see LUMEN_LAUNCH_PLAN.md §1.2. The code is single-use
+  // same command; see CTXWINDOW_LAUNCH_PLAN.md §1.2. The code is single-use
   // and expires in a few minutes, so this re-mints on every call rather
   // than caching, so "New command" (and page reload) always gets a live one.
   async function refreshInstallCommand() {{
@@ -1060,7 +1060,7 @@ async def auth_login(request: Request):
           + 'it finishes. That\\'s how often telemetry exports.</span></div>';
       }}
     }} catch (err) {{
-      resultEl.innerHTML = '<span style="color:var(--err);">' + err.message + '</span>';
+      resultEl.innerHTML = '<span style="color:var(--err);">' + escapeHtml(err.message) + '</span>';
     }} finally {{
       btn.disabled = false;
     }}
@@ -1316,8 +1316,8 @@ async def auth_login(request: Request):
   function renderContextBlockRow(b, idx) {{
     const color = CATEGORY_COLORS[b.category] || "var(--cat-system)";
     const label = b.status === "redacted"
-      ? '<span class="redacted">' + (b.label || b.category) + ' (redacted)</span>'
-      : (b.label || b.category);
+      ? '<span class="redacted">' + escapeHtml(b.label || b.category) + ' (redacted)</span>'
+      : escapeHtml(b.label || b.category);
     const hasContent = typeof b.content === "string" && b.content.length > 0;
     const detail = hasContent
       ? '<div class="block-detail hidden" id="block-detail-' + idx + '">' + escapeHtml(b.content) + '</div>'
@@ -1507,7 +1507,7 @@ async def auth_login(request: Request):
       ]);
       detailEl.innerHTML = renderSessionDetail(sessionId, detail, timeline);
     }} catch (err) {{
-      detailEl.innerHTML = '<p class="dash-error">Failed to load session: ' + err.message + '</p>';
+      detailEl.innerHTML = '<p class="dash-error">Failed to load session: ' + escapeHtml(err.message) + '</p>';
     }}
   }}
 
@@ -1564,7 +1564,7 @@ async def auth_login(request: Request):
         if (row) row.click();
       }}
     }} catch (err) {{
-      root.innerHTML = '<p class="dash-error">Failed to load sessions: ' + err.message + '</p>';
+      root.innerHTML = '<p class="dash-error">Failed to load sessions: ' + escapeHtml(err.message) + '</p>';
     }} finally {{
       // Panels (including this button) get fully re-rendered above on
       // success, so this only matters on the error path. Re-query
@@ -1843,11 +1843,11 @@ async def auth_login(request: Request):
         landing.innerHTML = successBanner(data.email) + connectPage(data.email, data.mcp_token);
         refreshInstallCommand();
       }} else {{
-        landing.innerHTML = "<div class='card security'>Sign-in failed: " + (data.error || "unknown error") + "</div>";
+        landing.innerHTML = "<div class='card security'>Sign-in failed: " + escapeHtml(data.error || "unknown error") + "</div>";
       }}
     }} catch (err) {{
       pendingCredential = null;
-      landing.innerHTML = "<div class='card security'>Sign-in failed: " + err.message + "</div>";
+      landing.innerHTML = "<div class='card security'>Sign-in failed: " + escapeHtml(err.message) + "</div>";
     }}
   }}
 
