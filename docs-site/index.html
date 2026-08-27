@@ -210,6 +210,8 @@
       <a href="#architecture">Architecture</a>
       <a href="#storage-backends">Storage backends</a>
       <a href="#deploying">Deploying your own</a>
+      <a href="#env-vars">Environment variables</a>
+      <a href="#roadmap">Roadmap</a>
     </nav>
   </aside>
 
@@ -339,6 +341,18 @@ export OTEL_LOG_RAW_API_BODIES=1   # opt-in: needed for the Context Explorer</co
         let ctxwindow recognize the session as Claude Code's at all. Omit them and every session is
         silently dropped.
       </p>
+      <p>GitHub Copilot exports the same way:</p>
+      <pre><code>export COPILOT_OTEL_ENABLED=true
+export OTEL_EXPORTER_OTLP_ENDPOINT=https://ctxwindow.uk/otlp
+export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer &lt;your-token&gt;"
+export COPILOT_OTEL_CAPTURE_CONTENT=true   # opt-in: needed for the Context Explorer</code></pre>
+      <div class="callout">
+        <span class="icon">⚠</span>
+        <span>The <code>_RAW_API_BODIES</code>/<code>_CAPTURE_CONTENT</code> flags are separate
+        opt-ins because they carry full prompt/response content, not just metrics. When on, captured
+        bodies pass through a basic redaction layer (email addresses, home-directory paths) before
+        storage. Treat that as a trust reducer, not comprehensive PII scrubbing.</span>
+      </div>
     </section>
 
     <section id="tools">
@@ -370,8 +384,36 @@ export OTEL_LOG_RAW_API_BODIES=1   # opt-in: needed for the Context Explorer</co
       <p>
         Every session is attributed to whoever recorded it. A per-user token only ever sees,
         queries, and records its own data. There's no way to read or list another user's sessions,
-        even by guessing an ID.
+        even by guessing an ID. The owner token sees everyone's data, since it's your server.
+        Revoke someone's access with <code>mcp_server.auth.store.revoke(google_sub)</code> (find
+        their <code>sub</code> via <code>list_users()</code>). Their existing token stops working
+        immediately, and already-recorded data stays where it is.
       </p>
+
+      <h3>Google sign-in setup (one-time, about 2 minutes)</h3>
+      <ol class="step-list">
+        <li>
+          <a href="https://console.cloud.google.com" target="_blank" rel="noopener">console.cloud.google.com</a>:
+          create or pick a project, then go to <strong>APIs &amp; Services → Credentials</strong>.
+        </li>
+        <li><strong>Create Credentials → OAuth client ID</strong> → Application type <strong>Web application</strong>.</li>
+        <li>
+          Under <strong>Authorized JavaScript origins</strong>, add <code>http://localhost:8787</code>
+          for local use, plus your real domain once deployed. Use <code>localhost</code>, not
+          <code>127.0.0.1</code>: Google Identity Services only reliably honors <code>localhost</code>
+          for the plain-HTTP local-dev exemption. No redirect URI needed.
+        </li>
+        <li>
+          Copy the <strong>Client ID</strong> (safe to expose client-side) and set it as
+          <code>GOOGLE_OAUTH_CLIENT_ID</code>.
+        </li>
+      </ol>
+      <div class="callout">
+        <span class="icon">⚠</span>
+        <span>Switching <code>STORAGE_BACKEND</code> on a running deployment starts the auth store
+        over empty. Every existing token, including your own, stops working until you sign in again.
+        That's not a bug; the token store is only as durable as its backend.</span>
+      </div>
     </section>
 
     <section id="architecture">
@@ -387,26 +429,224 @@ export OTEL_LOG_RAW_API_BODIES=1   # opt-in: needed for the Context Explorer</co
         <code>/otlp/v1/{logs,metrics,traces}</code> for Claude Code's/Copilot's own native
         OpenTelemetry export.
       </p>
+
+      <h3>Four pieces, front to back</h3>
+      <ol class="step-list">
+        <li>
+          <strong>Cloudflare Worker</strong> (<code>cloudflare-proxy/worker.js</code>): a
+          pass-through reverse proxy that gives the service a short permanent public URL
+          (<code>ctxwindow.uk</code>) instead of the raw <code>.run.app</code> one. It rewrites
+          nothing but the <code>Host</code> header and streams responses back untouched, so SSE
+          endpoints work through it.
+        </li>
+        <li>
+          <strong>Starlette + MCP server</strong> (<code>mcp_server/</code>), running on Cloud Run.
+          Serves the MCP handshake at <code>/mcp</code>, plain REST at <code>/api/*</code>, OTLP
+          ingestion at <code>/otlp/v1/*</code>, Google sign-in at <code>/auth/login</code>, the
+          one-line installer at <code>/setup/install</code>, the dashboard, and this docs site at
+          <code>/docs</code>.
+        </li>
+        <li>
+          <strong>Data-access layer</strong> (<code>metrics/store.py</code>), one dispatcher in
+          front of three interchangeable backends.
+        </li>
+        <li>
+          <strong>Storage</strong>: SQLite, DynamoDB, or Firestore, picked by
+          <code>STORAGE_BACKEND</code>.
+        </li>
+      </ol>
+
+      <h3>Three write paths, one owner-filtered read path</h3>
+      <ul>
+        <li>A <strong>direct Python import</strong> of <code>metrics.store</code> for an agent loop running on the same machine.</li>
+        <li>The authenticated <strong><code>record_session</code> MCP tool or <code>POST /api/record-session</code></strong> for anyone else's remote agent.</li>
+        <li><strong><code>/otlp/v1/{logs,metrics,traces}</code></strong> for Claude Code's and Copilot's own native OpenTelemetry export, parsed by <code>mcp_server/otlp/</code> into the same turns and tool calls.</li>
+      </ul>
+
+      <h3>The <code>record_session</code> payload</h3>
+      <p>
+        <code>record_session(prompt, model_id, loop_result, owner=None)</code> needs
+        <code>loop_result</code> shaped like:
+      </p>
+      <pre><code>{
+    "trace": [{"tool": "...", "args": {...}, "status": "ok"}, ...],
+    "turns": [{"input_tokens": int, "output_tokens": int, "latency_ms": int}, ...],
+    "input_tokens": int, "output_tokens": int, "total_tokens": int, "latency_ms": int,
+    "context_blocks": [   # optional: omit and you just lose the Explorer, nothing crashes
+        {"category": "system", "label": "...", "char_count": int, "token_estimate": int, "turn_n": int | None},
+        ...
+    ],
+}</code></pre>
+      <p>
+        <code>context_blocks</code> categories: <code>system</code>, <code>tools</code>,
+        <code>user</code>, <code>reasoning</code>, <code>thinking</code>, <code>tool_call</code>,
+        <code>tool_result</code> (optional <code>"status"</code> field for color-coding failures),
+        and <code>answer</code>.
+      </p>
+      <p>
+        Token counts are honest, labeled estimates, not exact provider usage. That keeps a single
+        measurement path across every client, including ones that never report usage back.
+      </p>
+
+      <h3>Letting a friend's own agent record its own data</h3>
+      <p>
+        <code>record_session</code> is also an authenticated MCP tool (and an
+        <code>/api/record-session</code> REST route), so a friend's agent running anywhere can push
+        its own sessions in, attributed to them:
+      </p>
+      <pre><code>import httpx
+
+httpx.post(
+    "http://&lt;your-host&gt;:8787/api/record-session",
+    headers={"Authorization": f"Bearer {their_token}"},
+    json={"prompt": prompt, "model_id": model_id, "loop_result": loop_result},
+)</code></pre>
     </section>
 
     <section id="storage-backends">
       <h2>Storage backends</h2>
-      <p>Three options, selected with <code>STORAGE_BACKEND</code>:</p>
+      <p>
+        Three interchangeable backends, selected with <code>STORAGE_BACKEND</code>. They expose
+        identical function signatures, so callers import from <code>metrics/store.py</code> and
+        never know which one is active.
+      </p>
       <ul>
-        <li><strong>sqlite</strong> (default): zero setup, good for local dev. Doesn't survive a Cloud Run cold start.</li>
-        <li><strong>dynamodb</strong>: durable, AWS-hosted.</li>
-        <li><strong>firestore</strong>: durable, GCP-hosted, the recommended choice for a real deployment with sign-in-backed writes.</li>
+        <li>
+          <strong><code>sqlite</code></strong> (default): zero setup, one file on disk, what local
+          dev uses. Path is overridable with <code>METRICS_DB_PATH</code> so a container can write
+          to a scratch location like <code>/tmp</code> instead of the repo's <code>data/</code>
+          dir. A container's local filesystem doesn't persist, so anything written here is lost on
+          a cold start. That's fine for local dev and for the public demo, and wrong for anything
+          you care about keeping.
+        </li>
+        <li>
+          <strong><code>dynamodb</code></strong>: durable, AWS-hosted, for a deployment already
+          living in AWS. Table name from <code>METRICS_TABLE</code>, region from
+          <code>AWS_REGION</code>. Single-table design: partition key <code>session_id</code>, sort
+          key <code>sk</code> distinguishing item type (<code>SESSION</code>,
+          <code>TURN#0000</code>, <code>TOOLCALL#0000</code>). Aggregate reads (recent sessions,
+          aggregate tool metrics) use <code>Scan</code>, which its own docstring flags as fine at
+          personal-project scale and worth revisiting with a GSI if that stops being true.
+        </li>
+        <li>
+          <strong><code>firestore</code></strong>: durable, GCP-hosted, and the recommended choice
+          for a real Cloud Run deployment with sign-in-backed writes, since the service is already
+          on GCP. This is the backend this project's own code treats as its deployed target; the
+          public demo at <code>ctxwindow.uk</code> deliberately stays on seeded SQLite instead, so a
+          cold start wipes visitor writes back to the fixture data. A top-level <code>sessions</code>
+          collection with <code>owner</code> and <code>timestamp</code> as directly queryable
+          top-level fields, plus <code>turns</code>, <code>tool_calls</code>, and
+          <code>context_blocks</code> subcollections. Because a real query is available here, it
+          avoids the scan-then-filter tradeoff DynamoDB's backend accepts. The client uses
+          Application Default Credentials, which works automatically on Cloud Run via its service
+          account; grant that account <code>roles/datastore.user</code>. Needs a composite index on
+          <code>(owner ASC, timestamp DESC)</code> on the <code>sessions</code> collection, created
+          ahead of time via the Firestore console or
+          <code>gcloud firestore indexes composite create</code>, rather than relying on the
+          first-query error link in prod. Collection name is overridable with
+          <code>METRICS_FIRESTORE_COLLECTION</code>. To test locally, run
+          <code>gcloud emulators firestore start</code> and set <code>FIRESTORE_EMULATOR_HOST</code>;
+          the client library honors it transparently.
+        </li>
       </ul>
+      <p>
+        The per-user auth token store (<code>mcp_server/auth/store.py</code>) reads the same
+        <code>STORAGE_BACKEND</code> variable, so sessions and auth always switch together. It needs
+        the same durability: under SQLite, a token row lost on cold start silently breaks that
+        user's auth with no error anywhere useful.
+      </p>
     </section>
 
     <section id="deploying">
       <h2>Deploying your own</h2>
+      <div class="callout">
+        <span class="icon">&#9432;</span>
+        <span><strong>You probably don't need this.</strong>
+        <a href="https://ctxwindow.uk" target="_blank" rel="noopener">ctxwindow.uk</a> is live, free,
+        and signs you in with Google, and your sessions are yours alone. Running your own copy only
+        makes sense if you want the data on infrastructure you control, or you're changing the
+        server itself.</span>
+      </div>
       <p>
-        Deployed to Cloud Run, fronted by a Cloudflare Worker reverse proxy for a short public URL.
-        GitHub Actions auto-deploys on push to <code>main</code> and always routes 100% of traffic
-        to the newly built revision.
+        If you do want your own: the deploy path this repo uses is a Cloud Run service built from
+        the <code>Dockerfile</code> at the repo root, fronted by the Cloudflare Worker in
+        <code>cloudflare-proxy/</code>. <code>.github/workflows/deploy.yml</code> runs it end to end
+        on every push to <code>main</code> that touches the server, and is the honest reference for
+        the real steps:
       </p>
-      <p>See the <a href="https://github.com/sohaibsohail98/mcp-context-inspector#deploying-your-own" target="_blank" rel="noopener">README's deploy section</a> for the full env var reference.</p>
+      <ol class="step-list">
+        <li>Run the unit suite; a red suite blocks the deploy.</li>
+        <li>
+          Authenticate to GCP with Workload Identity Federation, so there are no stored GCP keys in
+          repo secrets. This needs the <code>GCP_PROJECT</code>, <code>GCP_WIF_PROVIDER</code>, and
+          <code>GCP_DEPLOY_SA</code> repo variables set.
+        </li>
+        <li>
+          <code>docker buildx build --platform linux/amd64</code> and push to Artifact Registry. The
+          image installs from <code>uv.lock</code> with <code>uv sync --frozen</code>, so builds stay
+          reproducible.
+        </li>
+        <li>
+          <code>gcloud run deploy</code>, then
+          <code>gcloud run services update-traffic --to-latest</code>. The second command is not
+          redundant: <code>deploy</code> alone creates a revision but won't move traffic if a split
+          was ever set out-of-band, which pinned production to a stale revision for two days here
+          before it was caught.
+        </li>
+        <li>
+          Smoke-test <code>/health</code>, then <code>npx wrangler deploy</code> the Worker (needs
+          the <code>CLOUDFLARE_API_TOKEN</code> secret and <code>CLOUDFLARE_ACCOUNT_ID</code>
+          variable) and smoke-test it through the public hostname.
+        </li>
+      </ol>
+      <p>
+        Forking this means replacing the GCP project, the Artifact Registry path in the workflow's
+        <code>IMAGE</code>, and <code>cloudflare-proxy/wrangler.toml</code>'s <code>ORIGIN</code> and
+        <code>routes</code>, all of which currently point at this project's own account and domain.
+      </p>
+    </section>
+
+    <section id="env-vars">
+      <h2>Environment variables</h2>
+      <div class="table-wrap">
+      <table>
+        <tr><th>Variable</th><th>What it does</th></tr>
+        <tr><td><code>MCP_AUTH_TOKEN</code></td><td>The owner token. Unset, the server generates and prints one on startup.</td></tr>
+        <tr><td><code>MCP_SERVER_PORT</code></td><td>Port the server binds to.</td></tr>
+        <tr><td><code>STORAGE_BACKEND</code></td><td><code>sqlite</code>, <code>dynamodb</code>, or <code>firestore</code>. Anything durable in practice.</td></tr>
+        <tr><td><code>METRICS_DB_PATH</code></td><td>SQLite file path, overriding the repo's <code>data/</code> dir.</td></tr>
+        <tr><td><code>METRICS_TABLE</code> / <code>AWS_REGION</code></td><td>DynamoDB table name and region.</td></tr>
+        <tr><td><code>METRICS_FIRESTORE_COLLECTION</code></td><td>Firestore collection name (default <code>sessions</code>).</td></tr>
+        <tr><td><code>FIRESTORE_EMULATOR_HOST</code></td><td>Point the Firestore client at a local emulator.</td></tr>
+        <tr><td><code>GOOGLE_OAUTH_CLIENT_ID</code></td><td>Enables the real "Sign in with Google" button. Without it, <code>/auth/login</code> still renders and works with the owner token only.</td></tr>
+        <tr><td><code>PUBLIC_ORIGIN</code></td><td>The real public origin (e.g. <code>https://ctxwindow.uk</code>), needed because behind the proxy <code>request.base_url</code> reflects Cloud Run's internal origin, not what a real caller used. Every URL ctxwindow generates about itself (OAuth metadata, the install command) needs the real one.</td></tr>
+        <tr><td><code>CHAT_UI_ORIGIN</code></td><td>Comma-separated CORS allowlist.</td></tr>
+        <tr><td><code>MCP_ALLOWED_HOSTS</code></td><td>Comma-separated <code>Host</code> header allowlist for the MCP SDK's DNS-rebinding protection. Getting this wrong causes <code>421 Invalid Host header</code> on authenticated requests only, so an unauthenticated smoke test won't catch it.</td></tr>
+        <tr><td><code>DEV_MODE_SUBS</code></td><td>Comma-separated Google <code>sub</code> allowlist for developer-mode dashboard features (currently: showing <code>api_tests</code>' synthetic probe sessions, hidden from everyone else by default). Find your own <code>sub</code> via <code>mcp_server.auth.store.list_users()</code>.</td></tr>
+        <tr><td><code>DEMO_SEED_SRC</code></td><td>Path to a prebuilt SQLite demo dataset (<code>demo/metrics.db</code>, built by <code>scripts/seed_demo_db.py</code>). Set alongside a scratch <code>METRICS_DB_PATH</code> and the server copies the seed in on first boot only, which is how the public demo resets itself on a cold start. Leave both unset for a normal deployment.</td></tr>
+      </table>
+      </div>
+    </section>
+
+    <section id="roadmap">
+      <h2>Roadmap</h2>
+      <h3>Shipped</h3>
+      <ul>
+        <li>Curl-pipeable one-line setup (<code>/setup/install</code>)</li>
+        <li>Owner-scoped <code>/otlp/debug</code> + "Test your connection" panel</li>
+        <li>Route-enumerating tenant-isolation test</li>
+        <li>Firestore backend, and the production move onto it</li>
+        <li>Own domain (<code>ctxwindow.uk</code>) in front of the Worker proxy</li>
+      </ul>
+      <h3>Still open, honestly</h3>
+      <ul>
+        <li><strong>Windows/PowerShell installer variant.</strong> <code>/setup/install</code> serves a POSIX shell script, so Windows users currently have to configure <code>settings.json</code> by hand.</li>
+        <li><strong>Per-device token revoke.</strong> Today revoking a user (<code>auth.store.revoke</code>) kills every token they hold at once; there's no way to drop one machine and keep the rest.</li>
+        <li><strong>Publish to PyPI.</strong> Install is still git-clone-only.</li>
+        <li><strong>Cursor MCP tool access.</strong> Worth being precise: Cursor's OTel telemetry export is Enterprise-only with no self-service config surface, so cost and token dashboards for Cursor sessions are not on the table. Pointing <code>local_setup.py</code>'s backup-and-merge logic at <code>~/.cursor/mcp.json</code> to expose the MCP tools there is feasible, and would be labeled "tool access," not "Cursor support."</li>
+        <li><strong>A real per-project settings endpoint.</strong> The dashboard's project settings panel is wired to placeholder state (<code>TODO</code> in <code>mcp_server/routes/auth.py</code>).</li>
+        <li><strong>Redaction hardening.</strong> The OTLP redaction layer catches email addresses and home-directory paths. That is a trust reducer, not comprehensive PII scrubbing, and it's documented that way on purpose.</li>
+      </ul>
     </section>
 
     <footer>
