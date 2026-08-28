@@ -558,7 +558,51 @@ _PAGE_STYLE = """
     border-radius: 6px; padding: 0.12rem 0.5rem; cursor: pointer;
   }
   .ctx-legend .legend-actions button:hover { color: var(--text); border-color: var(--text-dimmer); }
-  .ctx-filter-summary { font-size: 10.5px; color: var(--text-dimmer); padding: 0 1.1rem 0.5rem; }
+  .ctx-legend .legend-n { color: var(--text-dimmer); font-variant-numeric: tabular-nums; font-size: 9.5px; }
+  .ctx-legend span.off .legend-n { color: var(--text-dimmer); }
+  .block-detail mark, .block-label mark {
+    background: color-mix(in srgb, var(--warn) 32%, transparent); color: inherit;
+    border-radius: 2px; padding: 0 1px;
+  }
+  .ctx-filter-summary { font-size: 10.5px; color: var(--text-dimmer); padding: 0 1.1rem 0.5rem; display: flex; align-items: center; gap: 0.6rem; }
+  .ctx-clear-adv {
+    font: inherit; font-size: 9.5px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--warn); background: var(--warn-dim); border: 1px solid var(--warn-border);
+    border-radius: 6px; padding: 0.1rem 0.5rem; cursor: pointer;
+  }
+  .ctx-clear-adv:hover { filter: brightness(1.1); }
+  /* Advanced filter bar: collapsible, above the block list. */
+  .ctx-adv-toggle {
+    font: inherit; font-size: 10.5px; font-weight: 650; color: var(--text-dim);
+    background: var(--bg-raised-2); border: 1px solid var(--border-soft); border-radius: 8px;
+    padding: 0.3rem 0.7rem; margin: 0 1.1rem 0.6rem; cursor: pointer; display: inline-flex; align-items: center; gap: 0.4rem;
+  }
+  .ctx-adv-toggle:hover { color: var(--text); border-color: var(--text-dimmer); }
+  .ctx-adv-toggle.open { border-color: var(--accent); color: var(--accent); }
+  .ctx-adv-toggle .adv-badge, .adv-badge {
+    font-size: 8.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+    background: var(--accent-dim); color: var(--accent); border-radius: 4px; padding: 0.05rem 0.3rem;
+  }
+  .ctx-adv { margin: 0 1.1rem 0.7rem; border: 1px solid var(--border-soft); border-radius: 10px; background: var(--bg-raised-2); padding: 0.7rem 0.85rem; }
+  .ctx-adv .ctx-adv-toggle { margin: 0 0 0.7rem; }
+  .ctx-adv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem 1rem; }
+  @media (max-width: 620px) { .ctx-adv-grid { grid-template-columns: 1fr; } }
+  .ctx-adv-field { display: flex; flex-direction: column; gap: 0.3rem; font-size: 10.5px; color: var(--text-dim); }
+  .ctx-adv-field > span:first-child { font-weight: 600; }
+  .ctx-adv-field.ctx-adv-search { grid-column: 1 / -1; }
+  .ctx-adv-field b { color: var(--text); font-variant-numeric: tabular-nums; }
+  .ctx-adv-field input[type="search"], .ctx-adv-field input[type="number"] {
+    font: inherit; font-size: 12px; color: var(--text); background: var(--bg-sunken);
+    border: 1px solid var(--border-soft); border-radius: 6px; padding: 0.35rem 0.5rem; width: 100%;
+  }
+  .ctx-adv-field input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .ctx-adv-field input[type="range"] { width: 100%; accent-color: var(--accent); }
+  .ctx-adv-range { display: flex; align-items: center; gap: 0.4rem; }
+  .ctx-adv-range input { width: 4.5rem; }
+  .ctx-adv-checks { flex-direction: column; gap: 0.35rem; justify-content: center; }
+  .ctx-adv-checks label { display: flex; align-items: center; gap: 0.4rem; font-weight: 500; cursor: pointer; }
+  .ctx-adv-checks input[type="checkbox"] { accent-color: var(--accent); }
+  .ctx-adv > .ctx-clear-adv { margin-top: 0.7rem; }
   .turn-group { border-top: 1px solid var(--border-soft); }
   .turn-group:first-child { border-top: none; }
   .turn-head {
@@ -1474,6 +1518,9 @@ async def auth_login(request: Request):
     ["tool_call", "tool call"], ["tool_result", "tool result"], ["answer", "answer"],
   ];
   const CTX_FILTER_KEY = "mci_ctx_hidden_cats";
+  // Advanced-filter state (search text is deliberately NOT persisted --
+  // a stale query on reload is noise; everything else is).
+  const CTX_ADV_KEY = "mci_ctx_adv_filter";
   function loadHiddenCats() {{
     try {{
       const raw = localStorage.getItem(CTX_FILTER_KEY);
@@ -1483,7 +1530,22 @@ async def auth_login(request: Request):
   function saveHiddenCats(set) {{
     try {{ localStorage.setItem(CTX_FILTER_KEY, JSON.stringify([...set])); }} catch (e) {{}}
   }}
+  function loadAdvFilter() {{
+    const def = {{ minTokens: 0, turnFrom: null, turnTo: null, errorsOnly: false, hideRedacted: false, open: false }};
+    try {{
+      const raw = localStorage.getItem(CTX_ADV_KEY);
+      return raw ? Object.assign(def, JSON.parse(raw)) : def;
+    }} catch (e) {{ return def; }}
+  }}
+  function saveAdvFilter() {{
+    try {{
+      const {{ minTokens, turnFrom, turnTo, errorsOnly, hideRedacted, open }} = ctxAdv;
+      localStorage.setItem(CTX_ADV_KEY, JSON.stringify({{ minTokens, turnFrom, turnTo, errorsOnly, hideRedacted, open }}));
+    }} catch (e) {{}}
+  }}
   let ctxHiddenCats = loadHiddenCats();
+  let ctxAdv = loadAdvFilter();
+  let ctxSearch = "";  // never persisted
   let ctxTimeline = [];
   const ctxCollapsedTurns = new Set();
 
@@ -1688,13 +1750,37 @@ async def auth_login(request: Request):
       </div>`;
   }}
 
-  function ctxVisible(b) {{ return !ctxHiddenCats.has(b.category); }}
+  // The single predicate every Context Explorer render path filters
+  // through: category toggle + advanced filters (search text, min-token
+  // threshold, turn range, errors-only, hide-redacted). All render
+  // functions (bar, legend counts, summary, block list) use this so the
+  // strip, the counts and the rows can never disagree.
+  function ctxBlockPasses(b) {{
+    if (ctxHiddenCats.has(b.category)) return false;
+    if (ctxAdv.minTokens > 0 && (b.token_estimate || 0) < ctxAdv.minTokens) return false;
+    const t = (b.turn_n == null) ? -1 : b.turn_n;
+    if (ctxAdv.turnFrom != null && t < ctxAdv.turnFrom) return false;
+    if (ctxAdv.turnTo != null && t > ctxAdv.turnTo) return false;
+    if (ctxAdv.errorsOnly && b.status !== "error") return false;
+    if (ctxAdv.hideRedacted && b.status === "redacted") return false;
+    if (ctxSearch) {{
+      const hay = ((b.content || "") + " " + (b.label || "") + " " + (b.category || "")).toLowerCase();
+      if (hay.indexOf(ctxSearch) === -1) return false;
+    }}
+    return true;
+  }}
+  // Backwards-compatible alias -- some call sites still read ctxVisible.
+  function ctxVisible(b) {{ return ctxBlockPasses(b); }}
+  function ctxAdvActive() {{
+    return ctxAdv.minTokens > 0 || ctxAdv.turnFrom != null || ctxAdv.turnTo != null
+      || ctxAdv.errorsOnly || ctxAdv.hideRedacted || !!ctxSearch;
+  }}
 
   function renderContextBar(timeline) {{
     // Bar always reflects the FILTERED view: hidden categories contribute
     // no segment, and widths are re-normalised over what's shown, so the
     // strip and the list agree.
-    const shown = timeline.filter(ctxVisible);
+    const shown = timeline.filter(ctxBlockPasses);
     const total = shown.reduce((s, b) => s + (b.token_estimate || 0), 0);
     if (!total) return '<div style="width:100%; background:var(--border-soft);"></div>';
     return shown.map((b) => {{
@@ -1719,14 +1805,30 @@ async def auth_login(request: Request):
     row.classList.toggle("expanded", opening);
   }}
 
+  // Wraps every case-insensitive occurrence of `q` in `text` with a
+  // <mark>, on already-escaped HTML. q is lowercased search text.
+  function highlightMatch(escapedText, q) {{
+    if (!q) return escapedText;
+    const lower = escapedText.toLowerCase();
+    let out = "", from = 0, at;
+    while ((at = lower.indexOf(q, from)) !== -1) {{
+      out += escapedText.slice(from, at) + '<mark>' + escapedText.slice(at, at + q.length) + '</mark>';
+      from = at + q.length;
+    }}
+    return out + escapedText.slice(from);
+  }}
+
   function renderContextBlockRow(b, idx) {{
     const color = CATEGORY_COLORS[b.category] || "var(--cat-system)";
-    const label = b.status === "redacted"
-      ? '<span class="redacted">' + escapeHtml(b.label || b.category) + ' (redacted)</span>'
+    const rawLabel = b.status === "redacted"
+      ? escapeHtml(b.label || b.category) + ' (redacted)'
       : escapeHtml(b.label || b.category);
+    const label = b.status === "redacted"
+      ? '<span class="redacted">' + highlightMatch(rawLabel, ctxSearch) + '</span>'
+      : highlightMatch(rawLabel, ctxSearch);
     const hasContent = typeof b.content === "string" && b.content.length > 0;
     const detail = hasContent
-      ? '<div class="block-detail hidden" id="block-detail-' + idx + '">' + escapeHtml(b.content) + '</div>'
+      ? '<div class="block-detail hidden" id="block-detail-' + idx + '">' + highlightMatch(escapeHtml(b.content), ctxSearch) + '</div>'
       : '<div class="block-detail unavailable hidden" id="block-detail-' + idx + '">' +
         (b.status === "redacted"
           ? "Content is redacted by the client itself before export, so it is not available here either."
@@ -1768,14 +1870,34 @@ async def auth_login(request: Request):
   }}
 
   function renderCtxLegend(timeline) {{
+    // Per-category counts reflect the OTHER advanced filters (so a
+    // swatch shows how many blocks it would add back), but not its own
+    // category toggle.
     const counts = {{}};
-    timeline.forEach((b) => {{ counts[b.category] = (counts[b.category] || 0) + 1; }});
+    timeline.forEach((b) => {{
+      const savedHidden = ctxHiddenCats;
+      ctxHiddenCats = new Set();  // ignore category toggles for the count
+      const passes = (ctxAdv.minTokens > 0 && (b.token_estimate || 0) < ctxAdv.minTokens) ? false
+        : ((() => {{ const t = (b.turn_n == null) ? -1 : b.turn_n;
+             if (ctxAdv.turnFrom != null && t < ctxAdv.turnFrom) return false;
+             if (ctxAdv.turnTo != null && t > ctxAdv.turnTo) return false;
+             if (ctxAdv.errorsOnly && b.status !== "error") return false;
+             if (ctxAdv.hideRedacted && b.status === "redacted") return false;
+             if (ctxSearch) {{
+               const hay = ((b.content || "") + " " + (b.label || "") + " " + (b.category || "")).toLowerCase();
+               if (hay.indexOf(ctxSearch) === -1) return false;
+             }}
+             return true; }})());
+      ctxHiddenCats = savedHidden;
+      if (passes) counts[b.category] = (counts[b.category] || 0) + 1;
+    }});
     const present = CTX_CATEGORIES.filter(([key]) => counts[key]);
     const swatches = present.map(([key, name]) => {{
       const off = ctxHiddenCats.has(key) ? " off" : "";
       return '<span class="' + off.trim() + '" onclick="toggleCtxCategory(\\'' + key + '\\')" '
         + 'title="' + counts[key] + ' block(s) &mdash; click to ' + (off ? 'show' : 'hide') + '">'
-        + '<i style="background:' + (CATEGORY_COLORS[key] || 'var(--cat-system)') + ';"></i>' + name + '</span>';
+        + '<i style="background:' + (CATEGORY_COLORS[key] || 'var(--cat-system)') + ';"></i>' + name
+        + ' <span class="legend-n">' + counts[key] + '</span></span>';
     }}).join("");
     return '<div class="ctx-legend">' + swatches
       + '<span class="legend-actions">'
@@ -1785,35 +1907,41 @@ async def auth_login(request: Request):
   }}
 
   function renderCtxFilterSummary(timeline) {{
-    const shown = timeline.filter(ctxVisible);
+    const shown = timeline.filter(ctxBlockPasses);
     if (shown.length === timeline.length) return "";
     const total = timeline.reduce((s, b) => s + (b.token_estimate || 0), 0) || 1;
     const shownTok = shown.reduce((s, b) => s + (b.token_estimate || 0), 0);
     const pct = (shownTok / total * 100).toFixed(1);
     return '<div class="ctx-filter-summary">Showing ' + shown.length + ' of ' + timeline.length
-      + ' blocks &middot; ' + pct + '% of tokens</div>';
+      + ' blocks &middot; ' + pct + '% of tokens'
+      + (ctxAdvActive() ? ' <button class="ctx-clear-adv" onclick="ctxClearAdvanced()">Clear filters</button>' : '')
+      + '</div>';
   }}
 
   function renderCtxBlocks(timeline) {{
     // Group the FILTERED blocks by turn_n into collapsible sections.
     const groups = new Map();
     timeline.forEach((b, idx) => {{
-      if (!ctxVisible(b)) return;
+      if (!ctxBlockPasses(b)) return;
       const t = (b.turn_n == null) ? -1 : b.turn_n;
       if (!groups.has(t)) groups.set(t, []);
       groups.get(t).push({{ b, idx }});
     }});
     if (!groups.size) {{
-      return '<div class="ctx-filter-summary">Every category is hidden. Use "All" above to bring blocks back.</div>';
+      return '<div class="ctx-filter-summary">No blocks match the current filters. '
+        + '<button class="ctx-clear-adv" onclick="ctxClearAdvanced(); ctxFilterAll();">Clear all filters</button></div>';
     }}
     const turnKeys = [...groups.keys()].sort((a, b) => a - b);
     const lastTurn = turnKeys[turnKeys.length - 1];
+    // When an advanced filter is active, expand every matching turn --
+    // the user is hunting for something, not skimming.
+    const expandAll = ctxAdvActive();
     return turnKeys.map((t) => {{
       const items = groups.get(t);
       const toks = items.reduce((s, x) => s + (x.b.token_estimate || 0), 0);
       // Collapse everything except the newest turn by default (or if the
       // user has toggled it).
-      const collapsed = ctxCollapsedTurns.has(t) || (t !== lastTurn && !ctxCollapsedTurns.has("open:" + t));
+      const collapsed = !expandAll && (ctxCollapsedTurns.has(t) || (t !== lastTurn && !ctxCollapsedTurns.has("open:" + t)));
       const heading = (t < 0) ? "Pre-conversation" : ("Turn " + t);
       return '<div class="turn-group' + (collapsed ? " collapsed" : "") + '" data-turn="' + t + '">'
         + '<div class="turn-head" onclick="toggleCtxTurn(' + t + ')">'
@@ -1826,15 +1954,70 @@ async def auth_login(request: Request):
     }}).join("");
   }}
 
-  function rerenderCtxView() {{
+  // The collapsible advanced-filter bar: search, min-token threshold,
+  // turn range, errors-only, hide-redacted. The legend swatches stay as
+  // the quick category ("type of context") filter; this is everything
+  // else. Inputs are plain onchange/oninput handlers (CSP-safe).
+  function renderCtxAdvBar() {{
+    const turns = ctxTimeline.map((b) => (b.turn_n == null ? -1 : b.turn_n));
+    const maxTurn = turns.length ? Math.max.apply(null, turns) : 0;
+    const maxTok = ctxTimeline.length ? Math.max.apply(null, ctxTimeline.map((b) => b.token_estimate || 0)) : 0;
+    const a = ctxAdv;
+    const badge = ctxAdvActive() ? ' <span class="adv-badge">on</span>' : '';
+    if (!a.open) {{
+      return '<button class="ctx-adv-toggle" onclick="ctxToggleAdvBar()">&#9881; Filters' + badge + '</button>';
+    }}
+    return ''
+      + '<div class="ctx-adv">'
+      + '  <button class="ctx-adv-toggle open" onclick="ctxToggleAdvBar()">&#9881; Filters' + badge + '</button>'
+      + '  <div class="ctx-adv-grid">'
+      + '    <label class="ctx-adv-field ctx-adv-search">'
+      + '      <span>Search text</span>'
+      + '      <input type="search" id="ctx-adv-search" placeholder="content, label or category&hellip;" '
+      +          'value="' + escapeHtml(ctxSearch) + '" oninput="ctxSetSearch(this.value)">'
+      + '    </label>'
+      + '    <label class="ctx-adv-field">'
+      + '      <span>Min tokens: <b id="ctx-adv-mintok-val">' + a.minTokens + '</b></span>'
+      + '      <input type="range" id="ctx-adv-mintok" min="0" max="' + Math.max(maxTok, 1) + '" step="1" '
+      +          'value="' + a.minTokens + '" oninput="ctxSetMinTokens(this.value)">'
+      + '    </label>'
+      + '    <label class="ctx-adv-field">'
+      + '      <span>Turns</span>'
+      + '      <span class="ctx-adv-range">'
+      + '        <input type="number" id="ctx-adv-turnfrom" min="-1" max="' + maxTurn + '" placeholder="from" '
+      +            'value="' + (a.turnFrom == null ? "" : a.turnFrom) + '" onchange="ctxSetTurnRange(this.value, null)">'
+      + '        <span>&ndash;</span>'
+      + '        <input type="number" id="ctx-adv-turnto" min="-1" max="' + maxTurn + '" placeholder="to" '
+      +            'value="' + (a.turnTo == null ? "" : a.turnTo) + '" onchange="ctxSetTurnRange(null, this.value)">'
+      + '      </span>'
+      + '    </label>'
+      + '    <div class="ctx-adv-field ctx-adv-checks">'
+      + '      <label><input type="checkbox" ' + (a.errorsOnly ? "checked" : "") + ' onchange="ctxSetFlag(\\'errorsOnly\\', this.checked)"> Errors only</label>'
+      + '      <label><input type="checkbox" ' + (a.hideRedacted ? "checked" : "") + ' onchange="ctxSetFlag(\\'hideRedacted\\', this.checked)"> Hide redacted</label>'
+      + '    </div>'
+      + '  </div>'
+      + (ctxAdvActive() ? '  <button class="ctx-clear-adv" onclick="ctxClearAdvanced()">Clear advanced filters</button>' : '')
+      + '</div>';
+  }}
+
+  function rerenderCtxView(fromInput) {{
     const bar = document.getElementById("ctx-bar-wrap");
     const legend = document.getElementById("ctx-legend-wrap");
     const summary = document.getElementById("ctx-summary-wrap");
     const list = document.getElementById("ctx-block-list");
+    const adv = document.getElementById("ctx-adv-wrap");
     if (bar) bar.innerHTML = renderContextBar(ctxTimeline);
     if (legend) legend.innerHTML = renderCtxLegend(ctxTimeline);
     if (summary) summary.innerHTML = renderCtxFilterSummary(ctxTimeline);
     if (list) list.innerHTML = renderCtxBlocks(ctxTimeline);
+    // Re-rendering the adv bar on every keystroke would steal focus from
+    // the search box, so skip it when the change came from an input in
+    // the bar itself -- only its little derived readouts need updating.
+    if (adv && !fromInput) {{ adv.innerHTML = renderCtxAdvBar(); }}
+    else if (fromInput) {{
+      const mv = document.getElementById("ctx-adv-mintok-val");
+      if (mv) mv.textContent = ctxAdv.minTokens;
+    }}
   }}
 
   function toggleCtxCategory(key) {{
@@ -1847,6 +2030,23 @@ async def auth_login(request: Request):
   function ctxFilterNone() {{
     ctxHiddenCats = new Set(CTX_CATEGORIES.map(([k]) => k));
     saveHiddenCats(ctxHiddenCats);
+    rerenderCtxView();
+  }}
+  function ctxToggleAdvBar() {{ ctxAdv.open = !ctxAdv.open; saveAdvFilter(); rerenderCtxView(); }}
+  function ctxSetSearch(v) {{ ctxSearch = (v || "").trim().toLowerCase(); rerenderCtxView(true); }}
+  function ctxSetMinTokens(v) {{ ctxAdv.minTokens = Math.max(0, parseInt(v, 10) || 0); saveAdvFilter(); rerenderCtxView(true); }}
+  function ctxSetTurnRange(from, to) {{
+    if (from !== null) ctxAdv.turnFrom = (from === "" ? null : parseInt(from, 10));
+    if (to !== null) ctxAdv.turnTo = (to === "" ? null : parseInt(to, 10));
+    saveAdvFilter();
+    rerenderCtxView(true);
+  }}
+  function ctxSetFlag(name, on) {{ ctxAdv[name] = !!on; saveAdvFilter(); rerenderCtxView(true); }}
+  function ctxClearAdvanced() {{
+    ctxSearch = "";
+    ctxAdv.minTokens = 0; ctxAdv.turnFrom = null; ctxAdv.turnTo = null;
+    ctxAdv.errorsOnly = false; ctxAdv.hideRedacted = false;
+    saveAdvFilter();
     rerenderCtxView();
   }}
   function toggleCtxTurn(t) {{
@@ -1870,6 +2070,7 @@ async def auth_login(request: Request):
       return '<p class="dash-empty">No context_blocks for this session: record_session was called without the optional field.</p>';
     }}
     ctxTimeline = timeline;
+    ctxSearch = "";  // search text never carries across a session switch
     ctxCollapsedTurns.clear();
     return `
       <div class="agent-tabs">
@@ -1878,6 +2079,7 @@ async def auth_login(request: Request):
       <div class="ctx-bar" id="ctx-bar-wrap">` + renderContextBar(timeline) + `</div>
       <div id="ctx-legend-wrap">` + renderCtxLegend(timeline) + `</div>
       <div class="section-heading">Context blocks</div>
+      <div id="ctx-adv-wrap">` + renderCtxAdvBar() + `</div>
       <div id="ctx-summary-wrap">` + renderCtxFilterSummary(timeline) + `</div>
       <div class="block-list" id="ctx-block-list">` + renderCtxBlocks(timeline) + `</div>
     `;
