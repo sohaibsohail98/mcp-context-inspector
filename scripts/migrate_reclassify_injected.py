@@ -166,6 +166,9 @@ def _plan_fragments(row):
         new_category = frags[0][1]
         if new_category == category:
             return None
+        # Symmetry with the two-way path's reconstruction assert below:
+        # the single fragment must still be byte-identical to the input.
+        assert frags[0][0] == content, "single-fragment reclassify altered content"
         return [
             {
                 "category": new_category,

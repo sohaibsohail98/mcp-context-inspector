@@ -312,7 +312,9 @@ def split_injected_context(text, base_category):
             # the whole string is injected -- splitting here would (and
             # did, on prod data) leave that instruction as the session's
             # "prompt".
-            if run_text.startswith("<session>"):
+            # lstrip: _LEADING_RUN_RE tolerates leading whitespace, so an
+            # indented "<session>" still lands here.
+            if run_text.lstrip().startswith("<session>"):
                 return [(text, CATEGORY_INJECTED)]
             # canonical separator: keep it ON the wrapper fragment
             return [(run_text + "\n\n", run_category), (prose, base_category)]
