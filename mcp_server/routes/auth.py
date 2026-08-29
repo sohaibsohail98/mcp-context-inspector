@@ -1411,12 +1411,27 @@ async def auth_login(request: Request):
     const inspectEl = document.getElementById("install-cmd-inspect");
     const btn = document.getElementById("install-refresh-btn");
     if (!cmdEl) return;  // localhost path renders a different card with no install-cmd element
+    if (!currentToken) {{
+      // Nothing to authenticate with yet (still rehydrating, or signed
+      // out). Leave the placeholder text; whoever set currentToken will
+      // call this again.
+      if (btn) {{ btn.disabled = false; btn.classList.remove("spinning"); }}
+      return;
+    }}
     if (btn) {{ btn.disabled = true; btn.classList.add("spinning"); }}
     try {{
       const res = await fetch("/setup/issue-install-code", {{
         method: "POST",
         headers: {{ Authorization: "Bearer " + currentToken }},
       }});
+      // A dead token here means the same thing it means for any other
+      // /api/ call: this browser's stored token was revoked server-side.
+      // Sign out rather than printing a raw "unauthorized" string into
+      // the setup card (which looked like a bug in the installer itself).
+      if (res.status === 401 || res.status === 403) {{
+        signOut();
+        return;
+      }}
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
       const codeParam = "t=" + encodeURIComponent(data.code);
@@ -1437,6 +1452,8 @@ async def auth_login(request: Request):
         }}
       }}
     }} catch (err) {{
+      // Genuine transient failure (offline, 5xx, an extension blocking
+      // the request). The token is still good; "New command" retries.
       cmdEl.textContent = "Couldn't fetch an install command: " + err.message + ". Click \\"New command\\" to retry.";
     }} finally {{
       if (btn) {{ btn.disabled = false; btn.classList.remove("spinning"); }}
@@ -1755,8 +1772,10 @@ async def auth_login(request: Request):
   // threshold, turn range, errors-only, hide-redacted). All render
   // functions (bar, legend counts, summary, block list) use this so the
   // strip, the counts and the rows can never disagree.
-  function ctxBlockPasses(b) {{
-    if (ctxHiddenCats.has(b.category)) return false;
+  function ctxBlockPasses(b, opts) {{
+    // opts.ignoreCats: skip the category-toggle check (the legend uses
+    // this to count how many blocks a hidden swatch would bring back).
+    if (!(opts && opts.ignoreCats) && ctxHiddenCats.has(b.category)) return false;
     if (ctxAdv.minTokens > 0 && (b.token_estimate || 0) < ctxAdv.minTokens) return false;
     const t = (b.turn_n == null) ? -1 : b.turn_n;
     if (ctxAdv.turnFrom != null && t < ctxAdv.turnFrom) return false;
@@ -1796,6 +1815,15 @@ async def auth_login(request: Request):
     return div.innerHTML;
   }}
 
+  // escapeHtml (textContent -> innerHTML) escapes & < > but NOT quotes, so
+  // it is unsafe for an unquoted-by-the-browser value that lands inside a
+  // value="..." attribute: a " in the string closes the attribute early
+  // and the rest becomes markup. Use this for every ="..." interpolation
+  // of user-controlled text (currently the Context Explorer search box).
+  function escapeAttr(s) {{
+    return escapeHtml(s).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }}
+
   function toggleBlockDetail(idx) {{
     const row = document.getElementById("block-row-" + idx);
     const detail = document.getElementById("block-detail-" + idx);
@@ -1807,8 +1835,14 @@ async def auth_login(request: Request):
 
   // Wraps every case-insensitive occurrence of `q` in `text` with a
   // <mark>, on already-escaped HTML. q is lowercased search text.
+  // If q contains an HTML metacharacter it would match INSIDE an entity
+  // in escapedText (e.g. searching "&" hits the "&" of "&amp;") and
+  // split it, so the browser then renders the broken entity literally.
+  // Those queries are rare; skip highlighting rather than corrupt the
+  // text. The row still shows -- ctxBlockPasses already matched it
+  // against the raw (unescaped) content.
   function highlightMatch(escapedText, q) {{
-    if (!q) return escapedText;
+    if (!q || /[<>&"']/.test(q)) return escapedText;
     const lower = escapedText.toLowerCase();
     let out = "", from = 0, at;
     while ((at = lower.indexOf(q, from)) !== -1) {{
@@ -1875,21 +1909,9 @@ async def auth_login(request: Request):
     // category toggle.
     const counts = {{}};
     timeline.forEach((b) => {{
-      const savedHidden = ctxHiddenCats;
-      ctxHiddenCats = new Set();  // ignore category toggles for the count
-      const passes = (ctxAdv.minTokens > 0 && (b.token_estimate || 0) < ctxAdv.minTokens) ? false
-        : ((() => {{ const t = (b.turn_n == null) ? -1 : b.turn_n;
-             if (ctxAdv.turnFrom != null && t < ctxAdv.turnFrom) return false;
-             if (ctxAdv.turnTo != null && t > ctxAdv.turnTo) return false;
-             if (ctxAdv.errorsOnly && b.status !== "error") return false;
-             if (ctxAdv.hideRedacted && b.status === "redacted") return false;
-             if (ctxSearch) {{
-               const hay = ((b.content || "") + " " + (b.label || "") + " " + (b.category || "")).toLowerCase();
-               if (hay.indexOf(ctxSearch) === -1) return false;
-             }}
-             return true; }})());
-      ctxHiddenCats = savedHidden;
-      if (passes) counts[b.category] = (counts[b.category] || 0) + 1;
+      if (ctxBlockPasses(b, {{ ignoreCats: true }})) {{
+        counts[b.category] = (counts[b.category] || 0) + 1;
+      }}
     }});
     const present = CTX_CATEGORIES.filter(([key]) => counts[key]);
     const swatches = present.map(([key, name]) => {{
@@ -1974,7 +1996,7 @@ async def auth_login(request: Request):
       + '    <label class="ctx-adv-field ctx-adv-search">'
       + '      <span>Search text</span>'
       + '      <input type="search" id="ctx-adv-search" placeholder="content, label or category&hellip;" '
-      +          'value="' + escapeHtml(ctxSearch) + '" oninput="ctxSetSearch(this.value)">'
+      +          'value="' + escapeAttr(ctxSearch) + '" oninput="ctxSetSearch(this.value)">'
       + '    </label>'
       + '    <label class="ctx-adv-field">'
       + '      <span>Min tokens: <b id="ctx-adv-mintok-val">' + a.minTokens + '</b></span>'
@@ -2666,12 +2688,21 @@ async def auth_login(request: Request):
     const landing = document.getElementById("landing");
     landing.classList.remove("hidden");
     landing.innerHTML = successBanner(email) + connectPage(email, token);
-    refreshInstallCommand();
     goToDashboard();
+    // Verify BEFORE minting an install command. A revoked stored token
+    // would otherwise make /setup/issue-install-code 401 and paint
+    // "Couldn't fetch an install command: unauthorized..." into the
+    // setup card a beat before this check signs the browser out -- it
+    // read as the installer being broken. On a revoked token signOut()
+    // takes over; otherwise the card fills in now that we trust it.
     verifyStoredToken(token).then((state) => {{
-      if (state === "revoked") signOut();
+      if (state === "revoked") {{
+        signOut();
+        return;
+      }}
       // "transient" / "ok" -> stay signed in; dashboard fetches retry on
       // their own refresh cycle.
+      refreshInstallCommand();
     }});
   }}
 
