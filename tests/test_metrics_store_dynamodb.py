@@ -484,10 +484,9 @@ def test_start_or_get_session_conditional_put_does_not_raise(fake_table):
 
 def test_append_turn_retries_past_index_collision(fake_table, monkeypatch):
     """Two concurrent OTLP batches for the same session can both call
-    _next_index and get the same count back before either write commits
-    A plain put_item would let the second silently overwrite the
-    first (the DynamoDB append-race gap noted in plan.md). The
-    attribute_not_exists(sk) ConditionExpression must reject the
+    _next_index and get the same count back before either write commits.
+    A plain put_item would let the second silently overwrite the first.
+    The attribute_not_exists(sk) ConditionExpression must reject the
     collision and _put_next_indexed must retry with a freshly
     recomputed index rather than losing either row."""
     sid = store_dynamodb.start_or_get_session("otel-append-race", source="claude_code")

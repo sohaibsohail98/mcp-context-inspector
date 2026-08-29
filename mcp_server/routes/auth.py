@@ -1389,9 +1389,9 @@ async def auth_login(request: Request):
   // Mints a fresh short-lived install code (see POST
   // /setup/issue-install-code) and renders both the piped one-liner and
   // the inspect-first (download, read, then run) variant of the exact
-  // same command; see CTXWINDOW_LAUNCH_PLAN.md §1.2. The code is single-use
-  // and expires in a few minutes, so this re-mints on every call rather
-  // than caching, so "New command" (and page reload) always gets a live one.
+  // same command. The code is single-use and expires in a few minutes,
+  // so this re-mints on every call rather than caching, so "New command"
+  // (and page reload) always gets a live one.
   // Auto-detect once; the toggle above overrides. navigator.platform is
   // deprecated but still the most reliable Windows signal in every
   // current browser; the UA regex is the fallback in the same test.
@@ -1452,8 +1452,8 @@ async def auth_login(request: Request):
         }}
       }}
     }} catch (err) {{
-      // Genuine transient failure (offline, 5xx, an extension blocking
-      // the request). The token is still good; "New command" retries.
+      // Transient failure (offline, 5xx) -- token's still good, so keep
+      // the retryable message rather than signing out.
       cmdEl.textContent = "Couldn't fetch an install command: " + err.message + ". Click \\"New command\\" to retry.";
     }} finally {{
       if (btn) {{ btn.disabled = false; btn.classList.remove("spinning"); }}
@@ -1835,12 +1835,9 @@ async def auth_login(request: Request):
 
   // Wraps every case-insensitive occurrence of `q` in `text` with a
   // <mark>, on already-escaped HTML. q is lowercased search text.
-  // If q contains an HTML metacharacter it would match INSIDE an entity
-  // in escapedText (e.g. searching "&" hits the "&" of "&amp;") and
-  // split it, so the browser then renders the broken entity literally.
-  // Those queries are rare; skip highlighting rather than corrupt the
-  // text. The row still shows -- ctxBlockPasses already matched it
-  // against the raw (unescaped) content.
+  // Bail out if q holds an HTML metacharacter: it would match inside an
+  // entity in escapedText (searching "&" hits the "&" of "&amp;") and
+  // split it. The row still shows -- ctxBlockPasses matched raw content.
   function highlightMatch(escapedText, q) {{
     if (!q || /[<>&"']/.test(q)) return escapedText;
     const lower = escapedText.toLowerCase();
@@ -2689,16 +2686,13 @@ async def auth_login(request: Request):
     landing.classList.remove("hidden");
     landing.innerHTML = successBanner(email) + connectPage(email, token);
     goToDashboard();
-    // Verify BEFORE minting an install command. A revoked stored token
-    // would otherwise make /setup/issue-install-code 401 and paint
-    // "Couldn't fetch an install command: unauthorized..." into the
-    // setup card a beat before this check signs the browser out -- it
-    // read as the installer being broken. On a revoked token signOut()
-    // takes over; otherwise the card fills in now that we trust it.
+    // Verify BEFORE minting an install command: a revoked stored token
+    // would make /setup/issue-install-code 401 and flash that error in
+    // the setup card just before this check signs the browser out.
     verifyStoredToken(token).then((state) => {{
       if (state === "revoked") {{
         signOut();
-        return;
+        return;  // don't mint against a token we just found dead
       }}
       // "transient" / "ok" -> stay signed in; dashboard fetches retry on
       // their own refresh cycle.

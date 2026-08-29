@@ -1,8 +1,8 @@
 # Demo capture pipeline: reseeds the deterministic demo database, starts
 # the server in demo mode, runs the Playwright recording, converts it to
 # the two shipped output formats, then tears the server down. See
-# scripts/demo_capture.py, scripts/encode_demo_take.sh, and demo-brief.md
-# for the full choreography.
+# scripts/demo_capture.py, scripts/encode_demo_take.sh, and
+# docs/internal/demo-brief.md for the full choreography.
 #
 # Everything here is dev/CI tooling, never part of the deployed image
 # (see pyproject.toml: playwright is a dev-only dependency, ffmpeg is a

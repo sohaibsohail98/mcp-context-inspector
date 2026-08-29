@@ -18,8 +18,8 @@ SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
 
 # Shared by routes/setup.py (reports this in /setup/issue-install-code's
 # response) and every auth/store_*.py backend's issue_install_code
-# default. One source of truth for the "Pin TTL to <=5 minutes" rule
-# from CTXWINDOW_LAUNCH_PLAN.md, rather than three copies that could drift.
+# default. One source of truth for the "install code TTL stays <= 5
+# minutes" rule, rather than three copies that could drift.
 INSTALL_CODE_TTL_SECONDS = 300
 
 

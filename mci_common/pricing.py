@@ -1,7 +1,7 @@
-# $/1K tokens, approximate. Matches the closest verified reference
-# (Sonnet 4.5's published rate). Confirm against the Bedrock pricing
-# page before trusting this for anything beyond a rough estimate; it is
-# explicitly not guaranteed current.
+# $/1K tokens, approximate. The Sonnet rows use Sonnet's published
+# per-1K rate; the Haiku rows use Haiku's. Confirm against the Bedrock
+# pricing page before trusting this for anything beyond a rough
+# estimate; it is explicitly not guaranteed current.
 PRICING = {
     "us.anthropic.claude-sonnet-4-6": {"input": 0.003, "output": 0.015},
     "us.anthropic.claude-haiku-4-5-20251001-v1:0": {"input": 0.0008, "output": 0.004},

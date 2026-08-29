@@ -18,6 +18,11 @@ TODO.md
 # tree, not just the repo root — a local server run can create this
 # under mcp_server/data/ too, depending on where METRICS_DB_PATH's
 # default resolves to.
+#
+# NOT ignored: demo/metrics.db — that's the deterministic seed built by
+# scripts/seed_demo_db.py, committed on purpose and baked into the image
+# (see server.py::_maybe_seed_demo_db). Never point a live server's
+# METRICS_DB_PATH at it, or local rows leak into the tracked seed.
 data/metrics.db
 data/mcp_auth.db
 **/data/metrics.db
