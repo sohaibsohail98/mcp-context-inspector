@@ -36,4 +36,14 @@ COPY demo/ ./demo/
 
 ENV HOST=0.0.0.0
 EXPOSE 8080
+
+# /health and its alias /ping both return {"status":"ok"} unauthenticated
+# (mcp_server/routes/api.py). Cloud Run ignores Dockerfile HEALTHCHECK and
+# runs its own probe, but `docker`/`podman` and some registry build
+# pipelines honour this one. Shell form so it follows $PORT (the server
+# binds $PORT, then $MCP_SERVER_PORT, then 8787; the deploy sets
+# PORT=8080 to match EXPOSE).
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+  CMD .venv/bin/python -c "import os,urllib.request,sys; p=os.environ.get('PORT') or os.environ.get('MCP_SERVER_PORT') or '8787'; sys.exit(0 if urllib.request.urlopen(f'http://127.0.0.1:{p}/health', timeout=2).status==200 else 1)"
+
 CMD [".venv/bin/python", "-m", "mcp_server.server"]

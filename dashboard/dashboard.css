@@ -79,6 +79,10 @@
       radial-gradient(1200px 520px at 50% -12%, var(--accent-glow), transparent 62%),
       var(--bg);
     color: var(--text); line-height: 1.6; -webkit-font-smoothing: antialiased;
+    /* The session-detail panel has a few intentionally-wide children
+       (the tool-call table, the context bar) that scroll inside their
+       own containers; nothing should ever push the page body sideways. */
+    overflow-x: hidden;
   }
   h1, h2, h3 { font-family: "Source Serif 4", Georgia, serif; }
   /* Sign-in / connect-config content stays a narrow reading column;
@@ -652,3 +656,23 @@
   @media (prefers-reduced-motion: reduce) { .icon-btn.spinning { animation: none; } }
   .refresh-controls { display: flex; align-items: center; gap: 0.4rem; }
   .refresh-controls .chip.auto-off { color: var(--text-dimmer); }
+
+  /* Narrow-viewport hardening for the session-detail panel. The panel's
+     content was overflowing the viewport by ~116px at 375-390px because
+     a couple of children are sized for a wider column. Keep the wide
+     ones scrolling inside their own box and let the rest reflow, so the
+     page body never scrolls horizontally on a phone. */
+  @media (max-width: 620px) {
+    .layout { padding: 1.1rem 0.9rem 3rem; }
+    .kpi-strip { grid-template-columns: repeat(2, 1fr); }
+    .detail-meta { gap: 0.5rem 0.9rem; }
+    .metric-grid { grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); padding: 0 0.9rem 1rem; }
+    .section-heading, .ctx-legend, .ctx-filter-summary { padding-left: 0.9rem; padding-right: 0.9rem; }
+    .ctx-adv, .ctx-adv-toggle { margin-left: 0.9rem; margin-right: 0.9rem; }
+    .ctx-bar { width: calc(100% - 1.8rem); margin-left: 0.9rem; margin-right: 0.9rem; }
+    /* the tool-call grid has a hard min-width; give it a real scroll box */
+    .tool-table { padding: 0 0.9rem 1.1rem; }
+    .tool-table > .tool-row { min-width: 520px; }
+    .turn-head { padding: 0.5rem 0.5rem; }
+    .block-run { padding-left: 1.6rem; }
+  }
