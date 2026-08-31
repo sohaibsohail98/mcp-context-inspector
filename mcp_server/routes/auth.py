@@ -83,7 +83,17 @@ _GSI_SCRIPT_TAG = '<script src="https://accounts.google.com/gsi/client" async de
 # stays single-sourced from the file even though that page hasn't been
 # moved to a linked stylesheet. auth_login's own page links
 # /auth/static/dashboard.css directly and does not use this.
-_PAGE_STYLE = (_DASHBOARD_DIR / "dashboard.css").read_text()
+#
+# Read defensively: this runs at import time, and server.py imports this
+# module on startup, so a bare read_text() turns a missing/unreadable
+# dashboard.css into a server-wide boot failure (a broken deploy) rather
+# than one slightly-unstyled consent screen. A missing file here means
+# the Docker image is mis-built -- surface that as an unstyled page, not
+# a crash loop.
+try:
+    _PAGE_STYLE = (_DASHBOARD_DIR / "dashboard.css").read_text()
+except OSError:  # pragma: no cover - only hit on a mis-built image
+    _PAGE_STYLE = ""
 
 
 @server.custom_route("/auth/login", methods=["GET"])

@@ -5,6 +5,7 @@
 <title>CtxWindow Docs</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="MCP server + live dashboard for real per-session cost, token, and Context Window Explorer telemetry.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="alternate icon" href="/favicon.ico" sizes="any">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
 <style>
   :root {
@@ -444,9 +445,11 @@ export COPILOT_OTEL_CAPTURE_CONTENT=true   # opt-in: needed for the Context Expl
       <p>
         On the browser side, a revoked token is handled as a clean sign-out. When
         <code>/auth/login</code> reloads with a stored token that the server no longer accepts, the
-        page verifies it (against <code>/auth/verify</code>) before minting anything and, on a
-        401/403, clears local state and drops back to the sign-in screen rather than surfacing a
-        raw "unauthorized" error from <code>/setup/issue-install-code</code>.
+        page verifies it (a probe request to <code>/api/sessions?limit=1</code>) before minting
+        anything and, on a 401/403, clears local state and drops back to the sign-in screen rather
+        than surfacing a raw "unauthorized" error from <code>/setup/issue-install-code</code>. A
+        network timeout or 5xx on that probe is treated as transient &mdash; the browser stays
+        signed in and retries on its next refresh.
       </p>
 
       <h3>Google sign-in setup (one-time, about 2 minutes)</h3>
