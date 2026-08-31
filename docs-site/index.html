@@ -206,6 +206,7 @@
       <a href="#tools">The 8 MCP tools</a>
 
       <span class="group-label">Reference</span>
+      <a href="#context-explorer">Context Window Explorer</a>
       <a href="#auth-model">Auth model</a>
       <a href="#architecture">Architecture</a>
       <a href="#storage-backends">Storage backends</a>
@@ -282,6 +283,11 @@ uv run python -m mcp_server.server</code></pre>
         <code>~/.claude/settings.json</code> (backed up first, merged, never overwritten):
       </p>
       <pre><code>curl -fsSL https://ctxwindow.uk/setup/install?t=&lt;code&gt; | sh</code></pre>
+      <p>
+        On Windows the setup page's <strong>Windows (PowerShell)</strong> tab hands you the
+        equivalent instead:
+      </p>
+      <pre><code>irm "https://ctxwindow.uk/setup/install?os=windows&amp;t=&lt;code&gt;" | iex</code></pre>
       <p>
         The <code>?t=</code> code is single-use and short-lived, so your real token is never in
         the command itself.
@@ -367,10 +373,56 @@ export COPILOT_OTEL_CAPTURE_CONTENT=true   # opt-in: needed for the Context Expl
         <tr><td><code>get_cost_estimate</code></td><td>Estimated cost, one session or a time window</td><td>Read</td></tr>
         <tr><td><code>get_recent_sessions</code></td><td>Most recent sessions, newest first</td><td>Read</td></tr>
         <tr><td><code>get_context_timeline</code></td><td>Full context-window block breakdown</td><td>Read</td></tr>
-        <tr><td><code>record_session</code></td><td>Records one agent execution's metrics</td><td>Write</td></tr>
+        <tr><td><code>record_session</code></td><td>Records one agent execution's metrics</td><td>Write (append-only)</td></tr>
       </table>
       </div>
+      <p>
+        Every tool ships explicit MCP annotations (<code>readOnlyHint</code> /
+        <code>destructiveHint</code> / <code>idempotentHint</code> / <code>openWorldHint</code>),
+        so a client can auto-approve the seven reads and prompt only for
+        <code>record_session</code>. Nothing here reaches outside this server's own store
+        (<code>openWorldHint</code> is always false), and <code>record_session</code> only ever
+        inserts a new session &mdash; it never mutates or deletes one, so it's marked
+        append-only rather than destructive, and non-idempotent (each call mints a new
+        <code>session_id</code>).
+      </p>
       <p>Plain REST equivalents are exposed under <code>/api/*</code>.</p>
+    </section>
+
+    <section id="context-explorer">
+      <h2>Context Window Explorer</h2>
+      <p>
+        The per-session <strong>Context Explorer</strong> tab on the dashboard reconstructs a
+        session's context window as an ordered, categorized list of blocks &mdash; system prompt,
+        tool specs, injected context, user turns, reasoning, tool calls and results, the final
+        answer &mdash; grouped by turn, with a token-proportional strip across the top and a
+        cumulative token estimate against the model's real window size. It's built from the
+        <code>context_blocks</code> a session carries (from an OTLP capture with raw bodies on, or
+        supplied directly in a <code>record_session</code> payload); a session without them still
+        shows metrics, just not this view.
+      </p>
+      <h3>Filters</h3>
+      <p>
+        A collapsible <strong>Filters</strong> bar sits above the block list. The category legend
+        (with All / None) toggles whole categories on and off; alongside it:
+      </p>
+      <ul>
+        <li><strong>Free-text search</strong> over each block's content, label, and category, with
+          <code>&lt;mark&gt;</code> highlighting of the match.</li>
+        <li><strong>Min tokens</strong> slider &mdash; hide blocks below a token-estimate threshold.</li>
+        <li><strong>Turn range</strong> &mdash; from / to turn-number inputs (turn <code>-1</code> is
+          the pre-turn setup blocks).</li>
+        <li><strong>Errors only</strong> &mdash; keep just blocks with <code>status: "error"</code>.</li>
+        <li><strong>Hide redacted</strong> &mdash; drop blocks with <code>status: "redacted"</code>
+          (e.g. extended-thinking content Claude Code strips before export).</li>
+      </ul>
+      <p>
+        A summary line reads <em>&ldquo;Showing X of Y blocks &middot; Z% of tokens&rdquo;</em> with a
+        Clear button when any filter is active. The strip, the legend counts, and the row list all
+        pass through one predicate, so they never disagree. Filter state (everything except the
+        search text, which resets on reload) persists to <code>localStorage</code> under
+        <code>mci_ctx_adv_filter</code>.
+      </p>
     </section>
 
     <section id="auth-model">
@@ -388,6 +440,13 @@ export COPILOT_OTEL_CAPTURE_CONTENT=true   # opt-in: needed for the Context Expl
         Revoke someone's access with <code>mcp_server.auth.store.revoke(google_sub)</code> (find
         their <code>sub</code> via <code>list_users()</code>). Their existing token stops working
         immediately, and already-recorded data stays where it is.
+      </p>
+      <p>
+        On the browser side, a revoked token is handled as a clean sign-out. When
+        <code>/auth/login</code> reloads with a stored token that the server no longer accepts, the
+        page verifies it (against <code>/auth/verify</code>) before minting anything and, on a
+        401/403, clears local state and drops back to the sign-in screen rather than surfacing a
+        raw "unauthorized" error from <code>/setup/issue-install-code</code>.
       </p>
 
       <h3>Google sign-in setup (one-time, about 2 minutes)</h3>
@@ -479,9 +538,25 @@ export COPILOT_OTEL_CAPTURE_CONTENT=true   # opt-in: needed for the Context Expl
 }</code></pre>
       <p>
         <code>context_blocks</code> categories: <code>system</code>, <code>tools</code>,
-        <code>user</code>, <code>reasoning</code>, <code>thinking</code>, <code>tool_call</code>,
-        <code>tool_result</code> (optional <code>"status"</code> field for color-coding failures),
-        and <code>answer</code>.
+        <code>user</code>, <code>injected</code>, <code>command</code>, <code>reasoning</code>,
+        <code>tool_call</code>, <code>tool_result</code>, and <code>answer</code>. An optional
+        <code>"status"</code> field (<code>"error"</code>, <code>"redacted"</code>) drives
+        color-coding and the Explorer's filters. Extended-thinking content folds into
+        <code>reasoning</code> (Claude Code redacts it before export, so there's no separate
+        <code>thinking</code> block to render).
+      </p>
+      <p>
+        <code>injected</code> and <code>command</code> exist because Claude Code wraps
+        machine-generated context around a message before the model sees it, and blanket-tagging
+        that as <code>user</code> overstated how much of the window the human actually drove.
+        The OTLP mapper (<code>mcp_server/otlp/common.py</code>) peels these on an exact
+        fragment boundary: <code>&lt;system-reminder&gt;</code>, <code>&lt;ide_opened_file&gt;</code>,
+        a whole <code>&lt;session&gt;&hellip;&lt;/session&gt;</code> block plus its trailing
+        title-generation instructions, and similar harness wrappers become
+        <code>injected</code>; slash-command plumbing (<code>&lt;command-name&gt;</code>,
+        <code>&lt;local-command-stdout&gt;</code>, <code>&lt;bash-input&gt;</code>&hellip;) becomes
+        <code>command</code>. A mid-sentence mention of one of those tag names in genuine prose
+        is never reclassified.
       </p>
       <p>
         Token counts are honest, labeled estimates, not exact provider usage. That keeps a single
@@ -615,7 +690,8 @@ httpx.post(
         <tr><td><code>MCP_SERVER_PORT</code></td><td>Port the server binds to.</td></tr>
         <tr><td><code>STORAGE_BACKEND</code></td><td><code>sqlite</code>, <code>dynamodb</code>, or <code>firestore</code>. Anything durable in practice.</td></tr>
         <tr><td><code>METRICS_DB_PATH</code></td><td>SQLite file path, overriding the repo's <code>data/</code> dir.</td></tr>
-        <tr><td><code>METRICS_TABLE</code> / <code>AWS_REGION</code></td><td>DynamoDB table name and region.</td></tr>
+        <tr><td><code>METRICS_TABLE</code> / <code>AWS_REGION</code></td><td>DynamoDB table name (sessions) and region.</td></tr>
+        <tr><td><code>AUTH_TABLE</code></td><td>DynamoDB table name for the auth-token store (default <code>mcp-context-auth</code>), separate from <code>METRICS_TABLE</code>.</td></tr>
         <tr><td><code>METRICS_FIRESTORE_COLLECTION</code></td><td>Firestore collection name (default <code>sessions</code>).</td></tr>
         <tr><td><code>FIRESTORE_EMULATOR_HOST</code></td><td>Point the Firestore client at a local emulator.</td></tr>
         <tr><td><code>GOOGLE_OAUTH_CLIENT_ID</code></td><td>Enables the real "Sign in with Google" button. Without it, <code>/auth/login</code> still renders and works with the owner token only.</td></tr>
@@ -624,6 +700,8 @@ httpx.post(
         <tr><td><code>MCP_ALLOWED_HOSTS</code></td><td>Comma-separated <code>Host</code> header allowlist for the MCP SDK's DNS-rebinding protection. Getting this wrong causes <code>421 Invalid Host header</code> on authenticated requests only, so an unauthenticated smoke test won't catch it.</td></tr>
         <tr><td><code>DEV_MODE_SUBS</code></td><td>Comma-separated Google <code>sub</code> allowlist for developer-mode dashboard features (currently: showing <code>api_tests</code>' synthetic probe sessions, hidden from everyone else by default). Find your own <code>sub</code> via <code>mcp_server.auth.store.list_users()</code>.</td></tr>
         <tr><td><code>DEMO_SEED_SRC</code></td><td>Path to a prebuilt SQLite demo dataset (<code>demo/metrics.db</code>, built by <code>scripts/seed_demo_db.py</code>). Set alongside a scratch <code>METRICS_DB_PATH</code> and the server copies the seed in on first boot only, which is how the public demo resets itself on a cold start. Leave both unset for a normal deployment.</td></tr>
+        <tr><td><code>CTXWINDOW_DEMO_MODE</code></td><td>Set to <code>1</code> only for demo-video capture (<code>scripts/demo_capture.py</code>): enables a fixed fake bearer token against the seeded DB and the <code>?demo=1</code> intro animation on <code>/auth/login</code>. Unset in every real deployment.</td></tr>
+        <tr><td><code>PORT</code> / <code>HOST</code></td><td>Bind address, set by the platform (Cloud Run sets <code>PORT</code>). <code>PORT</code> overrides <code>MCP_SERVER_PORT</code>; <code>HOST</code> defaults to <code>127.0.0.1</code> (the Dockerfile sets <code>0.0.0.0</code>).</td></tr>
       </table>
       </div>
     </section>
@@ -633,6 +711,13 @@ httpx.post(
       <h3>Shipped</h3>
       <ul>
         <li>Curl-pipeable one-line setup (<code>/setup/install</code>)</li>
+        <li>Windows / PowerShell installer variant (<code>irm &hellip;?os=windows | iex</code>, POSIX <code>sh</code> still the default)</li>
+        <li>Explicit MCP tool annotations on all 8 tools (read-only vs. append-only)</li>
+        <li>Advanced filtering in the Context Explorer (search, min-tokens, turn range, errors-only, hide-redacted)</li>
+        <li>Per-device token revoke &mdash; each browser gets its own token
+          (<code>device_tokens</code>), and the dashboard's "Devices &amp; sessions" panel
+          (<code>/auth/devices</code>, <code>/auth/revoke-device</code>) drops one without
+          signing the rest out</li>
         <li>Owner-scoped <code>/otlp/debug</code> + "Test your connection" panel</li>
         <li>Route-enumerating tenant-isolation test</li>
         <li>Firestore backend, and the production move onto it</li>
@@ -640,8 +725,9 @@ httpx.post(
       </ul>
       <h3>Still open, honestly</h3>
       <ul>
-        <li><strong>Windows/PowerShell installer variant.</strong> <code>/setup/install</code> serves a POSIX shell script, so Windows users currently have to configure <code>settings.json</code> by hand.</li>
-        <li><strong>Per-device token revoke.</strong> Today revoking a user (<code>auth.store.revoke</code>) kills every token they hold at once; there's no way to drop one machine and keep the rest.</li>
+        <li><strong>Account-wide revoke UX.</strong> Per-device revoke is done; the account-wide
+          <code>auth.store.revoke</code> (kill every token at once) is still admin-only, with no
+          dashboard button.</li>
         <li><strong>Publish to PyPI.</strong> Install is still git-clone-only.</li>
         <li><strong>Cursor MCP tool access.</strong> Worth being precise: Cursor's OTel telemetry export is Enterprise-only with no self-service config surface, so cost and token dashboards for Cursor sessions are not on the table. Pointing <code>local_setup.py</code>'s backup-and-merge logic at <code>~/.cursor/mcp.json</code> to expose the MCP tools there is feasible, and would be labeled "tool access," not "Cursor support."</li>
         <li><strong>A real per-project settings endpoint.</strong> The dashboard's project settings panel is wired to placeholder state (<code>TODO</code> in <code>mcp_server/routes/auth.py</code>).</li>
