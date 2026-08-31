@@ -105,6 +105,41 @@ def test_unlisted_host_is_still_rejected_with_421(isolated_auth_store, isolated_
     assert resp.status_code == 421
 
 
+def _build_rebind_disabled_app():
+    """Mirrors server.py's MCP_DISABLE_DNS_REBINDING_PROTECTION=1 path:
+    the escape hatch for a registry's build sandbox that reaches the
+    container over an ephemeral internal Docker address."""
+    app = server_module.server.streamable_http_app(
+        transport_security=TransportSecuritySettings(
+            enable_dns_rebinding_protection=False,
+            allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*"],
+            allowed_origins=["http://127.0.0.1:8788", "http://localhost:8788"],
+        )
+    )
+    app.add_middleware(server_module.MultiTokenAuthMiddleware, owner_token="owner-secret")
+    return app
+
+
+def test_rebinding_protection_disabled_accepts_an_internal_docker_host(isolated_auth_store, isolated_sqlite_db):
+    """With MCP_DISABLE_DNS_REBINDING_PROTECTION set, a Host header like
+    Glama's build sandbox sends ("10.90.0.1:33579" -- an ephemeral
+    internal Docker-network address that can't be allowlisted ahead of
+    time) must NOT 421. The auth gate still applies to /mcp data calls."""
+    app = _build_rebind_disabled_app()
+    with TestClient(app, base_url="http://10.90.0.1:33579") as c:
+        resp = c.post(
+            "/mcp",
+            json=_initialize_body(),
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
+                "Authorization": "Bearer owner-secret",
+            },
+        )
+    assert resp.status_code != 421, resp.text
+    assert resp.status_code < 400, resp.text
+
+
 def test_bare_streamable_http_app_would_have_rejected_the_prod_host(isolated_auth_store, isolated_sqlite_db):
     """Documents the bug's actual mechanism: without an explicit
     transport_security argument (the pre-fix code path), even the

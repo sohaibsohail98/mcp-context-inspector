@@ -145,9 +145,17 @@ if __name__ == "__main__":
     # rewrites it), same CHAT_UI_ORIGIN-style convention as above.
     deployed_hosts = os.environ.get("MCP_ALLOWED_HOSTS", "")
     allowed_hosts.extend(host.strip() for host in deployed_hosts.split(",") if host.strip())
+    # Escape hatch for throwaway build/test sandboxes (e.g. a registry's
+    # MCP-catalogue build pipeline) that reach the container over an
+    # ephemeral internal Docker-network address -- a Host header like
+    # "10.90.0.1:33579" that can't be allowlisted ahead of time because
+    # the IP/port vary per run, and DNS-rebinding protection then 421s
+    # POST /mcp while GET /health still passes. Off by default; NO real
+    # deployment sets this (Cloud Run uses MCP_ALLOWED_HOSTS instead).
+    disable_rebind = os.environ.get("MCP_DISABLE_DNS_REBINDING_PROTECTION", "").strip().lower() in ("1", "true", "yes")
     http_app = server.streamable_http_app(
         transport_security=TransportSecuritySettings(
-            enable_dns_rebinding_protection=True,
+            enable_dns_rebinding_protection=not disable_rebind,
             allowed_hosts=allowed_hosts,
             allowed_origins=allowed_origins,
         )
