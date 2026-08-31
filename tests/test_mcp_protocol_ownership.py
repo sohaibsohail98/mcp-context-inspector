@@ -178,7 +178,7 @@ def test_anon_client_can_discover_tools_but_not_read_data(client, isolated_auth_
     """A registry crawler with NO bearer token (e.g. Glama's build-test
     inspector) can run the discovery handshake and enumerate the 8 tools,
     but any data tools/call is still 401. See
-    MultiTokenAuthMiddleware.ANON_MCP_METHODS."""
+    MultiTokenAuthMiddleware._MCP_DATA_METHODS."""
     # Seed one real session as the owner so "sees no data" is a
     # meaningful assertion, not just an empty store.
     owner = RawMcpClient(client, "owner-secret")

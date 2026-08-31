@@ -443,13 +443,17 @@ export COPILOT_OTEL_CAPTURE_CONTENT=true   # opt-in: needed for the Context Expl
         immediately, and already-recorded data stays where it is.
       </p>
       <p>
-        One deliberate carve-out: the MCP <em>discovery</em> handshake &mdash;
-        <code>initialize</code>, <code>notifications/initialized</code>, <code>tools/list</code>,
-        <code>ping</code> &mdash; is answered on <code>/mcp</code> without a bearer token, so
-        registry and catalogue crawlers whose MCP client can't attach an <code>Authorization</code>
-        header can still index the tool definitions. These methods carry no session data. Every
-        <code>tools/call</code>, and all of <code>/api/*</code>, <code>/otlp</code>,
-        <code>/setup</code>, still require a valid token.
+        One deliberate carve-out: the MCP handshake and capability-listing calls on
+        <code>/mcp</code> &mdash; <code>initialize</code>, <code>notifications/*</code>,
+        <code>ping</code>, <code>tools/list</code> / <code>resources/list</code> /
+        <code>prompts/list</code>, and the GET that opens the server&rarr;client event stream
+        &mdash; are answered without a bearer token, so registry and catalogue crawlers whose MCP
+        client can't attach an <code>Authorization</code> header can still complete the handshake
+        and index the tool definitions. None of these read session data. It's a denylist: only
+        <code>tools/call</code> and <code>resources/read</code> (plus <code>/api/*</code>,
+        <code>/otlp</code>, <code>/setup</code>) require a valid token &mdash; and an
+        unauthenticated request that isn't a recognized handshake call still gets the 401 with an
+        OAuth-discovery pointer.
       </p>
       <p>
         On the browser side, a revoked token is handled as a clean sign-out. When
@@ -755,9 +759,9 @@ httpx.post(
         <li>Curl-pipeable one-line setup (<code>/setup/install</code>)</li>
         <li>Windows / PowerShell installer variant (<code>irm &hellip;?os=windows | iex</code>, POSIX <code>sh</code> still the default)</li>
         <li>Explicit MCP tool annotations on all 8 tools (read-only vs. append-only)</li>
-        <li>Unauthenticated MCP discovery handshake (<code>initialize</code> /
-          <code>notifications/initialized</code> / <code>tools/list</code> / <code>ping</code>) so
-          registry crawlers can index the tool definitions without a token</li>
+        <li>Unauthenticated MCP handshake + capability listings (<code>initialize</code>,
+          <code>tools/list</code>, &hellip;) so registry crawlers can index the tool definitions
+          without a token; <code>tools/call</code> and <code>resources/read</code> stay gated</li>
         <li>Site-root <code>robots.txt</code> / <code>sitemap.xml</code> / <code>favicon</code>, and
           a <code>/ping</code> alias of <code>/health</code></li>
         <li>Advanced filtering in the Context Explorer (search, min-tokens, turn range, errors-only, hide-redacted)</li>
