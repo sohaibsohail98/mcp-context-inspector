@@ -3,25 +3,48 @@ a caller's own remote agent to push its own data in. All thin wrappers
 around metrics/store.py; importing this module is what registers them
 on the shared `server` instance from mcp_server.app."""
 
+from mcp.types import ToolAnnotations
+
 from mcp_server.app import _log_tool_errors, current_owner, server
 from metrics import store
 
+# The seven get_* tools only read this server's own recorded data: no
+# writes, no external calls, and the same args always return the same
+# thing (modulo new data arriving), so repeat calls are harmless. MCP
+# clients use these hints to decide what to auto-approve.
+_READ_ONLY = ToolAnnotations(
+    read_only_hint=True,
+    destructive_hint=False,
+    idempotent_hint=True,
+    open_world_hint=False,
+)
+# record_session writes, but only ever appends a brand-new session doc
+# (never mutates or deletes an existing one), and each call mints a new
+# session_id so it is not idempotent. Still a closed world -- it touches
+# this server's own store, nothing external.
+_APPEND_ONLY = ToolAnnotations(
+    read_only_hint=False,
+    destructive_hint=False,
+    idempotent_hint=False,
+    open_world_hint=False,
+)
 
-@server.tool()
+
+@server.tool(annotations=_READ_ONLY)
 @_log_tool_errors
 def get_session_metrics(session_id: str) -> dict:
     """Session metadata plus per-prompt metrics (tokens, latency, cost) for one investigation."""
     return store.get_session_metrics(session_id, owner=current_owner.get()) or {"error": "session not found"}
 
 
-@server.tool()
+@server.tool(annotations=_READ_ONLY)
 @_log_tool_errors
 def get_token_breakdown(session_id: str) -> list:
     """Per-turn token and latency breakdown for one session."""
     return store.get_token_breakdown(session_id, owner=current_owner.get())
 
 
-@server.tool()
+@server.tool(annotations=_READ_ONLY)
 @_log_tool_errors
 def get_tool_metrics(session_id: str | None = None) -> list:
     """Tool call counts by status, for one session or aggregated across all (aggregated across
@@ -29,14 +52,14 @@ def get_tool_metrics(session_id: str | None = None) -> list:
     return store.get_tool_metrics(session_id, owner=current_owner.get())
 
 
-@server.tool()
+@server.tool(annotations=_READ_ONLY)
 @_log_tool_errors
 def get_agent_trace(session_id: str) -> list:
     """The ordered sequence of tool calls (name, args, status) for one session."""
     return store.get_agent_trace(session_id, owner=current_owner.get())
 
 
-@server.tool()
+@server.tool(annotations=_READ_ONLY)
 @_log_tool_errors
 def get_cost_estimate(session_id: str | None = None, period_seconds: int | None = None) -> float:
     """Estimated cost for one session, or summed over the last period_seconds (your own
@@ -44,7 +67,7 @@ def get_cost_estimate(session_id: str | None = None, period_seconds: int | None 
     return store.get_cost_estimate(session_id, period_seconds, owner=current_owner.get())
 
 
-@server.tool()
+@server.tool(annotations=_READ_ONLY)
 @_log_tool_errors
 def get_recent_sessions(limit: int = 10) -> list:
     """The most recent investigation sessions, newest first. Your own only, unless
@@ -52,7 +75,7 @@ def get_recent_sessions(limit: int = 10) -> list:
     return store.get_recent_sessions(limit, owner=current_owner.get())
 
 
-@server.tool()
+@server.tool(annotations=_READ_ONLY)
 @_log_tool_errors
 def get_context_timeline(session_id: str) -> list:
     """Ordered, categorized breakdown of everything that entered this
@@ -62,7 +85,7 @@ def get_context_timeline(session_id: str) -> list:
     return store.get_context_timeline(session_id, owner=current_owner.get())
 
 
-@server.tool()
+@server.tool(annotations=_APPEND_ONLY)
 @_log_tool_errors
 def record_session(prompt: str, model_id: str, loop_result: dict) -> str:
     """Records one agent execution's metrics, attributed to whoever's
