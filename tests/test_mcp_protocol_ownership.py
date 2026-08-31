@@ -174,6 +174,54 @@ def test_per_user_token_writes_and_reads_are_scoped_to_that_user(client, isolate
     assert len(all_sessions) == 2
 
 
+def test_anon_client_can_discover_tools_but_not_read_data(client, isolated_auth_store):
+    """A registry crawler with NO bearer token (e.g. Glama's build-test
+    inspector) can run the discovery handshake and enumerate the 8 tools,
+    but any data tools/call is still 401. See
+    MultiTokenAuthMiddleware.ANON_MCP_METHODS."""
+    # Seed one real session as the owner so "sees no data" is a
+    # meaningful assertion, not just an empty store.
+    owner = RawMcpClient(client, "owner-secret")
+    owner.initialize()
+    owner.call_tool("record_session", {"prompt": "owner's q", "model_id": "m", "loop_result": _basic_loop_result()})
+
+    # Anonymous: no Authorization header at all.
+    init = client.post(
+        "/mcp",
+        headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "anon", "version": "1"}},
+        },
+    )
+    assert init.status_code == 200, init.text
+    sid = init.headers["mcp-session-id"]
+    client.post(
+        "/mcp",
+        headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream", "Mcp-Session-Id": sid},
+        json={"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+    )
+    listed = client.post(
+        "/mcp",
+        headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream", "Mcp-Session-Id": sid},
+        json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+    )
+    assert listed.status_code == 200, listed.text
+    tools = {t["name"] for t in _parse_response(listed)["result"]["tools"]}
+    assert len(tools) == 8
+    assert "record_session" in tools and "get_recent_sessions" in tools
+
+    # But a data call with no token is refused at the auth gate.
+    denied = client.post(
+        "/mcp",
+        headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream", "Mcp-Session-Id": sid},
+        json={"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "get_recent_sessions", "arguments": {}}},
+    )
+    assert denied.status_code == 401
+
+
 def test_per_user_token_cannot_read_another_users_session_by_id(client, isolated_auth_store):
     alice_token = isolated_auth_store.get_or_create_token("alice-sub", "alice@example.com")
     bob_token = isolated_auth_store.get_or_create_token("bob-sub", "bob@example.com")

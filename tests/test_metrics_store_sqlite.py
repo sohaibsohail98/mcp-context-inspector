@@ -147,6 +147,32 @@ def test_record_session_without_context_blocks_key_does_not_crash(isolated_sqlit
     assert store.get_context_timeline(session_id) == []
 
 
+def test_record_session_context_block_without_turn_n_does_not_crash(isolated_sqlite_db):
+    """turn_n is optional on a context_blocks item (a pre-conversation
+    block has no turn). A hand-built record_session payload that omits it
+    must persist as turn_n=None, not KeyError."""
+    store = isolated_sqlite_db
+    session_id = store.record_session(
+        "q",
+        "us.anthropic.claude-sonnet-4-6",
+        _fake_loop_result(
+            context_blocks=[
+                {"category": "system", "label": "System prompt", "char_count": 400, "token_estimate": 100},
+            ]
+        ),
+    )
+    timeline = store.get_context_timeline(session_id)
+    assert len(timeline) == 1
+    assert timeline[0]["turn_n"] is None
+
+
+def test_get_cost_estimate_unknown_session_is_zero_not_none(isolated_sqlite_db):
+    """The MCP tool is typed `-> float`; an unknown session_id must read
+    as 0.0 so FastMCP's output validation doesn't choke on None."""
+    store = isolated_sqlite_db
+    assert store.get_cost_estimate("does-not-exist-xyz") == 0.0
+
+
 def test_context_timeline_round_trip_and_cumulative_math(isolated_sqlite_db):
     store = isolated_sqlite_db
     session_id = store.record_session(
@@ -214,7 +240,8 @@ def test_owner_cannot_read_another_owners_session_by_id(isolated_sqlite_db):
     assert store.get_agent_trace(session_id, owner="bob-sub") == []
     assert store.get_context_timeline(session_id, owner="bob-sub") == []
     assert store.get_tool_metrics(session_id, owner="bob-sub") == []
-    assert store.get_cost_estimate(session_id, owner="bob-sub") is None
+    # tool contract is `-> float`: a non-owned session reads as 0.0, not None
+    assert store.get_cost_estimate(session_id, owner="bob-sub") == 0.0
 
     # The actual owner, and the admin (owner=None), both still can.
     assert store.get_session_metrics(session_id, owner="alice-sub") is not None

@@ -57,6 +57,46 @@ def test_api_route_rejects_revoked_per_user_token(client, isolated_auth_store):
     assert resp.status_code == 401
 
 
+def test_mcp_discovery_handshake_allowed_without_a_token(client):
+    """A catalogue crawler whose MCP client can't attach an Authorization
+    header (e.g. Glama's build-test inspector) must still be able to run
+    the discovery handshake -- initialize / tools/list -- unauthenticated.
+    These carry no session data. See MultiTokenAuthMiddleware.ANON_MCP_METHODS."""
+    for method in ("initialize", "tools/list", "ping"):
+        resp = client.post(
+            "/mcp",
+            headers={"Accept": "application/json, text/event-stream", "Content-Type": "application/json"},
+            json={"jsonrpc": "2.0", "id": 1, "method": method, "params": {}},
+        )
+        # NOT 401 -- the middleware lets it through. (The MCP layer may
+        # then 400 on protocol details like a missing session id for
+        # tools/list, but that's past the auth gate, which is the point.)
+        assert resp.status_code != 401, f"{method} should not be blocked by the auth gate"
+
+
+def test_mcp_data_call_still_requires_a_token(client):
+    """The discovery carve-out must not leak to tools/call: an actual
+    data tool with no bearer token is still 401."""
+    resp = client.post(
+        "/mcp",
+        headers={"Accept": "application/json, text/event-stream", "Content-Type": "application/json"},
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "get_recent_sessions", "arguments": {}},
+        },
+    )
+    assert resp.status_code == 401
+
+
+def test_mcp_get_without_token_still_401(client):
+    """Only the POST discovery methods are carved out; a bare GET /mcp
+    with no token is still gated."""
+    resp = client.get("/mcp", headers={"Accept": "text/event-stream"})
+    assert resp.status_code == 401
+
+
 def test_root_redirects_to_auth_login(client):
     resp = client.get("/", follow_redirects=False)
     assert resp.status_code in (301, 302, 307, 308)

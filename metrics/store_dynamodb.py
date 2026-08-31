@@ -106,7 +106,7 @@ def record_session(prompt, model_id, loop_result, owner=None):
                 "label": block["label"],
                 "char_count": block["char_count"],
                 "token_estimate": block["token_estimate"],
-                "turn_n": block["turn_n"],
+                "turn_n": block.get("turn_n"),
             }
             if block.get("status") is not None:
                 item["status"] = block["status"]
@@ -268,7 +268,8 @@ def get_tool_metrics(session_id=None, owner=None):
 def get_cost_estimate(session_id=None, period_seconds=None, owner=None):
     if session_id:
         item = get_session_metrics(session_id, owner=owner)
-        return item["prompt_metrics"]["estimated_cost"] if item else None
+        # 0.0, not None: the tool contract is `-> float`.
+        return item["prompt_metrics"]["estimated_cost"] if item else 0.0
 
     if owner is not None:
         items = _clean(
@@ -525,7 +526,7 @@ def append_context_block(session_id, block, owner=None):
             "label": block["label"],
             "char_count": block["char_count"],
             "token_estimate": block["token_estimate"],
-            "turn_n": block["turn_n"],
+            "turn_n": block.get("turn_n"),
         }
         if block.get("status") is not None:
             item["status"] = block["status"]

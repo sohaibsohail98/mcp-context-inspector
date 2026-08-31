@@ -230,7 +230,7 @@ def record_session(prompt, model_id, loop_result, owner=None):
                 block["label"],
                 block["char_count"],
                 block["token_estimate"],
-                block["turn_n"],
+                block.get("turn_n"),  # null for a pre-conversation block
                 block.get("status"),
                 block.get("content"),
             ),
@@ -342,7 +342,7 @@ def get_cost_estimate(session_id=None, period_seconds=None, owner=None):
         row = conn.execute("SELECT estimated_cost, owner FROM sessions WHERE session_id=?", (session_id,)).fetchone()
         conn.close()
         if not row or not _visible(row["owner"], owner):
-            return None
+            return 0.0  # tool contract is `-> float`; "no such session" has no cost
         return row["estimated_cost"]
 
     since = time.time() - period_seconds if period_seconds else 0

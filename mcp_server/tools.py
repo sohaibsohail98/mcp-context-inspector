@@ -106,6 +106,9 @@ def get_cost_estimate(session_id: str | None = None, period_seconds: int | None 
 
     session_id: optional session id.
     period_seconds: optional lookback window in seconds (e.g. 86400 for the last day).
+
+    Returns 0.0 for an unknown or non-owned session_id, and for a period with no
+    matching sessions.
     """
     return store.get_cost_estimate(session_id, period_seconds, owner=current_owner.get())
 
@@ -169,6 +172,9 @@ def record_session(prompt: str, model_id: str, loop_result: dict) -> str:
       - each `trace` item: tool (str), args (dict), status (str); optional
         latency_ms (float, default 0), timestamp (float epoch seconds, default
         record time).
+      - each `context_blocks` item: category (str), label (str), char_count
+        (int), token_estimate (int); optional turn_n (int or null -- null for a
+        pre-conversation block), status (str), content (str).
 
     Example loop_result:
 

@@ -443,6 +443,15 @@ export COPILOT_OTEL_CAPTURE_CONTENT=true   # opt-in: needed for the Context Expl
         immediately, and already-recorded data stays where it is.
       </p>
       <p>
+        One deliberate carve-out: the MCP <em>discovery</em> handshake &mdash;
+        <code>initialize</code>, <code>notifications/initialized</code>, <code>tools/list</code>,
+        <code>ping</code> &mdash; is answered on <code>/mcp</code> without a bearer token, so
+        registry and catalogue crawlers whose MCP client can't attach an <code>Authorization</code>
+        header can still index the tool definitions. These methods carry no session data. Every
+        <code>tools/call</code>, and all of <code>/api/*</code>, <code>/otlp</code>,
+        <code>/setup</code>, still require a valid token.
+      </p>
+      <p>
         On the browser side, a revoked token is handled as a clean sign-out. When
         <code>/auth/login</code> reloads with a stored token that the server no longer accepts, the
         page verifies it (a probe request to <code>/api/sessions?limit=1</code>) before minting
