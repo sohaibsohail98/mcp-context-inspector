@@ -13,6 +13,7 @@
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT"></a>
   <a href="https://m8ven.ai/mcp/sohaibsohail98-mcp-context-inspector-1uef4k" rel="noopener"><img src="https://m8ven.ai/badge/mcp/sohaibsohail98-mcp-context-inspector-1uef4k" alt="M8ven Score" height="20"></a>
+  <a href="https://glama.ai/mcp/servers/sohaibsohail98/mcp-context-inspector" rel="noopener"><img src="https://glama.ai/mcp/servers/sohaibsohail98/mcp-context-inspector/badges/score.svg" alt="Glama score" height="20"></a>
 </p>
 
 ![Typing a prompt into Claude Code, then switching to the live ctxwindow dashboard and opening that session's Context Window Explorer blocks](docs/demo.gif)
