@@ -80,9 +80,12 @@ async def root_redirect(request: Request):
 
 
 @server.custom_route("/health", methods=["GET"])
+@server.custom_route("/ping", methods=["GET"])
 async def healthz(request: Request):
     """Unauthenticated. Used by Cloud Scheduler to keep the deployed
-    instance warm, and by anyone checking the service is up at all."""
+    instance warm, by anyone checking the service is up at all, and by
+    container-platform / registry health probes -- some hit /health,
+    some hit /ping, so both resolve here."""
     return JSONResponse({"status": "ok"})
 
 

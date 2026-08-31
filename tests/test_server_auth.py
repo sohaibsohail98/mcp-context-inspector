@@ -69,6 +69,14 @@ def test_healthz_is_unauthenticated_and_ok(client):
     assert resp.json() == {"status": "ok"}
 
 
+def test_ping_is_an_unauthenticated_alias_of_health(client):
+    # Some container-platform / registry health probes hit /ping instead
+    # of /health (see the healthz handler): both must resolve, no auth.
+    resp = client.get("/ping")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ok"}
+
+
 def test_maybe_seed_demo_db_copies_when_missing(tmp_path):
     src = tmp_path / "demo.db"
     src.write_bytes(b"fake-db-contents")

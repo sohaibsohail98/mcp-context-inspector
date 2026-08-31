@@ -693,8 +693,20 @@
     return String(n);
   }
   function timeAgo(ts) {
-    if (!ts) return "n/a";
-    const secs = Math.max(0, Date.now() / 1000 - ts);
+    if (!ts && ts !== 0) return "n/a";
+    // Sessions carry `timestamp` as epoch seconds; agent-trace entries
+    // carry it as an ISO-8601 string (e.g. "2026-08-30T11:22:33Z").
+    // Accept both, plus epoch milliseconds, so the Tool calls tab stops
+    // rendering "NaNd ago".
+    let epochSecs;
+    if (typeof ts === "number") {
+      epochSecs = ts > 1e11 ? ts / 1000 : ts;  // >~year 5138 in secs => it's ms
+    } else {
+      const parsed = Date.parse(ts);
+      if (isNaN(parsed)) return "n/a";
+      epochSecs = parsed / 1000;
+    }
+    const secs = Math.max(0, Date.now() / 1000 - epochSecs);
     if (secs < 60) return "just now";
     if (secs < 3600) return Math.floor(secs / 60) + "m ago";
     if (secs < 86400) return Math.floor(secs / 3600) + "h ago";
@@ -1054,6 +1066,14 @@
       groups.get(t).push({ b, idx });
     });
     if (!groups.size) {
+      // Distinguish the two ways the list empties: every category toggled
+      // off (fix: "All"), vs. the advanced filters (search / min-tokens /
+      // turn range / errors-only) excluding everything.
+      const anyPassIgnoringCats = timeline.some((b) => ctxBlockPasses(b, { ignoreCats: true }));
+      if (anyPassIgnoringCats && ctxHiddenCats.size) {
+        return '<div class="ctx-filter-summary">Every category is hidden &mdash; use '
+          + '<button class="ctx-clear-adv" onclick="ctxFilterAll();">All</button> to show blocks again.</div>';
+      }
       return '<div class="ctx-filter-summary">No blocks match the current filters. '
         + '<button class="ctx-clear-adv" onclick="ctxClearAdvanced(); ctxFilterAll();">Clear all filters</button></div>';
     }
@@ -1744,13 +1764,24 @@
   // re-login: a single Cloud Run cold-start 503 or a moment offline was
   // enough, which is the "logged out several times a week" report.
   async function verifyStoredToken(token) {
+    // Bound the probe: a hung connection (captive portal, an extension
+    // that stalls rather than fails the request) must not leave the
+    // install card spinning forever -- after ~6s we treat it like any
+    // other transient failure and let the dashboard's own refresh cycle
+    // retry. AbortController is used where available; older engines just
+    // wait on the fetch.
     let res;
+    const ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
+    const timer = ctl ? setTimeout(() => ctl.abort(), 6000) : null;
     try {
       res = await fetch("/api/sessions?limit=1", {
         headers: { Authorization: "Bearer " + token },
+        signal: ctl ? ctl.signal : undefined,
       });
     } catch (e) {
-      return "transient";  // offline / DNS / connection reset
+      return "transient";  // offline / DNS / connection reset / aborted (timeout)
+    } finally {
+      if (timer) clearTimeout(timer);
     }
     if (res.status === 401 || res.status === 403) return "revoked";
     return "ok";  // 2xx, or a 5xx/429 we choose to ride out

@@ -33,90 +33,156 @@ _APPEND_ONLY = ToolAnnotations(
 @server.tool(annotations=_READ_ONLY)
 @_log_tool_errors
 def get_session_metrics(session_id: str) -> dict:
-    """Session metadata plus per-prompt metrics (tokens, latency, cost) for one investigation."""
+    """Full metrics for ONE recorded session: metadata plus per-prompt tokens, latency, and cost.
+
+    Use when you have a session_id and need exact provider usage numbers for that
+    session. For the block-by-block token composition of the context window use
+    get_context_timeline instead; for a cost total across many sessions use
+    get_cost_estimate.
+
+    session_id: the opaque, case-sensitive id returned by record_session or listed
+      by get_recent_sessions.
+
+    Returns {"error": "session not found"} if the id is unknown or not owned by the
+    caller (the two are deliberately indistinguishable).
+    """
     return store.get_session_metrics(session_id, owner=current_owner.get()) or {"error": "session not found"}
 
 
 @server.tool(annotations=_READ_ONLY)
 @_log_tool_errors
 def get_token_breakdown(session_id: str) -> list:
-    """Per-turn token and latency breakdown for one session."""
+    """Per-turn input/output token and latency breakdown for one session, in turn order.
+
+    Use to see how token usage grew turn-by-turn within a session; use
+    get_session_metrics for session totals.
+
+    session_id: id from get_recent_sessions / record_session.
+
+    Returns [] for an unknown or non-owned session.
+    """
     return store.get_token_breakdown(session_id, owner=current_owner.get())
 
 
 @server.tool(annotations=_READ_ONLY)
 @_log_tool_errors
 def get_tool_metrics(session_id: str | None = None) -> list:
-    """Tool call counts by status, for one session or aggregated across all (aggregated across
-    only your own sessions if you're not the server owner)."""
+    """Tool-call counts grouped by status (ok / error), for one session or aggregated.
+
+    Use for a quick success/failure summary; use get_agent_trace for the ordered
+    call list. Non-owners only ever see their own sessions; the owner token sees
+    everyone's.
+
+    session_id: optional. Omit for the aggregate across all your sessions; pass an
+      id for just that session.
+    """
     return store.get_tool_metrics(session_id, owner=current_owner.get())
 
 
 @server.tool(annotations=_READ_ONLY)
 @_log_tool_errors
 def get_agent_trace(session_id: str) -> list:
-    """The ordered sequence of tool calls (name, args, status) for one session."""
+    """The ordered sequence of tool calls for one session -- each entry {name, args, status}.
+
+    Use to replay what the agent actually did, in execution order; use
+    get_tool_metrics for aggregate counts.
+
+    session_id: id from get_recent_sessions / record_session.
+
+    Returns [] for an unknown or non-owned session.
+    """
     return store.get_agent_trace(session_id, owner=current_owner.get())
 
 
 @server.tool(annotations=_READ_ONLY)
 @_log_tool_errors
 def get_cost_estimate(session_id: str | None = None, period_seconds: int | None = None) -> float:
-    """Estimated cost for one session, or summed over the last period_seconds (your own
-    sessions only, unless you're the server owner)."""
+    """Estimated USD cost as a float.
+
+    Pass session_id for one session's cost, or period_seconds for the summed cost
+    of your sessions in the last N seconds. Give exactly one; non-owners are scoped
+    to their own sessions. These are estimates from token counts and a static price
+    table, not billed amounts.
+
+    session_id: optional session id.
+    period_seconds: optional lookback window in seconds (e.g. 86400 for the last day).
+    """
     return store.get_cost_estimate(session_id, period_seconds, owner=current_owner.get())
 
 
 @server.tool(annotations=_READ_ONLY)
 @_log_tool_errors
 def get_recent_sessions(limit: int = 10) -> list:
-    """The most recent investigation sessions, newest first. Your own only, unless
-    you're the server owner (owner token), who sees everyone's."""
+    """List recent sessions, newest first: [{session_id, prompt, model_id, created_at, ...}].
+
+    Call this first to discover session_ids for the other get_* tools. Non-owners
+    see only their own sessions; the owner token sees all.
+
+    limit: max rows to return (default 10), newest first.
+    """
     return store.get_recent_sessions(limit, owner=current_owner.get())
 
 
 @server.tool(annotations=_READ_ONLY)
 @_log_tool_errors
 def get_context_timeline(session_id: str) -> list:
-    """Ordered, categorized breakdown of everything that entered this
-    session's context window, with cumulative token estimates. These are
-    character-based estimates for composition, not exact Bedrock usage
-    numbers (see get_session_metrics for those)."""
+    """Ordered, categorized breakdown of everything that entered ONE session's context window.
+
+    Each block (system prompt, tool specs, injected context, user turns, reasoning,
+    tool calls/results, final answer) is marked user-visible vs invisible overhead,
+    with cumulative character-based token estimates against the model's real window
+    size. Use for context-window composition analysis; use get_session_metrics for
+    exact provider token usage. The estimates here are character-based, not exact
+    Bedrock counts.
+
+    session_id: id from get_recent_sessions / record_session.
+
+    Returns [] for an unknown or non-owned session, or one recorded without the
+    optional context_blocks field.
+    """
     return store.get_context_timeline(session_id, owner=current_owner.get())
 
 
 @server.tool(annotations=_APPEND_ONLY)
 @_log_tool_errors
 def record_session(prompt: str, model_id: str, loop_result: dict) -> str:
-    """Records one agent execution's metrics, attributed to whoever's
-    connected (your own Google account, if you signed in via
-    /auth/login; the owner token records as owner=None, same as the
-    local direct-import path `from metrics.store import record_session`).
-    This is how a caller's own remote agent gets its sessions into this
-    server at all, rather than only being able to query data the server
-    owner recorded locally.
+    """Append ONE agent execution's metrics to this server's store; returns the new session_id.
 
-    loop_result must have exactly this shape:
+    This is how a remote agent gets its own runs into the server, rather than only
+    being able to query what the server owner recorded locally. Attributed to the
+    connected identity: your Google account if you signed in via /auth/login, or
+    owner=None for the owner token. NOT idempotent -- each call mints a new
+    session_id. Never updates or deletes an existing session; the get_* tools read
+    what this writes.
+
+    prompt: the user prompt that started the run.
+    model_id: the provider model identifier, e.g.
+      "anthropic.claude-3-5-sonnet-20241022-v2:0".
+    loop_result: the run's token / latency / trace payload. Required keys:
+      input_tokens (int), output_tokens (int), total_tokens (int),
+      latency_ms (float), turns (list). Optional: trace (list), context_blocks
+      (list -- omit if you don't have per-block context data; get_context_timeline
+      needs it).
+      - each `turns` item: input_tokens (int), output_tokens (int),
+        latency_ms (float); optional cache_read_input_tokens /
+        cache_write_input_tokens (int, default 0).
+      - each `trace` item: tool (str), args (dict), status (str); optional
+        latency_ms (float, default 0), timestamp (float epoch seconds, default
+        record time).
+
+    Example loop_result:
 
         {
-          "input_tokens": int,
-          "output_tokens": int,
-          "total_tokens": int,
-          "latency_ms": float,
+          "input_tokens": 1200, "output_tokens": 340, "total_tokens": 1540,
+          "latency_ms": 4210.0,
           "turns": [
-            {"input_tokens": int, "output_tokens": int, "latency_ms": float,
-             "cache_read_input_tokens": int,   # optional, defaults 0
-             "cache_write_input_tokens": int}, # optional, defaults 0
-            ...
+            {"input_tokens": 1200, "output_tokens": 340, "latency_ms": 4210.0,
+             "cache_read_input_tokens": 800, "cache_write_input_tokens": 0}
           ],
           "trace": [
-            {"tool": str, "args": dict, "status": str,
-             "latency_ms": float,   # optional, defaults 0
-             "timestamp": float},   # optional, defaults to record time
-            ...
-          ],
-          "context_blocks": [...]  # optional, omit if you don't have it
+            {"tool": "grep_logs", "args": {"pattern": "ERROR"}, "status": "ok",
+             "latency_ms": 120.0, "timestamp": 1756400000.0}
+          ]
         }
-
-    Returns the new session_id."""
+    """
     return store.record_session(prompt, model_id, loop_result, owner=current_owner.get())
