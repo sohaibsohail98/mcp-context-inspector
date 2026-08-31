@@ -47,6 +47,9 @@ command that writes the MCP connection and telemetry config into your own
 curl -fsSL https://ctxwindow.uk/setup/install?t=<code> | sh
 ```
 
+On Windows the page's **Windows (PowerShell)** tab gives you the equivalent
+`irm "https://ctxwindow.uk/setup/install?os=windows&t=<code>" | iex` instead.
+
 The `?t=` code is single-use and short-lived, so your real token is never in the command
 itself. Close and reopen Claude Code afterward, since env vars only load at process
 startup, then run one prompt and check "Test my connection" on the page.
