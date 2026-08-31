@@ -30,6 +30,7 @@ import os
 import time
 import uuid
 
+from google.api_core.exceptions import GoogleAPICallError
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
@@ -164,7 +165,7 @@ def record_session(prompt, model_id, loop_result, owner=None):
                 "label": block["label"],
                 "char_count": block["char_count"],
                 "token_estimate": block["token_estimate"],
-                "turn_n": block["turn_n"],
+                "turn_n": block.get("turn_n"),
                 "status": block.get("status"),
                 "content": block.get("content"),
             },
@@ -293,7 +294,10 @@ def get_cost_estimate(session_id=None, period_seconds=None, owner=None):
     client = _client()
     if session_id:
         metrics = get_session_metrics(session_id, owner=owner)
-        return metrics["prompt_metrics"]["estimated_cost"] if metrics else None
+        # 0.0, not None: the tool contract is `-> float`. An unknown or
+        # non-owned session has no cost to report, same "no data" answer
+        # the list tools give with [].
+        return metrics["prompt_metrics"]["estimated_cost"] if metrics else 0.0
 
     since = time.time() - period_seconds if period_seconds else 0
     query = _sessions(client).where(filter=FieldFilter("timestamp", ">=", since))
@@ -301,14 +305,16 @@ def get_cost_estimate(session_id=None, period_seconds=None, owner=None):
         query = query.where(filter=FieldFilter("owner", "==", owner))
 
     # Prefer Firestore's native sum() aggregation over pulling every
-    # matching document just to add one field client-side. Falls back
-    # to a Python sum only if the installed client library's aggregation
-    # query support isn't available.
+    # matching document just to add one field client-side. Fall back to a
+    # Python sum if the installed client lacks aggregation support
+    # (AttributeError) OR the backend rejects the aggregation for want of
+    # a composite index (GoogleAPICallError / FailedPrecondition) -- the
+    # stream() path needs no composite index, so it always works.
     try:
         agg = query.sum("estimated_cost").get()
         total = agg[0][0].value
         return total or 0.0
-    except AttributeError:
+    except (AttributeError, GoogleAPICallError):
         return sum(doc.get("estimated_cost") or 0.0 for doc in query.stream()) or 0.0
 
 

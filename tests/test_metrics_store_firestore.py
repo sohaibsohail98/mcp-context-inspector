@@ -71,7 +71,7 @@ def test_empty_reads_return_empty_not_crash(isolated_firestore_db):
     assert store.get_agent_trace("nope") == []
     assert store.get_context_timeline("nope") == []
     assert store.get_tool_metrics("nope") == []
-    assert store.get_cost_estimate("nope") is None
+    assert store.get_cost_estimate("nope") == 0.0
     assert store.get_recent_sessions() == []
     assert store.get_tool_metrics() == []
     assert store.get_cost_estimate() == 0.0
@@ -230,7 +230,7 @@ def test_owner_cannot_read_another_owners_session_by_id(isolated_firestore_db):
     assert store.get_agent_trace(session_id, owner="bob-sub") == []
     assert store.get_context_timeline(session_id, owner="bob-sub") == []
     assert store.get_tool_metrics(session_id, owner="bob-sub") == []
-    assert store.get_cost_estimate(session_id, owner="bob-sub") is None
+    assert store.get_cost_estimate(session_id, owner="bob-sub") == 0.0
 
     assert store.get_session_metrics(session_id, owner="alice-sub") is not None
     assert store.get_session_metrics(session_id, owner=None) is not None

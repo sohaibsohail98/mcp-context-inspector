@@ -3,6 +3,7 @@ Used by mcp_server/routes/auth.py, routes/oauth.py, and routes/setup.py
 (all need `_public_origin`), and by server.py to wire these middleware
 classes onto the Starlette app."""
 
+import json
 import os
 
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -10,6 +11,24 @@ from starlette.responses import JSONResponse
 
 from mcp_server.app import current_owner
 from mcp_server.auth import store as auth_store
+
+# An owner sentinel that no real session_owner (a Google `sub`, or None
+# for the admin) can ever equal, so metrics/store.py's _visible() returns
+# False for every session. Bound to current_owner for the unauthenticated
+# MCP *discovery* handshake only (see ANON_MCP_METHODS): a client with no
+# bearer token can enumerate the tool catalogue but sees zero data.
+ANON_DISCOVERY_OWNER = "__anon_discovery__"
+
+# JSON-RPC methods allowed through /mcp with no bearer token. These carry
+# no session data: `initialize` / `notifications/initialized` are the
+# handshake, `tools/list` returns only static tool definitions, `ping` is
+# a keepalive. Every `tools/call` (and everything else) still needs a
+# valid token. This exists so registry/catalogue crawlers whose MCP
+# client can't attach an Authorization header (e.g. Glama's build-test
+# inspector) can still index the tools; it is not a data path.
+ANON_MCP_METHODS = frozenset(
+    {"initialize", "notifications/initialized", "initialized", "tools/list", "ping"}
+)
 
 # Demo-capture bypass (see scripts/demo_capture.py and
 # mcp_server/routes/demo.py). A fixed, obviously-fake token rather than
@@ -89,6 +108,13 @@ class MultiTokenAuthMiddleware(BaseHTTPMiddleware):
             token = header.removeprefix("Bearer ") if header.startswith("Bearer ") else None
             if token == self.owner_token:
                 current_owner.set(None)
+            elif not token and await self._is_anon_mcp_discovery(request):
+                # No bearer token, but this is an MCP discovery-only call
+                # on /mcp (initialize / tools/list / ping). Let it through
+                # bound to a sentinel owner that sees no session data, so
+                # a catalogue crawler can enumerate the tools. Any
+                # tools/call still falls through to the 401 below.
+                current_owner.set(ANON_DISCOVERY_OWNER)
             elif token == DEMO_TOKEN and _demo_mode_enabled():
                 # Same visibility as the owner token (current_owner=None),
                 # which is what the seeded demo rows need: seed_demo_db.py
@@ -122,6 +148,29 @@ class MultiTokenAuthMiddleware(BaseHTTPMiddleware):
                     },
                 )
         return await call_next(request)
+
+    async def _is_anon_mcp_discovery(self, request):
+        """True only for a POST to /mcp whose JSON-RPC method is in
+        ANON_MCP_METHODS. Reads and caches the body (Starlette stores it
+        on request._body, so the downstream MCP handler re-reads the same
+        bytes). Any parse failure or unlisted method returns False --
+        this only ever *widens* to the safe discovery methods, never
+        past them."""
+        if request.method != "POST" or request.url.path.rstrip("/") != "/mcp":
+            return False
+        try:
+            raw = await request.body()
+            payload = json.loads(raw)
+        except (ValueError, TypeError):
+            return False
+        # A batch is only "discovery" if every member is a discovery method.
+        entries = payload if isinstance(payload, list) else [payload]
+        if not entries:
+            return False
+        for entry in entries:
+            if not isinstance(entry, dict) or entry.get("method") not in ANON_MCP_METHODS:
+                return False
+        return True
 
 
 class OAuthCORSMiddleware(BaseHTTPMiddleware):

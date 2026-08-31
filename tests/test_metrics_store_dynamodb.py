@@ -397,7 +397,7 @@ def test_owner_cannot_read_another_owners_session_by_id(fake_table):
     assert store_dynamodb.get_agent_trace(session_id, owner="bob-sub") == []
     assert store_dynamodb.get_context_timeline(session_id, owner="bob-sub") == []
     assert store_dynamodb.get_tool_metrics(session_id, owner="bob-sub") == []
-    assert store_dynamodb.get_cost_estimate(session_id, owner="bob-sub") is None
+    assert store_dynamodb.get_cost_estimate(session_id, owner="bob-sub") == 0.0
 
     assert store_dynamodb.get_session_metrics(session_id, owner="alice-sub") is not None
     assert store_dynamodb.get_session_metrics(session_id, owner=None) is not None
