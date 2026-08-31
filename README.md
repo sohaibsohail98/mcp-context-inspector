@@ -12,6 +12,7 @@
   <a href="https://github.com/sohaibsohail98/mcp-context-inspector/actions/workflows/tests.yml"><img src="https://github.com/sohaibsohail98/mcp-context-inspector/actions/workflows/tests.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT"></a>
+  <a href="https://m8ven.ai/mcp/sohaibsohail98-mcp-context-inspector-1uef4k" rel="noopener"><img src="https://m8ven.ai/badge/mcp/sohaibsohail98-mcp-context-inspector-1uef4k" alt="M8ven Score" height="20"></a>
 </p>
 
 ![Typing a prompt into Claude Code, then switching to the live ctxwindow dashboard and opening that session's Context Window Explorer blocks](docs/demo.gif)
@@ -96,7 +97,13 @@ motivated wanting the same visibility for an arbitrary agent loop, not just Clau
 | `get_cost_estimate` | Estimated cost, one session or a time window | Read |
 | `get_recent_sessions` | Most recent sessions, newest first | Read |
 | `get_context_timeline` | Full context-window block breakdown | Read |
-| `record_session` | Records one agent execution's metrics | Write |
+| `record_session` | Records one agent execution's metrics | Write (append-only) |
+
+Each tool ships explicit MCP annotations (`readOnlyHint` / `destructiveHint` /
+`idempotentHint` / `openWorldHint`), so a client can auto-approve the seven reads and
+prompt only for `record_session`. Nothing here reaches outside this server's own store
+(`openWorldHint` is always false), and `record_session` only ever inserts a new session —
+it never mutates or deletes one.
 
 Plain REST equivalents are exposed under `/api/*`. Payload shapes are in
 [Architecture](https://ctxwindow.uk/docs#architecture).
