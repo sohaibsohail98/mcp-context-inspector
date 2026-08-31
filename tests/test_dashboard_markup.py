@@ -3,12 +3,14 @@
 with the mockup-matching layout: KPI strip, quota strip, body-grid with
 session-list + tabbed session-detail panels, and the settings screen).
 
-Like test_connect_page_otel_tabs.py, the dashboard is built by
-client-side JS (mountDashboard/renderDashboardShell/etc.), but its
-source, including the template-literal HTML fragments it emits, is
-rendered as literal text in the server-side /auth/login response, so
-these structural class/attribute markers are present in the HTTP
-response body without needing to execute any JS.
+The dashboard is built by client-side JS (mountDashboard/
+renderDashboardShell/etc.). That JS, including the template-literal HTML
+fragments it emits, used to be inlined in the /auth/login response; it
+now lives in the linked static file dashboard/dashboard.js (served at
+/auth/static/dashboard.js). `_page_text()` stitches the login HTML
+together with its linked JS/CSS so these structural class/attribute and
+function markers can be asserted on exactly as before, wherever they now
+live.
 """
 
 from starlette.testclient import TestClient
@@ -16,14 +18,21 @@ from starlette.testclient import TestClient
 from mcp_server import server as server_module
 
 
+def _page_text(client):
+    """The /auth/login HTML plus every same-origin script/style it links,
+    concatenated: the full set of source the browser gets for that page."""
+    html = client.get("/auth/login").text
+    js = client.get("/auth/static/dashboard.js").text
+    css = client.get("/auth/static/dashboard.css").text
+    return "\n".join([html, js, css])
+
+
 def test_dashboard_markup_has_new_structural_markers(monkeypatch):
     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
     app = server_module.server.streamable_http_app()
     with TestClient(app) as client:
-        resp = client.get("/auth/login")
-
-    assert resp.status_code == 200
-    body = resp.text
+        assert client.get("/auth/login").status_code == 200
+        body = _page_text(client)
 
     for marker in (
         'class="kpi-strip"',
@@ -45,9 +54,8 @@ def test_dashboard_omits_fabricated_insight_list(monkeypatch):
     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
     app = server_module.server.streamable_http_app()
     with TestClient(app) as client:
-        resp = client.get("/auth/login")
+        body = _page_text(client)
 
-    body = resp.text
     assert "insight-list" not in body
 
 
@@ -58,9 +66,8 @@ def test_quota_strip_has_no_fabricated_percentage(monkeypatch):
     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
     app = server_module.server.streamable_http_app()
     with TestClient(app) as client:
-        resp = client.get("/auth/login")
+        body = _page_text(client)
 
-    body = resp.text
     assert "pending data source" in body
     assert "Not yet wired to a data source" in body
 
@@ -72,9 +79,8 @@ def test_refresh_controls_present(monkeypatch):
     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
     app = server_module.server.streamable_http_app()
     with TestClient(app) as client:
-        resp = client.get("/auth/login")
+        body = _page_text(client)
 
-    body = resp.text
     for marker in (
         'class="refresh-controls"',
         'id="manual-refresh-btn"',
@@ -92,9 +98,8 @@ def test_settings_toggle_reuses_existing_tab_pattern(monkeypatch):
     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
     app = server_module.server.streamable_http_app()
     with TestClient(app) as client:
-        resp = client.get("/auth/login")
+        body = _page_text(client)
 
-    body = resp.text
     assert "toggleSettings()" in body
     assert "function toggleSettings()" in body
     assert 'id="dash-root"' in body
@@ -112,9 +117,8 @@ def test_context_block_label_is_escaped_before_innerhtml(monkeypatch):
     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
     app = server_module.server.streamable_http_app()
     with TestClient(app) as client:
-        resp = client.get("/auth/login")
+        body = _page_text(client)
 
-    body = resp.text
     assert "escapeHtml(b.label || b.category)" in body
     assert "(b.label || b.category) + '</span>'" not in body
     assert "': (b.label || b.category)" not in body

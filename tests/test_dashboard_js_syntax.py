@@ -1,15 +1,14 @@
-"""Regression test for a real bug found in review: the dashboard's
-embedded <script> block lives inside a Python string in
-mcp_server/server.py, so writing a literal `\n`/`\'` in the Python
-source gets consumed by PYTHON's own escape processing before the JS
-ever sees it. The browser then receives a raw newline/quote instead of
-the two-character JS escape sequence, which is a JS SyntaxError severe
-enough to kill the entire inline script (nothing on the dashboard page
-works, not just the broken snippet). Static text-matching can't catch
-this class of bug; only actually parsing the rendered output as JS can.
-Skips if `node` isn't on PATH rather than failing. This is a
-correctness net for local/CI environments that have it, not a hard
-dependency for the rest of the suite.
+"""Regression test for a real bug found in review: the dashboard's JS
+used to live inside a Python f-string in routes/auth.py, so a literal
+`\n`/`\'` in the Python source got consumed by PYTHON's own escape
+processing before the JS ever saw it -- the browser then received a raw
+newline/quote instead of the two-character JS escape, a SyntaxError
+severe enough to kill the whole script. The JS is now a real static file
+(dashboard/dashboard.js), which removes that specific hazard, but this
+still parses the served output as JS to catch any regression: both the
+served dashboard.js and every inline <script> block auth_login still
+injects (currently just the window.__CFG__ config block).
+Skips if `node` isn't on PATH rather than failing.
 """
 
 import re
@@ -29,13 +28,19 @@ def test_rendered_dashboard_script_is_valid_javascript(monkeypatch, tmp_path):
     app = server_module.server.streamable_http_app()
     with TestClient(app) as client:
         resp = client.get("/auth/login")
-    assert resp.status_code == 200
+        assert resp.status_code == 200
+        dashboard_js = client.get("/auth/static/dashboard.js")
+    assert dashboard_js.status_code == 200
+    assert "text/javascript" in dashboard_js.headers["content-type"]
 
-    scripts = re.findall(r"<script>(.*?)</script>", resp.text, re.S)
-    assert scripts, "expected at least one inline <script> block in /auth/login's response"
+    inline_scripts = re.findall(r"<script>(.*?)</script>", resp.text, re.S)
+    assert inline_scripts, "expected at least one inline <script> block (the window.__CFG__ config) in /auth/login"
 
+    # The inline config block references window.__CFG__ which the external
+    # file reads; concatenate config-first so `node --check` sees a
+    # coherent program.
     js_file = tmp_path / "extracted.js"
-    js_file.write_text("\n".join(scripts))
+    js_file.write_text("\n".join(inline_scripts) + "\n" + dashboard_js.text)
 
     result = subprocess.run(["node", "--check", str(js_file)], capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, f"dashboard JS has a syntax error:\n{result.stderr}"

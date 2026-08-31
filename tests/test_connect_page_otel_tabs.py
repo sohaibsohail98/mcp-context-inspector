@@ -1,14 +1,20 @@
-"""Regression test for the OTLP onboarding tabs added to connectPage()'s
-embedded JS in /auth/login's HTML response. connectPage() itself is a
-client-side JS function (not Python), but its source, including the
-template-literal HTML it builds, is rendered as literal text in the
-server-side /auth/login response, so the markers below are present in
-the HTTP response body without needing to execute any JS.
+"""Regression test for the OTLP onboarding tabs in connectPage(). That
+function is client-side JS; its source (including the template-literal
+HTML it builds) lives in the linked static file dashboard/dashboard.js,
+served at /auth/static/dashboard.js. The markers below are asserted
+against that file's text, the same way they were previously asserted
+against the inline <script> in the /auth/login response.
 """
 
 from starlette.testclient import TestClient
 
 from mcp_server import server as server_module
+
+
+def _dashboard_js(client):
+    resp = client.get("/auth/static/dashboard.js")
+    assert resp.status_code == 200
+    return resp.text
 
 
 def test_connect_page_has_otel_tabs_with_separate_optin_blocks(monkeypatch):
@@ -20,10 +26,8 @@ def test_connect_page_has_otel_tabs_with_separate_optin_blocks(monkeypatch):
     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
     app = server_module.server.streamable_http_app()
     with TestClient(app) as client:
-        resp = client.get("/auth/login")
-
-    assert resp.status_code == 200
-    body = resp.text
+        assert client.get("/auth/login").status_code == 200
+        body = _dashboard_js(client)
 
     assert 'data-tab="claude-otel"' in body
     assert 'data-tab="copilot-otel"' in body
@@ -60,9 +64,7 @@ def test_claude_otel_snippet_includes_vendor_detection_vars(monkeypatch):
     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
     app = server_module.server.streamable_http_app()
     with TestClient(app) as client:
-        resp = client.get("/auth/login")
-
-    body = resp.text
+        body = _dashboard_js(client)
     snippet_def_start = body.index("const claudeOtelSnippet = [")
     snippet_def_end = body.index("].join(", snippet_def_start)
     claude_snippet_source = body[snippet_def_start:snippet_def_end]
@@ -82,9 +84,7 @@ def test_claude_tab_still_default_active(monkeypatch):
     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
     app = server_module.server.streamable_http_app()
     with TestClient(app) as client:
-        resp = client.get("/auth/login")
-
-    body = resp.text
+        body = _dashboard_js(client)
     claude_btn_start = body.index('data-tab="claude"')
     claude_btn_line = body[max(0, claude_btn_start - 40) : claude_btn_start]
     assert "active" in claude_btn_line
