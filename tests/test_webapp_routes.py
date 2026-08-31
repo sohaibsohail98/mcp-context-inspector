@@ -66,15 +66,17 @@ def test_webapp_routes_are_not_gated_by_bearer_auth():
 
 
 def test_auth_login_return_to_handoff_present(monkeypatch):
-    """The minimal, isolated addition to /auth/login's post-sign-in JS:
-    when reached via ?return_to=/m, the authorize() success branch must
+    """The minimal, isolated addition to the post-sign-in JS: when
+    reached via ?return_to=/m, the authorize() success branch must
     redirect back there with the token in the URL fragment instead of
-    rendering the desktop consent/dashboard screens."""
+    rendering the desktop consent/dashboard screens. That JS now lives in
+    the linked static file dashboard/dashboard.js."""
     monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
     with _client() as client:
-        resp = client.get("/auth/login")
+        assert client.get("/auth/login").status_code == 200
+        js = client.get("/auth/static/dashboard.js")
 
-    assert resp.status_code == 200
-    body = resp.text
+    assert js.status_code == 200
+    body = js.text
     assert "return_to" in body
     assert "#token=" in body

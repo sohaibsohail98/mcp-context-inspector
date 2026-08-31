@@ -272,8 +272,14 @@ def test_dashboard_page_renders_after_real_otlp_ingestion(client, monkeypatch):
     client.post("/otlp/v1/logs", json=_claude_code_logs_payload(), headers=_auth())
     resp = client.get("/auth/login")
     assert resp.status_code == 200
-    assert "kpi-strip" in resp.text
-    assert "body-grid" in resp.text
+    # The dashboard markup lives in the linked static file now (extracted
+    # from auth_login's inline template); assert the page still links it
+    # and that file still carries the rebuild's structural markers.
+    assert '/auth/static/dashboard.js' in resp.text
+    js = client.get("/auth/static/dashboard.js")
+    assert js.status_code == 200
+    assert "kpi-strip" in js.text
+    assert "body-grid" in js.text
 
 
 def test_otlp_cannot_hijack_another_owners_session(client, isolated_auth_store):
