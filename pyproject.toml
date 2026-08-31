@@ -1,6 +1,6 @@
 [project]
 name = "mcp-context-inspector"
-version = "0.3.0"
+version = "0.4.0"
 description = "MCP server + execution metrics recorder for agent sessions: real-time cost/token metrics and a full Context Window Explorer breakdown, over a real MCP handshake."
 license = "MIT"
 license-files = ["LICENSE"]
