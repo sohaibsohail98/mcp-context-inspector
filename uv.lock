@@ -869,7 +869,7 @@ wheels = [
 
 [[package]]
 name = "mcp-context-inspector"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "." }
 dependencies = [
     { name = "boto3" },

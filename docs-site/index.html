@@ -515,7 +515,10 @@ export COPILOT_OTEL_CAPTURE_CONTENT=true   # opt-in: needed for the Context Expl
           Serves the MCP handshake at <code>/mcp</code>, plain REST at <code>/api/*</code>, OTLP
           ingestion at <code>/otlp/v1/*</code>, Google sign-in at <code>/auth/login</code>, the
           one-line installer at <code>/setup/install</code>, the dashboard, and this docs site at
-          <code>/docs</code>.
+          <code>/docs</code>. An unauthenticated <code>/health</code> (aliased as <code>/ping</code>;
+          both return <code>{"status":"ok"}</code>) is what the keep-warm scheduler and registry
+          build probes hit, and <code>/robots.txt</code>, <code>/sitemap.xml</code>,
+          <code>/favicon.ico</code>, and <code>/favicon.svg</code> are served from the site root.
         </li>
         <li>
           <strong>Data-access layer</strong> (<code>metrics/store.py</code>), one dispatcher in
@@ -536,18 +539,39 @@ export COPILOT_OTEL_CAPTURE_CONTENT=true   # opt-in: needed for the Context Expl
 
       <h3>The <code>record_session</code> payload</h3>
       <p>
-        <code>record_session(prompt, model_id, loop_result, owner=None)</code> needs
-        <code>loop_result</code> shaped like:
+        The MCP tool is <code>record_session(prompt, model_id, loop_result)</code> &mdash; the
+        session is attributed to the connected identity automatically (your Google account, or the
+        owner token). The underlying store function <code>metrics.store.record_session</code> takes
+        an extra <code>owner=None</code> when you import it directly. Either way,
+        <code>loop_result</code> is shaped like:
       </p>
       <pre><code>{
-    "trace": [{"tool": "...", "args": {...}, "status": "ok"}, ...],
-    "turns": [{"input_tokens": int, "output_tokens": int, "latency_ms": int}, ...],
-    "input_tokens": int, "output_tokens": int, "total_tokens": int, "latency_ms": int,
+    "input_tokens": int, "output_tokens": int, "total_tokens": int, "latency_ms": float,
+    "turns": [
+        {"input_tokens": int, "output_tokens": int, "latency_ms": float,
+         # optional, default 0:
+         "cache_read_input_tokens": int, "cache_write_input_tokens": int},
+        ...
+    ],
+    "trace": [   # optional
+        {"tool": "...", "args": {...}, "status": "ok",
+         # optional: latency_ms (float, default 0), timestamp (float epoch, default record time)
+         "latency_ms": float, "timestamp": float},
+        ...
+    ],
     "context_blocks": [   # optional: omit and you just lose the Explorer, nothing crashes
-        {"category": "system", "label": "...", "char_count": int, "token_estimate": int, "turn_n": int | None},
+        {"category": "system", "label": "...", "char_count": int, "token_estimate": int,
+         # optional: turn_n (int | None, None for a pre-conversation block),
+         #           status ("error" | "redacted"), content (str)
+         "turn_n": int | None, "status": "...", "content": "..."},
         ...
     ],
 }</code></pre>
+      <p>
+        Required keys are <code>input_tokens</code>, <code>output_tokens</code>,
+        <code>total_tokens</code>, <code>latency_ms</code>, and <code>turns</code>;
+        <code>trace</code> and <code>context_blocks</code> are optional.
+      </p>
       <p>
         <code>context_blocks</code> categories: <code>system</code>, <code>tools</code>,
         <code>user</code>, <code>injected</code>, <code>command</code>, <code>reasoning</code>,
@@ -626,10 +650,15 @@ httpx.post(
           <code>context_blocks</code> subcollections. Because a real query is available here, it
           avoids the scan-then-filter tradeoff DynamoDB's backend accepts. The client uses
           Application Default Credentials, which works automatically on Cloud Run via its service
-          account; grant that account <code>roles/datastore.user</code>. Needs a composite index on
-          <code>(owner ASC, timestamp DESC)</code> on the <code>sessions</code> collection, created
-          ahead of time via the Firestore console or
-          <code>gcloud firestore indexes composite create</code>, rather than relying on the
+          account; grant that account <code>roles/datastore.user</code>. Two composite indexes on
+          the <code>sessions</code> collection speed up
+          <code>get_cost_estimate(period_seconds=...)</code>'s native <code>sum()</code> aggregation
+          &mdash; <code>(timestamp, estimated_cost)</code> and
+          <code>(owner, timestamp, estimated_cost)</code>, both ascending &mdash; and are checked in
+          as <code>firestore.indexes.json</code> at the repo root. They're a performance
+          optimization, not a correctness requirement: without them the query transparently falls
+          back to a client-side sum. Create them ahead of time via the Firestore console or
+          <code>gcloud firestore indexes composite create</code> rather than relying on the
           first-query error link in prod. Collection name is overridable with
           <code>METRICS_FIRESTORE_COLLECTION</code>. To test locally, run
           <code>gcloud emulators firestore start</code> and set <code>FIRESTORE_EMULATOR_HOST</code>;
@@ -725,6 +754,11 @@ httpx.post(
         <li>Curl-pipeable one-line setup (<code>/setup/install</code>)</li>
         <li>Windows / PowerShell installer variant (<code>irm &hellip;?os=windows | iex</code>, POSIX <code>sh</code> still the default)</li>
         <li>Explicit MCP tool annotations on all 8 tools (read-only vs. append-only)</li>
+        <li>Unauthenticated MCP discovery handshake (<code>initialize</code> /
+          <code>notifications/initialized</code> / <code>tools/list</code> / <code>ping</code>) so
+          registry crawlers can index the tool definitions without a token</li>
+        <li>Site-root <code>robots.txt</code> / <code>sitemap.xml</code> / <code>favicon</code>, and
+          a <code>/ping</code> alias of <code>/health</code></li>
         <li>Advanced filtering in the Context Explorer (search, min-tokens, turn range, errors-only, hide-redacted)</li>
         <li>Per-device token revoke &mdash; each browser gets its own token
           (<code>device_tokens</code>), and the dashboard's "Devices &amp; sessions" panel
