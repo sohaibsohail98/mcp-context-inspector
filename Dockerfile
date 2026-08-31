@@ -28,6 +28,9 @@ RUN uv sync --frozen --no-dev
 COPY webapp/ ./webapp/
 COPY docs-site/ ./docs-site/
 COPY dashboard/ ./dashboard/
+# Site-root static assets: robots.txt, sitemap.xml, favicon.{ico,svg}
+# (routes/wellknown.py).
+COPY static/ ./static/
 
 # Deterministic demo dataset (scripts/seed_demo_db.py) — only used when
 # the deploy sets DEMO_SEED_SRC + METRICS_DB_PATH (see README/docs); a

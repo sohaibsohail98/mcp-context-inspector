@@ -1,0 +1,17 @@
+# ctxwindow.uk -- MCP server + docs for agent-session cost/token/context telemetry.
+# The app is mostly a headless MCP endpoint and a per-user dashboard behind auth;
+# only the docs and marketing surfaces are worth crawling.
+
+User-agent: *
+Allow: /$
+Allow: /docs
+Allow: /docs/
+Disallow: /mcp
+Disallow: /api/
+Disallow: /otlp
+Disallow: /setup
+Disallow: /auth/
+Disallow: /m
+Disallow: /demo-static/
+
+Sitemap: https://ctxwindow.uk/sitemap.xml

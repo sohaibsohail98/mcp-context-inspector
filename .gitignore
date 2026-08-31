@@ -3,8 +3,9 @@
 __pycache__/
 *.pyc
 .pytest_cache/
-# This is a library, not an application — no committed lockfile.
-uv.lock
+# uv.lock IS committed: this ships as a Docker image / Cloud Run service,
+# and the Dockerfile does `COPY ... uv.lock` + `uv sync --frozen` for a
+# byte-for-byte reproducible build. A clean checkout must carry the lock.
 
 # Session working notes, not a shipped file.
 checklist.md

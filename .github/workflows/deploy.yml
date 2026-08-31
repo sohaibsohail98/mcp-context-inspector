@@ -10,9 +10,12 @@ on:
       - "scripts/**"
       - "demo/**"
       - "webapp/**"
+      - "dashboard/**"
       - "docs-site/**"
+      - "static/**"
       - "Dockerfile"
       - "pyproject.toml"
+      - "uv.lock"
       - "cloudflare-proxy/**"
       - ".github/workflows/deploy.yml"
   workflow_dispatch:

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="CtxWindow">
+  <defs>
+    <linearGradient id="f" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#8ba3e0"/>
+      <stop offset="55%" stop-color="#6cbfa4"/>
+      <stop offset="100%" stop-color="#3f8f76"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="12" fill="#17150f"/>
+  <g transform="translate(32 32)">
+    <path d="M0 -20 L20 0 L0 20 L-20 0 Z" fill="url(#f)"/>
+    <path d="M0 -20 L20 0 L0 0 Z" fill="#ece5d3" fill-opacity="0.9"/>
+    <path d="M0 -20 L0 0 L-20 0 Z" fill="#ece5d3" fill-opacity="0.55"/>
+  </g>
+</svg>
