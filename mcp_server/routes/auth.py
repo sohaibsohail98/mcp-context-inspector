@@ -15,6 +15,7 @@ from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Redire
 
 from mcp_server.app import server
 from mcp_server.auth import store as auth_store
+from mcp_server.auth import token_cache
 from mcp_server.auth.google import InvalidGoogleToken, verify_credential
 from mcp_server.middleware import _public_origin
 
@@ -285,4 +286,8 @@ async def auth_revoke_device(request: Request):
     if not isinstance(body, dict) or not body.get("token_id"):
         return JSONResponse({"error": "missing token_id"}, status_code=400)
     auth_store.revoke_token(google_sub, body["token_id"])
+    # No raw token here (revoke_token takes a token_id hash prefix), so
+    # clear the whole cache -- it's small and short-lived -- to make the
+    # revoke take effect this request rather than after the TTL.
+    token_cache.clear()
     return JSONResponse({"ok": True})

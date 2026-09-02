@@ -654,16 +654,19 @@ httpx.post(
           <code>context_blocks</code> subcollections. Because a real query is available here, it
           avoids the scan-then-filter tradeoff DynamoDB's backend accepts. The client uses
           Application Default Credentials, which works automatically on Cloud Run via its service
-          account; grant that account <code>roles/datastore.user</code>. Two composite indexes on
-          the <code>sessions</code> collection speed up
-          <code>get_cost_estimate(period_seconds=...)</code>'s native <code>sum()</code> aggregation
-          &mdash; <code>(timestamp, estimated_cost)</code> and
-          <code>(owner, timestamp, estimated_cost)</code>, both ascending &mdash; and are checked in
-          as <code>firestore.indexes.json</code> at the repo root. They're a performance
-          optimization, not a correctness requirement: without them the query transparently falls
-          back to a client-side sum. Create them ahead of time via the Firestore console or
+          account; grant that account <code>roles/datastore.user</code>. One composite index on the
+          <code>sessions</code> collection is required &mdash;
+          <code>(owner ASCENDING, timestamp DESCENDING)</code>, for
+          <code>get_recent_sessions</code>'s owner-filtered, newest-first query &mdash; and is
+          checked in as <code>firestore.indexes.json</code> at the repo root. Create it ahead of
+          time via the Firestore console or
           <code>gcloud firestore indexes composite create</code> rather than relying on the
-          first-query error link in prod. Collection name is overridable with
+          first-query error link in prod. The session-list row aggregates &mdash; turn count,
+          cache-read tokens, fresh-input tokens, tool-call and tool-error counts &mdash; are
+          denormalised onto the session document and kept current inside the
+          <code>append_turn</code>/<code>append_tool_call</code> transactions, so
+          <code>get_recent_sessions</code> reads only the page of session docs, no per-session
+          subcollection scan. Collection name is overridable with
           <code>METRICS_FIRESTORE_COLLECTION</code>. To test locally, run
           <code>gcloud emulators firestore start</code> and set <code>FIRESTORE_EMULATOR_HOST</code>;
           the client library honors it transparently.

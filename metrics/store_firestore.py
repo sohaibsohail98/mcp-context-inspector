@@ -45,6 +45,18 @@ SESSIONS_COLLECTION = os.environ.get("METRICS_FIRESTORE_COLLECTION", "sessions")
 
 _SEQ_WIDTH = 4  # "0000".."9999", matching store_dynamodb.py's TURN#0000-style padding
 
+# Per-session aggregates maintained on the session doc so
+# get_recent_sessions can return the session-list row's counts/sums
+# without a per-session fan-out read of the turns/tool_calls
+# subcollections (billed per doc on the Firestore backend). Written by
+# record_session, seeded by start_or_get_session, kept current with
+# firestore.Increment inside append_turn / append_tool_call's existing
+# session-doc transaction. Legacy docs without them fall back (see
+# get_recent_sessions).
+_AGG_FIELDS = ("agg_turn_count", "agg_cache_read_tokens", "agg_fresh_input_tokens", "agg_tool_call_errors")
+# No agg_tool_call_total: the existing tool_call_count field already
+# tracks it, and is reused directly.
+
 
 def _client():
     # A fresh Client() per call, same spirit as store_sqlite.py's
@@ -129,6 +141,11 @@ def record_session(prompt, model_id, loop_result, owner=None):
             "owner": owner,
             "source": "bedrock_agent",
             "status": "closed",
+            # Denormalised session-list aggregates (see _AGG_FIELDS).
+            "agg_turn_count": len(loop_result["turns"]),
+            "agg_cache_read_tokens": sum(t.get("cache_read_input_tokens", 0) for t in loop_result["turns"]),
+            "agg_fresh_input_tokens": sum(t["input_tokens"] for t in loop_result["turns"]),
+            "agg_tool_call_errors": sum(1 for c in loop_result["trace"] if c.get("status") == "error"),
         },
     )
     for i, turn in enumerate(loop_result["turns"]):
@@ -349,14 +366,11 @@ def get_recent_sessions(limit=10, owner=None, include_test_sessions=False):
     not handled here.
 
     Per-session aggregates (turn_count, cache_read_tokens,
-    fresh_input_tokens, tool_call_total, tool_call_errors) are
-    correlated subqueries in store_sqlite.py's single SQL statement;
-    Firestore has no server-side JOIN/correlated-subquery equivalent, so
-    they're computed here by reading each returned session's turns/
-    tool_calls subcollections, i.e. N extra subcollection reads for a page
-    of `limit` sessions. Acceptable, documented tradeoff at
-    personal-project scale (same reasoning store_dynamodb.py's own
-    comments give for its scan-based aggregates).
+    fresh_input_tokens, tool_call_total, tool_call_errors) are kept
+    denormalised on the session doc (see _AGG_FIELDS), so the common path
+    is a single `limit` query with no subcollection reads. A doc written
+    before those fields existed (any _AGG_FIELDS key missing) falls back
+    to the per-session turns/tool_calls fan-out for that row only.
 
     include_test_sessions=False (the default) drops rows whose
     session_id starts with "api-tests-"; see store_sqlite.py's
@@ -375,8 +389,29 @@ def get_recent_sessions(limit=10, owner=None, include_test_sessions=False):
         data = doc.to_dict()
         if not include_test_sessions and data["session_id"].startswith("api-tests-"):
             continue
-        turns = [t.to_dict() for t in doc.reference.collection("turns").stream()]
-        tool_calls = [t.to_dict() for t in doc.reference.collection("tool_calls").stream()]
+
+        if all(k in data for k in _AGG_FIELDS):
+            # Fast path: counts/sums are denormalised on the session doc.
+            aggregates = {
+                "turn_count": data["agg_turn_count"],
+                "cache_read_tokens": data["agg_cache_read_tokens"],
+                "fresh_input_tokens": data["agg_fresh_input_tokens"],
+                "tool_call_total": data.get("tool_call_count", 0),
+                "tool_call_errors": data["agg_tool_call_errors"],
+            }
+        else:
+            # Legacy doc (predates the denormalised fields): fall back to
+            # the per-session subcollection fan-out for this row only.
+            turns = [t.to_dict() for t in doc.reference.collection("turns").stream()]
+            tool_calls = [t.to_dict() for t in doc.reference.collection("tool_calls").stream()]
+            aggregates = {
+                "turn_count": len(turns),
+                "cache_read_tokens": sum(t.get("cache_read_input_tokens", 0) for t in turns),
+                "fresh_input_tokens": sum(t.get("input_tokens", 0) for t in turns),
+                "tool_call_total": len(tool_calls),
+                "tool_call_errors": sum(1 for c in tool_calls if c.get("status") == "error"),
+            }
+
         result.append(
             {
                 "session_id": data["session_id"],
@@ -387,11 +422,7 @@ def get_recent_sessions(limit=10, owner=None, include_test_sessions=False):
                 "timestamp": data["timestamp"],
                 "source": data.get("source") or "bedrock_agent",
                 "status": data.get("status") or "closed",
-                "turn_count": len(turns),
-                "cache_read_tokens": sum(t.get("cache_read_input_tokens", 0) for t in turns),
-                "fresh_input_tokens": sum(t.get("input_tokens", 0) for t in turns),
-                "tool_call_total": len(tool_calls),
-                "tool_call_errors": sum(1 for c in tool_calls if c.get("status") == "error"),
+                **aggregates,
             }
         )
     return result
@@ -432,6 +463,12 @@ def start_or_get_session(session_id, owner=None, source="claude_code", model=Non
                 "owner": owner,
                 "source": source,
                 "status": "open",
+                # Denormalised session-list aggregates (see _AGG_FIELDS);
+                # kept current by append_turn / append_tool_call.
+                "agg_turn_count": 0,
+                "agg_cache_read_tokens": 0,
+                "agg_fresh_input_tokens": 0,
+                "agg_tool_call_errors": 0,
             },
         )
 
@@ -444,17 +481,31 @@ def _check_ownership_or_raise(client, session_id, owner):
     close_session call must not be able to write into a session_id
     owned by someone else. A missing session (append called before
     start_or_get_session) is treated as belonging to no one, i.e.
-    deny-by-default for any non-admin caller."""
+    deny-by-default for any non-admin caller.
+
+    Used by append_context_block and close_session. append_turn /
+    append_tool_call enforce ownership in-transaction instead (see
+    _raise_if_not_visible)."""
     if not _visible(_session_owner(client, session_id), owner):
+        raise SessionOwnershipError(f"session_id {session_id!r} belongs to a different owner")
+
+
+def _raise_if_not_visible(snapshot, session_id, owner):
+    """Ownership enforcement from an already-read session snapshot, for
+    the transactional append paths. A non-existent session (snapshot
+    missing) is owned by no one -> deny for any non-admin caller, exactly
+    as _check_ownership_or_raise's _session_owner(None) case does."""
+    session_owner = snapshot.get("owner") if snapshot.exists else None
+    if not _visible(session_owner, owner):
         raise SessionOwnershipError(f"session_id {session_id!r} belongs to a different owner")
 
 
 def _recost_session(client, session_id):
     """Re-derive estimated_cost from the session's own model + running
-    token totals, same reasoning as store_sqlite.py's version. Reads
-    the just-incremented totals fresh rather than trying to thread the
-    delta through, since Increment()'d fields aren't readable from the
-    write call itself."""
+    token totals, same reasoning as store_sqlite.py's version. Used by
+    close_session's final_totals override path (totals set outside a
+    transaction, so a follow-up read is the only way to recost).
+    append_turn recosts inside its own transaction instead."""
     doc = _sessions(client).document(session_id).get()
     if not doc.exists:
         return
@@ -463,59 +514,120 @@ def _recost_session(client, session_id):
     _sessions(client).document(session_id).update({"estimated_cost": cost})
 
 
+def _agg_increment_or_backfill(transaction, session_ref, prev, *, turn_delta, cache_read_delta, fresh_input_delta):
+    """Return the session-doc field updates that keep the denormalised
+    aggregates current for one append_turn.
+
+    Normal case: the doc already has the agg fields -> firestore.Increment
+    deltas. Legacy case: a pre-denormalisation doc lacks them, so a plain
+    Increment would count only from now on; detect that (agg_turn_count
+    absent) and backfill true totals by scanning the subcollections once.
+    All reads here happen before the caller's transaction writes.
+    """
+    if "agg_turn_count" in prev:
+        return {
+            "agg_turn_count": firestore.Increment(turn_delta),
+            "agg_cache_read_tokens": firestore.Increment(cache_read_delta),
+            "agg_fresh_input_tokens": firestore.Increment(fresh_input_delta),
+        }
+    # order_by("_seq") only because transaction.get needs a Query, not a
+    # bare CollectionReference; order is irrelevant to the sums below.
+    turns = [t.to_dict() for t in transaction.get(session_ref.collection("turns").order_by("_seq"))]
+    tool_calls = [t.to_dict() for t in transaction.get(session_ref.collection("tool_calls").order_by("_seq"))]
+    return {
+        "agg_turn_count": len(turns) + turn_delta,
+        "agg_cache_read_tokens": sum(t.get("cache_read_input_tokens", 0) for t in turns) + cache_read_delta,
+        "agg_fresh_input_tokens": sum(t.get("input_tokens", 0) for t in turns) + fresh_input_delta,
+        "agg_tool_call_errors": sum(1 for c in tool_calls if c.get("status") == "error"),
+    }
+
+
 def append_turn(session_id, turn_data, owner=None):
     """turn_data: {input_tokens, output_tokens, latency_ms,
     cache_read_input_tokens=0, cache_write_input_tokens=0}. Adds a turns
     subcollection doc and folds its totals into the parent session doc
     so get_session_metrics/get_recent_sessions stay accurate without a
     separate aggregation pass. owner must match the session's own owner
-    (see _check_ownership_or_raise)."""
+    (enforced in-transaction from the session snapshot; see
+    _raise_if_not_visible)."""
     client = _client()
-    _check_ownership_or_raise(client, session_id, owner)
     session_ref = _sessions(client).document(session_id)
     turns_ref = session_ref.collection("turns")
+    delta_in = turn_data["input_tokens"]
+    delta_out = turn_data["output_tokens"]
+    delta_cache_read = turn_data.get("cache_read_input_tokens", 0)
 
     @firestore.transactional
     def _txn(transaction):
+        # All reads before any writes (Firestore requirement): seq
+        # number, then the session doc -- reused for the ownership check
+        # and the in-transaction recost.
         turn_n = _next_seq_transactional(transaction, turns_ref)
+        snapshot = session_ref.get(transaction=transaction)
+        _raise_if_not_visible(snapshot, session_id, owner)
+        prev = snapshot.to_dict() if snapshot.exists else {}
+        new_cost = estimate_cost(
+            prev.get("model"),
+            (prev.get("input_tokens") or 0) + delta_in,
+            (prev.get("output_tokens") or 0) + delta_out,
+        )
+        agg_update = _agg_increment_or_backfill(
+            transaction, session_ref, prev, turn_delta=1, cache_read_delta=delta_cache_read, fresh_input_delta=delta_in
+        )
+
         transaction.set(
             turns_ref.document(_seq_doc_id(turn_n)),
             {
                 "_seq": turn_n,
                 "turn_n": turn_n,
-                "input_tokens": turn_data["input_tokens"],
-                "output_tokens": turn_data["output_tokens"],
+                "input_tokens": delta_in,
+                "output_tokens": delta_out,
                 "latency_ms": turn_data["latency_ms"],
-                "cache_read_input_tokens": turn_data.get("cache_read_input_tokens", 0),
+                "cache_read_input_tokens": delta_cache_read,
                 "cache_write_input_tokens": turn_data.get("cache_write_input_tokens", 0),
             },
         )
         transaction.update(
             session_ref,
             {
-                "input_tokens": firestore.Increment(turn_data["input_tokens"]),
-                "output_tokens": firestore.Increment(turn_data["output_tokens"]),
-                "total_tokens": firestore.Increment(turn_data["input_tokens"] + turn_data["output_tokens"]),
+                "input_tokens": firestore.Increment(delta_in),
+                "output_tokens": firestore.Increment(delta_out),
+                "total_tokens": firestore.Increment(delta_in + delta_out),
                 "latency_ms": firestore.Increment(turn_data["latency_ms"]),
+                "estimated_cost": new_cost,
+                **agg_update,
             },
         )
 
     _txn(client.transaction())
-    _recost_session(client, session_id)
 
 
 def append_tool_call(session_id, tool_call, owner=None):
     """tool_call: {tool, args, status, latency_ms=0, timestamp=None
-    (defaults to now)}. owner must match the session's own owner (see
-    _check_ownership_or_raise)."""
+    (defaults to now)}. owner must match the session's own owner
+    (enforced in-transaction from the session snapshot; see
+    _raise_if_not_visible)."""
     client = _client()
-    _check_ownership_or_raise(client, session_id, owner)
     session_ref = _sessions(client).document(session_id)
     tool_calls_ref = session_ref.collection("tool_calls")
+    is_error = tool_call["status"] == "error"
 
     @firestore.transactional
     def _txn(transaction):
         seq = _next_seq_transactional(transaction, tool_calls_ref)
+        # One session-doc read, reused for the ownership check and the
+        # error-count bookkeeping. A legacy doc missing
+        # agg_tool_call_errors gets it backfilled once, as in append_turn.
+        snapshot = session_ref.get(transaction=transaction)
+        _raise_if_not_visible(snapshot, session_id, owner)
+        prev = snapshot.to_dict() if snapshot.exists else {}
+        if "agg_tool_call_errors" in prev:
+            error_update = {"agg_tool_call_errors": firestore.Increment(1)} if is_error else {}
+        else:
+            existing = [t.to_dict() for t in transaction.get(tool_calls_ref.order_by("_seq"))]
+            prior_errors = sum(1 for c in existing if c.get("status") == "error")
+            error_update = {"agg_tool_call_errors": prior_errors + (1 if is_error else 0)}
+
         transaction.set(
             tool_calls_ref.document(_seq_doc_id(seq)),
             {
@@ -527,7 +639,7 @@ def append_tool_call(session_id, tool_call, owner=None):
                 "timestamp": tool_call.get("timestamp") or time.time(),
             },
         )
-        transaction.update(session_ref, {"tool_call_count": firestore.Increment(1)})
+        transaction.update(session_ref, {"tool_call_count": firestore.Increment(1), **error_update})
 
     _txn(client.transaction())
 

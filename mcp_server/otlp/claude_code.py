@@ -39,7 +39,8 @@ Still unverified (no tool call happened in the captured session):
 """
 
 import json
-from collections import Counter
+import threading
+from collections import Counter, OrderedDict
 
 from mcp_server.otlp.common import (
     CATEGORY_ANSWER,
@@ -314,12 +315,57 @@ def _parse_body(attrs):
 # ---------------------------------------------------------------------------
 
 
-def _current_turn_n(session_id, owner):
-    """Best-effort 'current turn' for blocks appended from a response
-    body, which arrives without its own messages[] array to derive
-    turn_n from positionally. Uses the highest turn_n already recorded
-    for this session (falls back to 0 for a session with no blocks yet)."""
-    timeline = store.get_context_timeline(session_id, owner=owner)
+# (owner, session_id) pairs this process has already ensured exist, so a
+# repeat OTLP record skips start_or_get_session's read+maybe-write
+# transaction. Bounded LRU; a dropped id just re-runs start_or_get_session
+# once (idempotent). Read-cost optimisation only, not a correctness
+# mechanism.
+_SEEN_SESSIONS_MAX = 4096
+_seen_sessions: "OrderedDict[tuple[object, str], None]" = OrderedDict()
+_seen_lock = threading.Lock()
+
+
+def _seen_session_key(owner, session_id):
+    return (owner, session_id)
+
+
+def _mark_session_seen(owner, session_id):
+    with _seen_lock:
+        key = _seen_session_key(owner, session_id)
+        _seen_sessions.pop(key, None)
+        _seen_sessions[key] = None
+        while len(_seen_sessions) > _SEEN_SESSIONS_MAX:
+            _seen_sessions.popitem(last=False)
+
+
+def _session_already_seen(owner, session_id):
+    with _seen_lock:
+        return _seen_session_key(owner, session_id) in _seen_sessions
+
+
+def _reset_seen_sessions():
+    """Test hook: drop the process-local seen-sessions set so one test's
+    ingestion can't make another test skip start_or_get_session."""
+    with _seen_lock:
+        _seen_sessions.clear()
+
+
+def _ensure_session(session_id, owner, model):
+    """start_or_get_session, but only hit the store the first time THIS
+    process sees (owner, session_id). Otherwise every OTLP record for an
+    established session re-runs that transaction.
+
+    Trade-off: a session deleted out-of-band while this process is still
+    ingesting for it won't be silently recreated -- the append_* calls
+    fail their ownership check until the seen-set entry ages out.
+    Sessions aren't deleted in normal operation."""
+    if _session_already_seen(owner, session_id):
+        return
+    store.start_or_get_session(session_id, owner=owner, source="claude_code", model=model)
+    _mark_session_seen(owner, session_id)
+
+
+def _max_turn_n(timeline):
     turn_ns = [b["turn_n"] for b in timeline if b.get("turn_n") is not None]
     return max(turn_ns) if turn_ns else 0
 
@@ -356,12 +402,11 @@ def _split_stored_block_identity(block):
         yield (frag_category, _TEXT_BLOCK_LABELS[frag_category], frag_text)
 
 
-def _handle_request_body(session_id, attrs, owner):
+def _handle_request_body(session_id, attrs, owner, existing):
     body = _parse_body(attrs)
     if not isinstance(body, dict):
         return  # content unavailable (e.g. body_ref-only), nothing to walk
     fresh_blocks = _walk_request_body(body)
-    existing = store.get_context_timeline(session_id, owner=owner)
 
     # Occurrence-indexed content-identity dedup, replacing a naive
     # length-based tail slice (fresh_blocks[len(existing):]). Real Claude
@@ -383,24 +428,30 @@ def _handle_request_body(session_id, attrs, owner):
     # now carries.
     existing_counts = Counter(ident for b in existing for ident in _split_stored_block_identity(b))
     seen_counts = Counter()
+    appended = []
     for block in fresh_blocks:
         identity = _block_identity(block)
         seen_counts[identity] += 1
         if seen_counts[identity] <= existing_counts[identity]:
             continue  # this occurrence is already stored
         store.append_context_block(session_id, block, owner=owner)
+        appended.append(block)
+    # Keep the passed-in timeline current so a later handler in the same
+    # batch doesn't re-read it from the store.
+    existing.extend(appended)
 
 
-def _handle_response_body(session_id, attrs, owner):
+def _handle_response_body(session_id, attrs, owner, existing):
     body = _parse_body(attrs)
     if not isinstance(body, dict):
         return  # content unavailable
 
-    turn_n = _current_turn_n(session_id, owner)
+    turn_n = _max_turn_n(existing)
     content = body.get("content")
     if isinstance(content, list):
         for block in _blocks_from_message({"role": "assistant", "content": content}, turn_n):
             store.append_context_block(session_id, block, owner=owner)
+            existing.append(block)
 
     usage = body.get("usage")
     if isinstance(usage, dict):
@@ -450,7 +501,7 @@ def _handle_tool_result(session_id, attrs, owner):
 _TURN_EVENT_NAMES = {"api_request_body", "api_response_body", "tool_result", "user_prompt", "assistant_response"}
 
 
-def _handle_log_record(resource_attrs, record, owner):
+def _handle_log_record(resource_attrs, record, owner, timelines):
     attrs = attrs_list_to_dict(record.get("attributes", []))
     # Correlation identifiers are unverified as to which level Claude
     # Code stamps them at (log-record vs. resource), so check both,
@@ -468,24 +519,39 @@ def _handle_log_record(resource_attrs, record, owner):
         return
 
     model = attrs.get("model") or resource_attrs.get("model")
-    store.start_or_get_session(session_id, owner=owner, source="claude_code", model=model)
+    _ensure_session(session_id, owner, model)
+
+    if event_name not in ("api_request_body", "api_response_body"):
+        if event_name == "tool_result":
+            _handle_tool_result(session_id, attrs, owner)
+        # user_prompt / assistant_response: session row created above (so
+        # a session started this way is still visible even if bodies are
+        # ever unavailable) but content processing is skipped on purpose,
+        # since request/response bodies already carry the same content.
+        return
+
+    # Both body handlers need the session's already-stored context blocks
+    # -- the request handler to diff against, the response handler for the
+    # current turn_n. Fetch it once per session per batch, then keep it
+    # current in memory as blocks are appended.
+    if session_id not in timelines:
+        timelines[session_id] = store.get_context_timeline(session_id, owner=owner)
+    existing = timelines[session_id]
 
     if event_name == "api_request_body":
-        _handle_request_body(session_id, attrs, owner)
-    elif event_name == "api_response_body":
-        _handle_response_body(session_id, attrs, owner)
-    elif event_name == "tool_result":
-        _handle_tool_result(session_id, attrs, owner)
-    # user_prompt / assistant_response: session row created above (so a
-    # session started this way is still visible even if bodies are ever
-    # unavailable) but content processing is still skipped on purpose,
-    # since request/response bodies already carry the same content.
+        _handle_request_body(session_id, attrs, owner, existing)
+    else:  # api_response_body
+        _handle_response_body(session_id, attrs, owner, existing)
 
 
 def handle_logs(resource_attrs, log_records, owner):
+    # session_id -> the session's context-block timeline, fetched from the
+    # store at most once per batch and updated in place by the body
+    # handlers. See _handle_log_record.
+    timelines: dict[str, list] = {}
     for record in log_records:
         try:
-            _handle_log_record(resource_attrs, record, owner)
+            _handle_log_record(resource_attrs, record, owner, timelines)
         except _SKIP_EXCEPTIONS:
             continue
 
@@ -528,7 +594,7 @@ def _handle_metric(resource_attrs, metric, owner):
         # tokens. handle_metrics's only job is to make sure a
         # session/model exists (backfilling model if a session hasn't
         # been seen via logs yet, e.g. metrics batch arrives first).
-        store.start_or_get_session(session_id, owner=owner, source="claude_code", model=model)
+        _ensure_session(session_id, owner, model)
 
 
 def handle_metrics(resource_attrs, metrics, owner):

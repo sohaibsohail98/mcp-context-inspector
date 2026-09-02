@@ -34,29 +34,58 @@ jobs:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.0.1
       - run: uv venv && uv pip install -e ".[dev]"
-      # Pure unit/in-process integration tests: no AWS credentials, no
-      # real DynamoDB, no real Google network calls (verify_credential
-      # is monkeypatched everywhere it's tested). Runs on every push and
-      # PR so a regression in the MCP server itself is caught before it
-      # ships. This package is meant to be handed to other people, so
-      # it needs to hold up on its own, not just "worked when I ran it
-      # locally once." api_tests/ is excluded here on purpose: those
-      # hit a real deployed URL over the network (see api-e2e-tests
-      # below) and would make this "no network calls" job a liar.
-      # --cov reports coverage (see pyproject.toml [tool.coverage]) with
-      # no fail_under gate: the number is surfaced in the job log so the
-      # untested-frontend gap stays visible, not enforced.
+
+      # The Firestore-backend tests (tests/test_metrics_store_firestore.py,
+      # tests/test_auth_store_firestore.py) run against the real Firestore
+      # emulator, or skip themselves whole-module if FIRESTORE_EMULATOR_HOST
+      # isn't reachable. They used to always skip in CI, so a regression in
+      # metrics/store_firestore.py (the deployed backend, and the one whose
+      # read pattern drives the Firestore bill) shipped untested. Start the
+      # emulator here so they actually execute. Needs a JRE (the emulator is
+      # a Java process) and the gcloud SDK component.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: google-github-actions/setup-gcloud@v3
+      - run: gcloud components install cloud-firestore-emulator --quiet
+      - name: Start Firestore emulator
+        run: |
+          nohup gcloud emulators firestore start --host-port=localhost:8901 >/tmp/firestore-emulator.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -s localhost:8901 >/dev/null 2>&1; then echo "emulator up"; break; fi
+            sleep 1
+          done
+
+      # Pure unit/in-process integration tests plus the emulator-backed
+      # Firestore tests above: no AWS credentials, no real DynamoDB, no
+      # real Google network calls (verify_credential is monkeypatched
+      # everywhere it's tested; Firestore points at the local emulator).
+      # Runs on every push and PR so a regression in the MCP server
+      # itself is caught before it ships. This package is meant to be
+      # handed to other people, so it needs to hold up on its own, not
+      # just "worked when I ran it locally once." api_tests/ is excluded
+      # here on purpose: those hit a real deployed URL over the network
+      # (see api-e2e-tests below) and would make this "no network calls"
+      # job a liar. --cov reports coverage (see pyproject.toml
+      # [tool.coverage]) with no fail_under gate: the number is surfaced
+      # in the job log so the untested-frontend gap stays visible, not
+      # enforced.
       - run: uv run python -m pytest -v --ignore=api_tests --cov --cov-report=term-missing
+        env:
+          FIRESTORE_EMULATOR_HOST: localhost:8901
+          GOOGLE_CLOUD_PROJECT: demo-ci
 
   api-e2e-tests:
     runs-on: ubuntu-latest
-    # Live black-box tests against the real deployed instance (see
-    # api_tests/README.md). Only runs once API_TEST_BASE_URL/
-    # API_TEST_TOKEN secrets exist in the repo. Without them this job
-    # still runs but every test self-skips (api_tests/conftest.py), so
-    # it shows green-with-skips rather than silently not existing,
-    # visible in the Actions UI as "needs secrets configured" instead
-    # of just being absent.
+    # Live black-box tests against the REAL deployed instance and its
+    # real Firestore (see api_tests/README.md). Every run creates
+    # sessions and polls /api/sessions on prod, which is billed Firestore
+    # reads/writes, so this is gated to pushes on main only -- not every
+    # PR sync -- and skips entirely without the API_TEST_* secrets
+    # (api_tests/conftest.py), showing green-with-skips rather than
+    # silently not existing.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.0.1
