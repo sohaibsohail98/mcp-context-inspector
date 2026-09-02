@@ -112,15 +112,22 @@ def test_two_tokens_per_account_do_not_collide(isolated_firestore_auth_store):
     assert store.get_sub_for_token(sign_in_token) == "sub123"
     assert store.get_sub_for_token(oauth_token) == "sub123"
 
+    # Surgical revoke: dropping the OAuth token leaves the direct
+    # sign-in token untouched (and vice versa) -- they're separate
+    # secrets in separate collections.
     store.revoke_oauth_token(oauth_token)
     assert store.is_valid_token(oauth_token) is False
     assert store.is_valid_token(sign_in_token) is True
 
+    # Account-wide revoke, by contrast, is deliberately blunt: it kills
+    # EVERY credential for the sub -- the sign-in token AND every
+    # OAuth-issued token -- matching revoke()'s docstring and the
+    # SQLite/DynamoDB backends. OAuth *client registrations* survive.
     sign_in_token_2 = store.get_or_create_token("sub123", "a@example.com")
     oauth_token_2 = store.mint_oauth_token("sub123", "a@example.com", "claude.ai")
     store.revoke("sub123")
     assert store.is_valid_token(sign_in_token_2) is False
-    assert store.is_valid_token(oauth_token_2) is True
+    assert store.is_valid_token(oauth_token_2) is False
 
 
 def test_register_and_get_oauth_client_round_trip(isolated_firestore_auth_store):

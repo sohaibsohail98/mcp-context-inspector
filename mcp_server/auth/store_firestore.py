@@ -139,18 +139,34 @@ def get_or_create_token(google_sub, email):
     return _txn(transaction)
 
 
+def _device_token_doc(token):
+    """The device_tokens doc for a raw token, or None.
+
+    device_tokens docs are keyed by `{google_sub}:{sha256(user_agent)[:16]}`
+    (so re-sign-in from the same device is a deterministic upsert; see
+    get_or_create_device_token), NOT by the token value. So a bearer
+    token has to be matched against the `token` FIELD via a query, the
+    same way mcp_users is. (oauth_tokens, by contrast, IS keyed by the
+    raw token, so those stay a direct .document(token).get().) An earlier
+    version looked device tokens up with .document(token) here, which
+    silently never matched -- device-token sign-in did not authenticate
+    on the Firestore backend at all. Covered now by
+    tests/test_auth_store_firestore.py running against the emulator."""
+    matches = list(_device_tokens().where(filter=FieldFilter("token", "==", token)).limit(1).stream())
+    return matches[0] if matches else None
+
+
 def is_valid_token(token):
     """True for a direct Google-sign-in token (the shared mcp_users
-    token, looked up by its `token` field via a query since the doc ID
-    there is google_sub; OR a per-device row in device_tokens, keyed by
-    the token itself) or a token minted through the OAuth flow for a
-    Connector-style client (oauth_tokens, also keyed by the token). All
-    are equally valid bearer credentials from the caller's perspective;
-    only their provenance differs."""
-    matches = list(_users().where(filter=FieldFilter("token", "==", token)).limit(1).stream())
-    if matches:
+    token, matched on its `token` field since the doc ID there is
+    google_sub), a per-device sign-in token (device_tokens, also matched
+    on its `token` field, see _device_token_doc), or an OAuth-flow token
+    for a Connector-style client (oauth_tokens, keyed by the token
+    itself). All are equally valid bearer credentials from the caller's
+    perspective; only their provenance differs."""
+    if list(_users().where(filter=FieldFilter("token", "==", token)).limit(1).stream()):
         return True
-    if _device_tokens().document(token).get().exists:
+    if _device_token_doc(token) is not None:
         return True
     return _tokens().document(token).get().exists
 
@@ -158,15 +174,21 @@ def is_valid_token(token):
 def get_sub_for_token(token):
     """The google_sub that owns this token, used to attribute data
     (record/filter by owner) to whoever's actually connected, not just
-    to check "is this token valid at all." Checks both mcp_users and
-    oauth_tokens (see is_valid_token). Returns None if the token doesn't
-    belong to any signed-in user (e.g. it's invalid)."""
+    to check "is this token valid at all." Checks mcp_users,
+    device_tokens and oauth_tokens (see is_valid_token). Returns None if
+    the token doesn't belong to any signed-in user (e.g. it's invalid).
+
+    MultiTokenAuthMiddleware calls this on every authenticated request
+    (fronted by a short TTL cache, see mcp_server/auth/token_cache.py),
+    and treats a None return as "invalid token" -- so this is both the
+    ownership lookup and the validity check.
+    """
     matches = list(_users().where(filter=FieldFilter("token", "==", token)).limit(1).stream())
     if matches:
         return matches[0].id  # doc ID IS google_sub in mcp_users
-    snapshot = _device_tokens().document(token).get()
-    if snapshot.exists:
-        return snapshot.to_dict()["google_sub"]
+    device_doc = _device_token_doc(token)
+    if device_doc is not None:
+        return device_doc.to_dict()["google_sub"]
     snapshot = _tokens().document(token).get()
     return snapshot.to_dict()["google_sub"] if snapshot.exists else None
 
@@ -255,15 +277,21 @@ def get_or_create_device_token(google_sub, email, user_agent):
 def touch_token(token):
     """Best-effort hourly refresh of last_seen_at for a device/OAuth
     token. Skips the write when the stored value is newer than
-    LAST_SEEN_REFRESH_SECONDS. Never raises."""
+    LAST_SEEN_REFRESH_SECONDS. Never raises.
+
+    Called at most once per token per token_cache.TTL_SECONDS from the
+    auth middleware's cache-miss hook, not once per request."""
     now = time.time()
     cutoff = now - LAST_SEEN_REFRESH_SECONDS
     try:
-        snap = _device_tokens().document(token).get()
-        if snap.exists:
-            if (snap.to_dict().get("last_seen_at") or 0) < cutoff:
-                snap.reference.update({"last_seen_at": now})
+        # device_tokens is keyed by {sub}:{ua_hash}, not the token, so it
+        # must be matched on the `token` field (see _device_token_doc).
+        device_doc = _device_token_doc(token)
+        if device_doc is not None:
+            if (device_doc.to_dict().get("last_seen_at") or 0) < cutoff:
+                device_doc.reference.update({"last_seen_at": now})
             return
+        # oauth_tokens IS keyed by the raw token.
         snap = _tokens().document(token).get()
         if snap.exists and (snap.to_dict().get("last_seen_at") or 0) < cutoff:
             snap.reference.update({"last_seen_at": now})

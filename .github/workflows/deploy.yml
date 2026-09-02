@@ -43,8 +43,26 @@ jobs:
       - uses: astral-sh/setup-uv@v10.0.1
       - run: uv venv && uv pip install -e ".[dev]"
       # Same reasoning as tests.yml: never deploy on top of a failing
-      # unit suite, even though tests.yml already ran on this push.
+      # suite, even though tests.yml already ran on this push. Bring up
+      # the Firestore emulator here too so the store_firestore.py tests
+      # (the deployed backend) actually run before a deploy instead of
+      # skipping.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - run: gcloud components install cloud-firestore-emulator --quiet
+      - name: Start Firestore emulator
+        run: |
+          nohup gcloud emulators firestore start --host-port=localhost:8901 >/tmp/firestore-emulator.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -s localhost:8901 >/dev/null 2>&1; then echo "emulator up"; break; fi
+            sleep 1
+          done
       - run: uv run python -m pytest -v
+        env:
+          FIRESTORE_EMULATOR_HOST: localhost:8901
+          GOOGLE_CLOUD_PROJECT: demo-ci
 
       - id: auth
         uses: google-github-actions/auth@v3
