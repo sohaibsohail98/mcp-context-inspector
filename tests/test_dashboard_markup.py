@@ -91,6 +91,31 @@ def test_refresh_controls_present(monkeypatch):
         assert marker in body, f"missing marker: {marker}"
 
 
+def test_auto_refresh_is_throttled_and_pauses_when_tab_hidden(monkeypatch):
+    """Pin the throttle: a >=30s poll interval constant, a document.hidden
+    guard on the automatic poll path, and a session limit well under the
+    old 500."""
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id")
+    app = server_module.server.streamable_http_app()
+    with TestClient(app) as client:
+        body = _page_text(client)
+
+    assert "const DASHBOARD_POLL_MS = " in body
+    # Extract the interval and assert it's not the old sub-10s cadence.
+    import re
+
+    poll_ms = int(re.search(r"const DASHBOARD_POLL_MS = (\d+)", body).group(1))
+    assert poll_ms >= 30000, f"poll interval {poll_ms}ms is too aggressive"
+
+    assert "document.hidden" in body, "automatic poll must skip while tab is hidden"
+    assert "visibilitychange" in body, "must refresh once when tab returns to foreground"
+
+    limit = int(re.search(r"const DASHBOARD_SESSION_LIMIT = (\d+)", body).group(1))
+    assert limit <= 200, f"session limit {limit} too high"
+    assert "limit=500" not in body, "old hardcoded limit=500 still present"
+    assert "setInterval(() => refreshDashboard(token), 8000)" not in body
+
+
 def test_settings_toggle_reuses_existing_tab_pattern(monkeypatch):
     """The ⚙ settings toggle must exist and follow the same show/hide-
     sibling-divs pattern already used for showConnectTab, not a new

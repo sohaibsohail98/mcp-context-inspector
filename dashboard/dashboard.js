@@ -317,7 +317,7 @@
             <div class="identity-dropdown-email">` + email + `</div>
             <button onclick="closeIdentityMenu(); backToConnect();">&larr; Token &amp; config</button>
             <button onclick="closeIdentityMenu(); copyCurrentToken();">&#9112; Copy token</button>
-            <button onclick="closeIdentityMenu(); refreshDashboard(currentToken);">&#8635; Refresh now</button>
+            <button onclick="closeIdentityMenu(); refreshDashboard(currentToken, { force: true });">&#8635; Refresh now</button>
             <button onclick="openDevices();">&#128421; Devices &amp; sessions</button>
             <button class="danger" onclick="closeIdentityMenu(); signOut();">Sign out</button>
           </div>
@@ -618,7 +618,8 @@
   // MultiTokenAuthMiddleware + metrics/store.py's owner filtering), so
   // this page can never show another user's data even if it tried to.
   //
-  // KPI strip / range filter: fetches /api/sessions?limit=500 ONCE and
+  // KPI strip / range filter: fetches /api/sessions?limit=N (see
+  // DASHBOARD_SESSION_LIMIT) ONCE and
   // aggregates client-side (same "personal-project scale" assumption
   // already used elsewhere in this codebase) instead of adding new
   // backend aggregate endpoints. Every tile (sessions, tokens, spend,
@@ -713,11 +714,23 @@
     return Math.floor(secs / 86400) + "d ago";
   }
 
+  // Auto-refresh cadence. Each poll is a GET /api/sessions?limit=N, which
+  // on the Firestore backend is a query plus a billed read per returned
+  // session doc. 60s is still live enough for a human watching a session
+  // list, and the poll is skipped entirely while the tab is backgrounded
+  // (see refreshDashboard).
+  const DASHBOARD_POLL_MS = 60000;
+  // Upper bound on sessions pulled per poll. The list, KPI/quota/insight
+  // strips are all derived client-side from this one payload, so it must
+  // cover the visible range.
+  const DASHBOARD_SESSION_LIMIT = 200;
+
   let dashboardTimer = null;
+  let dashboardVisibilityHooked = false;
   let dashboardSelected = null;
   let dashboardRange = "7d"; // "today" | "7d" | "30d" | "all"
   let dashboardSourceFilter = "all"; // "all" | "claude_code" | "copilot" | "bedrock_agent"
-  let dashboardSessions = []; // full bulk list (up to 500), unfiltered
+  let dashboardSessions = []; // full bulk list (up to DASHBOARD_SESSION_LIMIT), unfiltered
   let dashboardAutoRefresh = true;
   // Whether this signed-in account is on the DEV_MODE_SUBS allowlist
   // (see GET /api/dev-mode-status), checked once per mount, since it
@@ -1415,14 +1428,17 @@
     refreshDashboardPanels();
   }
 
-  async function refreshDashboard(token) {
+  async function refreshDashboard(token, { force = false } = {}) {
     const root = document.getElementById("dash-root");
     if (!root) { clearInterval(dashboardTimer); return; }
+    // Skip an automatic poll while the tab is backgrounded. A manual
+    // refresh (force) or the visibilitychange resume still goes through.
+    if (!force && document.hidden) return;
     const btn = document.getElementById("manual-refresh-btn");
     if (btn) { btn.disabled = true; btn.classList.add("spinning"); }
     try {
       const testParam = dashboardIsDevMode && dashboardShowTestSessions ? "&include_test_sessions=1" : "";
-      dashboardSessions = await apiGet(token, "/api/sessions?limit=500" + testParam);
+      dashboardSessions = await apiGet(token, "/api/sessions?limit=" + DASHBOARD_SESSION_LIMIT + testParam);
       if (!document.getElementById("kpi-strip")) {
         renderDashboardShell();
       } else {
@@ -1447,7 +1463,7 @@
   function manualRefresh() {
     const root = document.getElementById("dash-root");
     const token = root && root.dataset.token;
-    if (token) refreshDashboard(token);
+    if (token) refreshDashboard(token, { force: true });
   }
 
   function toggleAutoRefresh() {
@@ -1459,10 +1475,10 @@
     if (dashboardAutoRefresh) {
       const root = document.getElementById("dash-root");
       const token = root && root.dataset.token;
-      if (token) dashboardTimer = setInterval(() => refreshDashboard(token), 8000);
+      if (token) dashboardTimer = setInterval(() => refreshDashboard(token), DASHBOARD_POLL_MS);
     }
     // Panels re-render on the next refresh already, but toggling should
-    // reflect the new state immediately even if a full poll is 8s away.
+    // reflect the new state immediately even if a full poll is a while away.
     const panel = document.getElementById("session-list-panel");
     if (panel) panel.innerHTML = renderSessionListPanel();
   }
@@ -1471,7 +1487,7 @@
     dashboardShowTestSessions = !dashboardShowTestSessions;
     const root = document.getElementById("dash-root");
     const token = root && root.dataset.token;
-    if (token) refreshDashboard(token);
+    if (token) refreshDashboard(token, { force: true });
   }
 
   // One poll loop per page load; re-mounting (e.g. signing in again)
@@ -1489,8 +1505,21 @@
     apiGet(token, "/api/dev-mode-status")
       .then((data) => { dashboardIsDevMode = !!data.dev_mode; })
       .catch(() => {})
-      .finally(() => refreshDashboard(token));
-    dashboardTimer = setInterval(() => refreshDashboard(token), 8000);
+      .finally(() => refreshDashboard(token, { force: true }));
+    dashboardTimer = setInterval(() => refreshDashboard(token), DASHBOARD_POLL_MS);
+    // When the tab comes back to the foreground, pull once immediately so
+    // the list isn't stale up to a full poll interval, then let the timer
+    // (which was firing into a no-op while hidden) resume normally.
+    if (!dashboardVisibilityHooked) {
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) {
+          const r = document.getElementById("dash-root");
+          const t = r && r.dataset.token;
+          if (t) refreshDashboard(t, { force: true });
+        }
+      });
+      dashboardVisibilityHooked = true;
+    }
   }
 
   // --- Project settings (new UI, no backend yet) ----------------------
