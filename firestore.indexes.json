@@ -1,21 +1,12 @@
 {
-  "//": "Composite indexes for the Firestore metrics backend (metrics/store_firestore.py). Deploy with: gcloud firestore indexes composite create --project=<PROJECT> --collection-group=sessions --query-scope=COLLECTION --field-config field-path=owner,order=ASCENDING --field-config field-path=timestamp,order=ASCENDING --field-config field-path=estimated_cost,order=ASCENDING   (repeat without `owner` for the owner-token path). get_cost_estimate(period_seconds=...) falls back to a client-side sum when these are absent, so they are a performance optimization, not a correctness requirement.",
+  "//": "Composite indexes for the Firestore metrics backend (metrics/store_firestore.py). Only (owner ASC, timestamp DESC) is required -- get_recent_sessions' owner-filtered, timestamp-ordered query is rejected at runtime without it. Deploy with: gcloud firestore indexes composite create --project=<PROJECT> --collection-group=sessions --query-scope=COLLECTION --field-config field-path=owner,order=ASCENDING --field-config field-path=timestamp,order=DESCENDING",
   "indexes": [
     {
       "collectionGroup": "sessions",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "timestamp", "order": "ASCENDING" },
-        { "fieldPath": "estimated_cost", "order": "ASCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "sessions",
-      "queryScope": "COLLECTION",
-      "fields": [
         { "fieldPath": "owner", "order": "ASCENDING" },
-        { "fieldPath": "timestamp", "order": "ASCENDING" },
-        { "fieldPath": "estimated_cost", "order": "ASCENDING" }
+        { "fieldPath": "timestamp", "order": "DESCENDING" }
       ]
     }
   ],
