@@ -150,6 +150,53 @@ def test_second_request_with_resent_history_does_not_duplicate(isolated_sqlite_d
     assert breakdown[1]["input_tokens"] == 20
 
 
+def test_multiple_turns_in_one_batch_reuse_in_memory_timeline(isolated_sqlite_db):
+    """Two full turns in ONE batch: the second request's history-dedup
+    must still work off the in-memory timeline view (no re-read from the
+    store), so the resent history isn't duplicated and turn_n advances."""
+    store = isolated_sqlite_db
+
+    r1 = {"system": "sys", "messages": [{"role": "user", "content": "q1"}]}
+    resp1 = {"content": [{"type": "text", "text": "a1"}], "usage": {"input_tokens": 10, "output_tokens": 5}}
+    r2 = {
+        "system": "sys",
+        "messages": [
+            {"role": "user", "content": "q1"},
+            {"role": "assistant", "content": [{"type": "text", "text": "a1"}]},
+            {"role": "user", "content": "q2"},
+        ],
+    }
+    resp2 = {"content": [{"type": "text", "text": "a2"}], "usage": {"input_tokens": 20, "output_tokens": 8}}
+
+    claude_code.handle_logs(
+        RESOURCE_ATTRS,
+        [
+            _log_record("api_request_body", r1),
+            _log_record("api_response_body", resp1),
+            _log_record("api_request_body", r2),
+            _log_record("api_response_body", resp2),
+        ],
+        owner=None,
+    )
+
+    timeline = store.get_context_timeline("sess-1")
+    labels = [b["label"] for b in timeline]
+    assert labels.count("System prompt") == 1
+    assert labels.count("User message") == 2
+    assert labels.count("Assistant response") == 2
+
+    # Second turn's user block and answer block are turn_n == 1.
+    user_blocks = [b for b in timeline if b["label"] == "User message"]
+    assert user_blocks[0]["turn_n"] == 0
+    assert user_blocks[1]["turn_n"] == 1
+    answer_blocks = [b for b in timeline if b["label"] == "Assistant response"]
+    assert answer_blocks[1]["turn_n"] == 1
+
+    breakdown = store.get_token_breakdown("sess-1")
+    assert len(breakdown) == 2
+    assert breakdown[1]["input_tokens"] == 20
+
+
 def test_tool_result_event_appends_tool_call(isolated_sqlite_db):
     store = isolated_sqlite_db
     record = _log_record(

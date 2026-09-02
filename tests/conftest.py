@@ -106,6 +106,37 @@ def _reset_oauth_register_rate_limit():
 
 
 @pytest.fixture(autouse=True)
+def _reset_token_cache():
+    """mcp_server.auth.token_cache holds a process-local token -> owner
+    TTL cache that MultiTokenAuthMiddleware consults on every request.
+    Without this, one test's resolved (or invalid-cached) token could
+    still be cached when the next test reuses the same token string
+    against a freshly-isolated auth store, so the second test would
+    authenticate (or 401) off stale state instead of hitting the store.
+    Autouse, same reasoning as the other in-memory-state resets here."""
+    from mcp_server.auth import token_cache
+
+    token_cache.clear()
+    yield
+    token_cache.clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_otlp_seen_sessions():
+    """mcp_server.otlp.claude_code keeps a process-local set of
+    (owner, session_id) pairs it has already ensured exist, so a repeat
+    OTLP record can skip start_or_get_session's store transaction.
+    Without resetting it between tests, one test's ingestion would make a
+    later test (with a freshly-isolated store) skip creating the same
+    session_id, so its append_* calls would hit a non-existent session."""
+    from mcp_server.otlp import claude_code
+
+    claude_code._reset_seen_sessions()
+    yield
+    claude_code._reset_seen_sessions()
+
+
+@pytest.fixture(autouse=True)
 def _reset_otlp_debug_counters():
     """mcp_server.otlp's _counts/_last_accepted_at/_recent_skipped are
     module-level, in-memory state (see that module's docstring). Same

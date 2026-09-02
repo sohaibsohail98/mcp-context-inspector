@@ -11,6 +11,7 @@ from starlette.responses import JSONResponse
 
 from mcp_server.app import current_owner
 from mcp_server.auth import store as auth_store
+from mcp_server.auth import token_cache
 
 # An owner sentinel that no real session_owner (a Google `sub`, or None
 # for the admin) can ever equal, so metrics/store.py's _visible() returns
@@ -129,13 +130,8 @@ class MultiTokenAuthMiddleware(BaseHTTPMiddleware):
                 # inserts them with owner=NULL, so a per-user token would
                 # see nothing (see metrics/store_sqlite.py's _visible()).
                 current_owner.set(None)
-            elif token and auth_store.is_valid_token(token):
-                current_owner.set(auth_store.get_sub_for_token(token))
-                # Best-effort "last seen" for the device/session list (see
-                # auth_store.list_tokens). Rate-limited inside touch_token
-                # to at most one write per hour per token, and it never
-                # raises, so this can't slow down or break a real request.
-                auth_store.touch_token(token)
+            elif token and (resolved := self._resolve_token(token))[1]:
+                current_owner.set(resolved[0])
             else:
                 # WWW-Authenticate here is what lets an MCP client do OAuth
                 # discovery (RFC 9728 §5.1): on a 401 with no/invalid token,
@@ -156,6 +152,18 @@ class MultiTokenAuthMiddleware(BaseHTTPMiddleware):
                     },
                 )
         return await call_next(request)
+
+    def _resolve_token(self, token):
+        """(owner, is_valid) for a per-user bearer token, cached per
+        process (token_cache.TTL_SECONDS) so a polling client costs one
+        backend lookup per TTL instead of one per request.
+
+        get_sub_for_token returns None for an invalid token, so its
+        result is both the validity check and the owner. touch_token
+        (best-effort "last seen" for the device list) runs as the cache's
+        on_miss hook, so once per TTL per token rather than per request.
+        """
+        return token_cache.resolve(token, auth_store.get_sub_for_token, on_miss=auth_store.touch_token)
 
     async def _is_anon_mcp_ok(self, request):
         """True for an unauthenticated /mcp request that touches no

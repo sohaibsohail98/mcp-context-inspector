@@ -40,6 +40,7 @@ from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 from mcp_server.app import current_owner, server
 from mcp_server.auth import store as auth_store
+from mcp_server.auth import token_cache
 from mcp_server.auth.google import InvalidGoogleToken, verify_credential
 from mcp_server.middleware import _public_origin
 from mcp_server.routes.auth import _PAGE_STYLE
@@ -497,5 +498,9 @@ async def api_revoke_oauth_token(request: Request):
     pass the full token here."""
     if not _require_owner(request):
         return JSONResponse({"error": "owner token required"}, status_code=403)
-    auth_store.revoke_oauth_token(request.path_params["token_prefix"])
+    raw_token = request.path_params["token_prefix"]
+    auth_store.revoke_oauth_token(raw_token)
+    # Drop the middleware's cached resolution so the revoked token stops
+    # authenticating this request, not after the TTL.
+    token_cache.invalidate(raw_token)
     return JSONResponse({"ok": True})

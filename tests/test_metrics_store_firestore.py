@@ -22,6 +22,7 @@ import os
 import socket
 
 import pytest
+from google.cloud import firestore
 
 from metrics.errors import SessionOwnershipError
 
@@ -438,3 +439,128 @@ def test_non_user_context_block_does_not_set_prompt(isolated_firestore_db):
         },
     )
     assert store.get_session_metrics(sid)["prompt_metrics"]["prompt"] is None
+
+
+# --- denormalised session-list aggregates -----------------------------
+# get_recent_sessions must return the row counts/sums without a
+# per-session subcollection fan-out. These pin that the session-doc
+# counters stay correct across record_session, incremental appends, and
+# legacy docs.
+
+
+def test_recent_sessions_aggregates_from_record_session(isolated_firestore_db):
+    store = isolated_firestore_db
+    loop_result = _basic_loop_result(
+        turns=[
+            {"input_tokens": 10, "output_tokens": 5, "latency_ms": 100, "cache_read_input_tokens": 200},
+            {"input_tokens": 30, "output_tokens": 5, "latency_ms": 100, "cache_read_input_tokens": 100},
+        ],
+        trace=[
+            {"tool": "a", "args": {}, "status": "ok"},
+            {"tool": "b", "args": {}, "status": "error"},
+            {"tool": "c", "args": {}, "status": "error"},
+        ],
+    )
+    sid = store.record_session("q", "m", loop_result)
+    row = {s["session_id"]: s for s in store.get_recent_sessions()}[sid]
+    assert row["turn_count"] == 2
+    assert row["cache_read_tokens"] == 300
+    assert row["fresh_input_tokens"] == 40
+    assert row["tool_call_total"] == 3
+    assert row["tool_call_errors"] == 2
+
+
+def test_recent_sessions_aggregates_from_incremental_appends(isolated_firestore_db):
+    store = isolated_firestore_db
+    sid = store.start_or_get_session("otel-agg", source="claude_code", model="us.anthropic.claude-sonnet-4-6")
+    store.append_turn(sid, {"input_tokens": 100, "output_tokens": 20, "latency_ms": 10, "cache_read_input_tokens": 300})
+    store.append_turn(sid, {"input_tokens": 50, "output_tokens": 10, "latency_ms": 10, "cache_read_input_tokens": 0})
+    store.append_tool_call(sid, {"tool": "a", "args": {}, "status": "success"})
+    store.append_tool_call(sid, {"tool": "b", "args": {}, "status": "error"})
+    store.append_tool_call(sid, {"tool": "c", "args": {}, "status": "error"})
+
+    row = {s["session_id"]: s for s in store.get_recent_sessions()}[sid]
+    assert row["turn_count"] == 2
+    assert row["cache_read_tokens"] == 300
+    assert row["fresh_input_tokens"] == 150
+    assert row["tool_call_total"] == 3
+    assert row["tool_call_errors"] == 2
+
+
+def test_recent_sessions_falls_back_for_legacy_doc_without_agg_fields(isolated_firestore_db):
+    """A session doc written before the denormalised agg_* fields
+    existed must still render correct counts, via the per-session
+    subcollection fan-out fallback in get_recent_sessions."""
+    store = isolated_firestore_db
+    sid = store.start_or_get_session("legacy", source="claude_code", model="us.anthropic.claude-sonnet-4-6")
+    store.append_turn(sid, {"input_tokens": 100, "output_tokens": 20, "latency_ms": 10, "cache_read_input_tokens": 300})
+    store.append_tool_call(sid, {"tool": "a", "args": {}, "status": "error"})
+
+    # Simulate a pre-denormalisation doc by stripping the agg fields.
+    doc_ref = store._sessions(store._client()).document(sid)
+    doc_ref.update(
+        {
+            "agg_turn_count": firestore.DELETE_FIELD,
+            "agg_cache_read_tokens": firestore.DELETE_FIELD,
+            "agg_fresh_input_tokens": firestore.DELETE_FIELD,
+            "agg_tool_call_errors": firestore.DELETE_FIELD,
+        }
+    )
+
+    row = {s["session_id"]: s for s in store.get_recent_sessions()}[sid]
+    assert row["turn_count"] == 1
+    assert row["cache_read_tokens"] == 300
+    assert row["fresh_input_tokens"] == 100
+    assert row["tool_call_total"] == 1
+    assert row["tool_call_errors"] == 1
+
+
+def test_legacy_doc_gets_backfilled_on_next_append(isolated_firestore_db):
+    """After a legacy doc takes one more append_turn/append_tool_call,
+    its agg_* fields should be materialised (fast path from then on)."""
+    store = isolated_firestore_db
+    sid = store.start_or_get_session("legacy2", source="claude_code", model="us.anthropic.claude-sonnet-4-6")
+    store.append_turn(sid, {"input_tokens": 100, "output_tokens": 20, "latency_ms": 10, "cache_read_input_tokens": 300})
+    store.append_tool_call(sid, {"tool": "a", "args": {}, "status": "error"})
+
+    doc_ref = store._sessions(store._client()).document(sid)
+    doc_ref.update(
+        {
+            "agg_turn_count": firestore.DELETE_FIELD,
+            "agg_cache_read_tokens": firestore.DELETE_FIELD,
+            "agg_fresh_input_tokens": firestore.DELETE_FIELD,
+            "agg_tool_call_errors": firestore.DELETE_FIELD,
+        }
+    )
+
+    # One more of each: triggers the in-transaction backfill.
+    store.append_turn(sid, {"input_tokens": 50, "output_tokens": 10, "latency_ms": 10, "cache_read_input_tokens": 100})
+    store.append_tool_call(sid, {"tool": "b", "args": {}, "status": "error"})
+
+    data = doc_ref.get().to_dict()
+    assert data["agg_turn_count"] == 2
+    assert data["agg_cache_read_tokens"] == 400
+    assert data["agg_fresh_input_tokens"] == 150
+    assert data["agg_tool_call_errors"] == 2
+
+    row = {s["session_id"]: s for s in store.get_recent_sessions()}[sid]
+    assert row["turn_count"] == 2
+    assert row["tool_call_total"] == 2
+    assert row["tool_call_errors"] == 2
+
+
+def test_append_turn_recost_matches_separate_recompute(isolated_firestore_db):
+    """append_turn recomputes estimated_cost inside its own transaction;
+    the result must match a plain estimate_cost() over the running
+    totals."""
+    store = isolated_firestore_db
+    sid = store.start_or_get_session("recost", source="claude_code", model="us.anthropic.claude-sonnet-4-6")
+    store.append_turn(sid, {"input_tokens": 1000, "output_tokens": 200, "latency_ms": 10})
+    store.append_turn(sid, {"input_tokens": 500, "output_tokens": 100, "latency_ms": 10})
+
+    metrics = store.get_session_metrics(sid)["prompt_metrics"]
+    from mci_common.pricing import estimate_cost
+
+    assert metrics["estimated_cost"] == pytest.approx(
+        estimate_cost("us.anthropic.claude-sonnet-4-6", 1500, 300)
+    )
