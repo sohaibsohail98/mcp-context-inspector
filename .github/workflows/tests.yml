@@ -41,9 +41,12 @@ jobs:
       # isn't reachable. They used to always skip in CI, so a regression in
       # metrics/store_firestore.py (the deployed backend, and the one whose
       # read pattern drives the Firestore bill) shipped untested. Start the
-      # emulator here so they actually execute. Needs a JRE (the emulator is
-      # a Java process) and the gcloud SDK component.
-      - uses: actions/setup-java@v4
+      # emulator here so they actually execute. Needs a JRE (the emulator
+      # is a Java process) and the gcloud SDK component. setup-gcloud
+      # first: the preinstalled gcloud on ubuntu-latest has the component
+      # manager disabled, so `gcloud components install` only works
+      # against the SDK setup-gcloud lays down.
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
@@ -52,7 +55,7 @@ jobs:
       - name: Start Firestore emulator
         run: |
           nohup gcloud emulators firestore start --host-port=localhost:8901 >/tmp/firestore-emulator.log 2>&1 &
-          for i in $(seq 1 30); do
+          for i in $(seq 1 60); do
             if curl -s localhost:8901 >/dev/null 2>&1; then echo "emulator up"; break; fi
             sleep 1
           done
