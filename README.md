@@ -112,6 +112,16 @@ it never mutates or deletes one.
 Plain REST equivalents are exposed under `/api/*`. Payload shapes are in
 [Architecture](https://ctxwindow.uk/docs#architecture).
 
+## Infrastructure
+
+The live deployment (Cloud Run, Firestore, Secret Manager, Artifact Registry, the
+Cloudflare custom domain fronting ctxwindow.uk) is defined in
+[`infrastructure/terraform`](infrastructure/terraform) and applied by CI, not by hand.
+Every pull request runs `terraform plan` alongside `tflint` and `checkov`; merging to
+main runs `terraform apply` with the freshly built image tag. See
+[Deploying your own](https://ctxwindow.uk/docs#deploying) for the shape of it if you're
+standing up a separate copy.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for lint, tests, and what a good PR looks like
