@@ -28,6 +28,6 @@ variable "cloudflare_zone_id" {
 }
 
 variable "image_tag" {
-  type    = string
-  default = "23a6285cbf24ec717a94a3464f1256492dc8b33d"
+  type        = string
+  description = "Container image tag to deploy. No default on purpose: CI always passes the commit SHA explicitly, and a stale hardcoded default here would silently roll production back to an old image on any apply that forgets -var."
 }

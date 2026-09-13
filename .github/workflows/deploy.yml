@@ -81,13 +81,14 @@ jobs:
           terraform_version: "~1.13"
           terraform_wrapper: false
 
-      - name: Terraform apply
+      - name: Terraform plan and apply
         working-directory: infrastructure/terraform
         run: |
-          terraform init
-          terraform apply -auto-approve \
+          terraform init -input=false -lock-timeout=2m
+          terraform plan -input=false -lock-timeout=2m -out=tfplan \
             -var="image_tag=${{ github.sha }}" \
             -var="cloudflare_zone_id=${{ vars.CLOUDFLARE_ZONE_ID }}"
+          terraform apply -input=false -lock-timeout=2m -auto-approve tfplan
           echo "service_url=$(terraform output -raw cloud_run_url)" >> "$GITHUB_OUTPUT"
         id: tf-outputs
         env:

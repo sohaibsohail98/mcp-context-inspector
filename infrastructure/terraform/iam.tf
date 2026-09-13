@@ -27,19 +27,15 @@ resource "google_service_account" "deploy" {
   display_name = "GitHub Actions deploy (Cloud Run + Artifact Registry)"
 }
 
-resource "google_project_iam_member" "deploy_artifact_writer" {
-  project = var.gcp_project
-  role    = "roles/artifactregistry.writer"
-  member  = "serviceAccount:${google_service_account.deploy.email}"
+resource "google_artifact_registry_repository_iam_member" "deploy_artifact_writer" {
+  project    = var.gcp_project
+  location   = google_artifact_registry_repository.sre_platform.location
+  repository = google_artifact_registry_repository.sre_platform.repository_id
+  role       = "roles/artifactregistry.writer"
+  member     = "serviceAccount:${google_service_account.deploy.email}"
 }
 
-resource "google_project_iam_member" "deploy_run_developer" {
-  project = var.gcp_project
-  role    = "roles/run.developer"
-  member  = "serviceAccount:${google_service_account.deploy.email}"
-}
-
-resource "google_cloud_run_v2_service_iam_member" "deploy_manages_run_iam" {
+resource "google_cloud_run_v2_service_iam_member" "deploy_manages_run_service" {
   project  = var.gcp_project
   location = var.region
   name     = google_cloud_run_v2_service.mcp_context_inspector.name

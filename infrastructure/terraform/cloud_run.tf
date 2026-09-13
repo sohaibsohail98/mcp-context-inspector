@@ -31,12 +31,13 @@ resource "google_cloud_run_v2_service" "mcp_context_inspector" {
       }
 
       startup_probe {
-        tcp_socket {
+        http_get {
+          path = "/health"
           port = 8080
         }
-        period_seconds    = 240
-        timeout_seconds   = 240
-        failure_threshold = 1
+        period_seconds    = 10
+        timeout_seconds   = 5
+        failure_threshold = 3
       }
 
       env {
@@ -80,6 +81,7 @@ resource "google_cloud_run_v2_service" "mcp_context_inspector" {
   }
 
   lifecycle {
+    prevent_destroy = true
     ignore_changes = [
       template[0].labels,
       template[0].annotations,

@@ -43,4 +43,8 @@ resource "google_storage_bucket" "tfstate" {
       type = "Delete"
     }
   }
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
