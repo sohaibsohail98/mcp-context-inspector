@@ -1,0 +1,15 @@
+directory:
+  - terraform
+framework:
+  - terraform
+skip-check:
+  # allUsers invoker is intentional: the app enforces its own OAuth 2.1 /
+  # bearer-token auth (see mcp_server/middleware.py); Cloud Run IAM is not
+  # the access boundary here.
+  - CKV_GCP_102
+  # Artifact Registry supports CMEK, not CSEK (this check's actual target).
+  # Google-managed encryption is the correct default for a personal
+  # project with no KMS key management overhead to justify.
+  - CKV_GCP_84
+compact: true
+quiet: true
