@@ -86,7 +86,7 @@ jobs:
       id-token: write
     defaults:
       run:
-        working-directory: terraform
+        working-directory: infrastructure/terraform
     steps:
       - uses: actions/checkout@v7
       - uses: hashicorp/setup-terraform@v3
@@ -110,7 +110,7 @@ jobs:
 
       - uses: bridgecrewio/checkov-action@v12
         with:
-          directory: terraform
+          directory: infrastructure/terraform
           config_file: .checkov.yaml
           quiet: true
 

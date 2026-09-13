@@ -16,10 +16,10 @@ fi
 
 gitleaks protect --staged --verbose || exit 1
 
-if git diff --cached --name-only --diff-filter=ACM | grep -q '^terraform/.*\.tf$'; then
+if git diff --cached --name-only --diff-filter=ACM | grep -q '^infrastructure/terraform/.*\.tf$'; then
     if command -v terraform >/dev/null 2>&1; then
-        terraform -chdir=terraform fmt -check -recursive || {
-            echo "pre-commit: terraform fmt would reformat staged files — run 'terraform -chdir=terraform fmt -recursive' and re-stage." >&2
+        terraform -chdir=infrastructure/terraform fmt -check -recursive || {
+            echo "pre-commit: terraform fmt would reformat staged files — run 'terraform -chdir=infrastructure/terraform fmt -recursive' and re-stage." >&2
             exit 1
         }
     else

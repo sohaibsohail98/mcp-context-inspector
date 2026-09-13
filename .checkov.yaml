@@ -1,5 +1,5 @@
 directory:
-  - terraform
+  - infrastructure/terraform
 framework:
   - terraform
 skip-check:

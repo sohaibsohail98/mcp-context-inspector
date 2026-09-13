@@ -17,7 +17,7 @@ on:
       - "pyproject.toml"
       - "uv.lock"
       - "cloudflare-proxy/**"
-      - "terraform/**"
+      - "infrastructure/terraform/**"
       - ".github/workflows/deploy.yml"
   workflow_dispatch:
 
@@ -82,7 +82,7 @@ jobs:
           terraform_wrapper: false
 
       - name: Terraform apply
-        working-directory: terraform
+        working-directory: infrastructure/terraform
         run: |
           terraform init
           terraform apply -auto-approve \
