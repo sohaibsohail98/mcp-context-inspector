@@ -1,8 +1,22 @@
 name: Tests
 
 on:
+  # Scoped to main rather than every branch. A PR branch push used to
+  # fire this workflow twice, once for `push` and once for
+  # `pull_request`, against the same commit: two terraform-plan jobs
+  # racing for the same state lock, and two of every other job. Branch
+  # protection gates on the pull_request run, and main still gets its
+  # own run after a merge.
   push:
+    branches: [main]
   pull_request:
+
+# One in-flight run per ref. A rapid second push to a PR now cancels the
+# superseded run instead of leaving two terraform-plan jobs contending
+# for the tfstate lock.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   secrets-scan:
@@ -99,7 +113,7 @@ jobs:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOY_SA }}
       - run: terraform fmt -check -recursive
-      - run: terraform init
+      - run: terraform init -input=false -lock-timeout=2m
       - run: terraform validate
 
       - uses: terraform-linters/setup-tflint@v4
@@ -114,7 +128,11 @@ jobs:
           config_file: .checkov.yaml
           quiet: true
 
-      - run: terraform plan -var="image_tag=${{ github.sha }}"
+      # -input=false so a missing variable fails loudly instead of
+      # hanging on a prompt, matching deploy.yml. Read-only: this job
+      # holds no apply step, and github-deploy's write roles are all
+      # resource-scoped (see infrastructure/terraform/iam.tf).
+      - run: terraform plan -input=false -lock-timeout=2m -var="image_tag=${{ github.sha }}"
 
   health-check:
     # Cheap, read-only check that the currently-live production instance

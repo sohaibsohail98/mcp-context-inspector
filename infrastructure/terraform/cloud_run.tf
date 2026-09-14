@@ -90,16 +90,17 @@ resource "google_cloud_run_v2_service" "mcp_context_inspector" {
     ]
   }
 
+  # All traffic follows the newest revision. There is deliberately no
+  # second, pinned traffic target: the imported state carried a
+  # "fix-verify" tag pointing at revision mcp-context-inspector-00036-jev
+  # at 0%, left over from manual debugging. Pinning a revision by name
+  # makes every future apply depend on that one revision still existing,
+  # so the first time Cloud Run garbage-collects it the deploy breaks for
+  # a tag nothing routes to. Removing it moves no production traffic (it
+  # was already 0%); it only drops the fix-verify preview URL.
   traffic {
     type    = "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST"
     percent = 100
-  }
-
-  traffic {
-    type     = "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION"
-    revision = "mcp-context-inspector-00036-jev"
-    percent  = 0
-    tag      = "fix-verify"
   }
 }
 

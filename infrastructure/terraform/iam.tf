@@ -56,6 +56,27 @@ resource "google_project_iam_member" "deploy_monitoring_editor" {
   member  = "serviceAccount:${google_service_account.deploy.email}"
 }
 
+# Every permission here is a READ needed purely so `terraform plan` can
+# refresh a resource github-deploy manages but does not hold a broad
+# predefined role on. Nothing here grants data access or the ability to
+# change an IAM policy.
+#
+# HOW TO EXTEND THIS SAFELY. When plan fails with a 403, add the exact
+# permission the error names, never a predefined role that happens to
+# contain it: an earlier revision of this file used
+# roles/resourcemanager.projectIamAdmin to fix one read-only refresh
+# error, which let github-deploy grant itself Owner.
+#
+# AND NOTE THE BOOTSTRAP. This role is applied to GCP only when the PR
+# merges and deploy.yml runs `terraform apply`. Until that happens the
+# LIVE role still has the old permission set, so a plan that needs a
+# newly-added permission keeps failing on the PR. Adding one here is
+# therefore two steps, not one: commit it, and have someone with
+# project IAM admin run the matching
+#   gcloud iam roles update deployTerraformReader --project=<project> \
+#     --add-permissions=<permission>
+# so the PR's own plan can go green before the merge that applies it.
+# See infrastructure/terraform/README.md.
 resource "google_project_iam_custom_role" "deploy_terraform_reader" {
   project     = var.gcp_project
   role_id     = "deployTerraformReader"
@@ -68,7 +89,14 @@ resource "google_project_iam_custom_role" "deploy_terraform_reader" {
     "iam.workloadIdentityPools.get",
     "iam.workloadIdentityPools.getAttestationRules",
     "iam.roles.get",
-    "datastore.databases.get",
+    # NOT datastore.databases.get. On a FIRESTORE_NATIVE database that
+    # permission authorises beginning and rolling back a transaction,
+    # which is a data-plane write this account has no business holding,
+    # and it does NOT authorise the Firestore Admin
+    # projects.databases.get call the google_firestore_database refresh
+    # actually makes. getMetadata is the one that does, and it is
+    # metadata only: it cannot read a single document.
+    "datastore.databases.getMetadata",
     "storage.buckets.get",
     "storage.buckets.getIamPolicy",
     "artifactregistry.repositories.getIamPolicy",
