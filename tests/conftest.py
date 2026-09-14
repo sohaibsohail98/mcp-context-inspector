@@ -128,12 +128,19 @@ def _reset_otlp_seen_sessions():
     OTLP record can skip start_or_get_session's store transaction.
     Without resetting it between tests, one test's ingestion would make a
     later test (with a freshly-isolated store) skip creating the same
-    session_id, so its append_* calls would hit a non-existent session."""
+    session_id, so its append_* calls would hit a non-existent session.
+
+    Same reasoning for the process-local tool_use queues that pair a
+    tool_result event with the name and arguments of the tool_use block
+    that requested it: a spec left queued by one test would otherwise be
+    claimed by an unrelated tool_result in the next one."""
     from mcp_server.otlp import claude_code
 
     claude_code._reset_seen_sessions()
+    claude_code._reset_pending_tool_uses()
     yield
     claude_code._reset_seen_sessions()
+    claude_code._reset_pending_tool_uses()
 
 
 @pytest.fixture(autouse=True)

@@ -28,10 +28,18 @@ OTEL_LOG_RAW_API_BODIES=1, claude-code 2.1.233), 2026-08-20:
     This was WRONG in the original assumption and silently broke every
     request/response body handler; fixed in _parse_body.
 
+Partly confirmed since, from production data rather than a capture: a
+pre-demo QA pass over three real sessions found tool_result events do
+arrive and do carry `tool_name`, but that Claude Code reports EVERY
+MCP-backed tool under the single generic name "mcp_tool" (356 of 430
+calls in one session) and never carries the tool's arguments at all.
+The real name and input are correlated back in from the assistant's
+tool_use blocks instead: see _queue_tool_uses / _claim_tool_use.
+
 Still unverified (no tool call happened in the captured session):
-  - exact attribute key names on tool_result events (tool_name/success/
-    duration_ms/error_type below are the plausible OTel-semantic-
-    convention-style names, not confirmed)
+  - exact attribute key names for the rest of a tool_result event
+    (success/duration_ms/error_type below are the plausible
+    OTel-semantic-convention-style names, not confirmed)
   - exact latency/duration attribute name on api_response_body records
     (not present as a top-level attribute in the captured payload;
     latency/duration_ms/timestamps live inside the separate
@@ -40,7 +48,7 @@ Still unverified (no tool call happened in the captured session):
 
 import json
 import threading
-from collections import Counter, OrderedDict
+from collections import Counter, OrderedDict, deque
 
 from mcp_server.otlp.common import (
     CATEGORY_ANSWER,
@@ -350,6 +358,84 @@ def _reset_seen_sessions():
         _seen_sessions.clear()
 
 
+# ---------------------------------------------------------------------------
+# tool_use -> tool_result correlation
+# ---------------------------------------------------------------------------
+#
+# Claude Code's own `tool_result` telemetry event carries a status and a
+# duration, but NOT the tool's arguments, and it reports every MCP tool
+# under the single generic name "mcp_tool" (356 of 430 calls in one real
+# session). Recording that verbatim gave the dashboard's Tools tab an
+# empty `{}` for every row's args and collapsed its per-tool reliability
+# breakdown into one "mcp_tool" bucket.
+#
+# The real name and the real input ARE available: they are the
+# assistant's `tool_use` content blocks on the api_response_body that
+# requested the call. That body is emitted when the model replies, which
+# is necessarily BEFORE the tool runs and therefore before its
+# tool_result event, so queueing the specs as response bodies are walked
+# and popping them as tool_result events arrive lines them up in order.
+#
+# This is a per-process, in-memory correlation, so it degrades rather
+# than breaks: a tool_result whose queue is empty (the response body
+# landed on another Cloud Run instance, or bodies are unavailable in
+# body_ref mode) falls back to exactly the old behaviour, the event's
+# own attributes with empty args.
+_PENDING_TOOL_USE_SESSIONS_MAX = 1024
+_PENDING_TOOL_USE_PER_SESSION_MAX = 64
+_pending_tool_uses: "OrderedDict[tuple[object, str], deque]" = OrderedDict()
+_pending_lock = threading.Lock()
+
+# Names Claude Code emits when it is NOT telling us which tool ran.
+# A tool_result carrying one of these can only be identified from a
+# queued tool_use spec; a specific name can also be used to pick the
+# MATCHING spec when several are in flight at once (parallel tool calls
+# can complete out of order).
+_GENERIC_TOOL_NAMES = frozenset({"", "mcp_tool", "unknown_tool"})
+
+
+def _queue_tool_uses(session_id, owner, specs):
+    """Record the (name, args) of tool_use blocks the assistant just
+    emitted, oldest first, for the matching tool_result events to claim."""
+    if not specs:
+        return
+    with _pending_lock:
+        key = (owner, session_id)
+        pending = _pending_tool_uses.pop(key, None)
+        if pending is None:
+            pending = deque(maxlen=_PENDING_TOOL_USE_PER_SESSION_MAX)
+        pending.extend(specs)
+        _pending_tool_uses[key] = pending
+        while len(_pending_tool_uses) > _PENDING_TOOL_USE_SESSIONS_MAX:
+            _pending_tool_uses.popitem(last=False)
+
+
+def _claim_tool_use(session_id, owner, event_tool_name):
+    """Pop the tool_use spec this tool_result belongs to, or None.
+
+    Prefers the oldest spec whose name matches `event_tool_name` (so
+    parallel calls that finish out of order still get their own args),
+    and otherwise falls back to the oldest queued spec, which is the only
+    option when the event name is the generic "mcp_tool"."""
+    with _pending_lock:
+        pending = _pending_tool_uses.get((owner, session_id))
+        if not pending:
+            return None
+        if event_tool_name not in _GENERIC_TOOL_NAMES:
+            for spec in pending:
+                if spec[0] == event_tool_name:
+                    pending.remove(spec)
+                    return spec
+        return pending.popleft()
+
+
+def _reset_pending_tool_uses():
+    """Test hook: drop the process-local tool_use queues so one test's
+    ingestion cannot supply another test's tool_result with a name."""
+    with _pending_lock:
+        _pending_tool_uses.clear()
+
+
 def _ensure_session(session_id, owner, model):
     """start_or_get_session, but only hit the store the first time THIS
     process sees (owner, session_id). Otherwise every OTLP record for an
@@ -452,6 +538,10 @@ def _handle_response_body(session_id, attrs, owner, existing):
         for block in _blocks_from_message({"role": "assistant", "content": content}, turn_n):
             store.append_context_block(session_id, block, owner=owner)
             existing.append(block)
+        # The assistant's tool_use blocks name the tools that are about
+        # to run and carry their arguments; the tool_result events that
+        # follow carry neither (see _queue_tool_uses).
+        _queue_tool_uses(session_id, owner, _tool_use_specs(content))
 
     usage = body.get("usage")
     if isinstance(usage, dict):
@@ -474,16 +564,42 @@ def _handle_response_body(session_id, attrs, owner, existing):
         )
 
 
+def _tool_use_specs(content):
+    """(name, args) for each tool_use block in one assistant message's
+    content list, in the order the model emitted them. `args` is the
+    block's `input` object as-is; a non-dict input is normalised to {}
+    rather than stored as a bare scalar, since every store serialises
+    this field as a JSON object."""
+    specs = []
+    for item in content or []:
+        if not isinstance(item, dict) or item.get("type") != "tool_use":
+            continue
+        name = item.get("name") or "unknown_tool"
+        args = item.get("input")
+        specs.append((name, args if isinstance(args, dict) else {}))
+    return specs
+
+
 def _handle_tool_result(session_id, attrs, owner):
     # Attribute key names here are unverified against a real payload (see
     # module docstring): tool_name/success/duration_ms/error_type follow
     # plausible OTel semantic-convention naming, not a confirmed schema.
-    tool_name = attrs.get("tool_name") or attrs.get("tool.name") or "unknown_tool"
+    #
+    # tool_name is taken from the event only as a fallback: it is
+    # "mcp_tool" for every MCP-backed tool, and the event never carries
+    # arguments at all, so a queued tool_use spec wins when one is
+    # available (see _claim_tool_use).
+    event_tool_name = attrs.get("tool_name") or attrs.get("tool.name") or "unknown_tool"
     status = "success" if attrs.get("success") else "error"
     latency_ms = attrs.get("duration_ms") or attrs.get("latency_ms") or 0
+    spec = _claim_tool_use(session_id, owner, event_tool_name)
+    if spec is not None:
+        tool_name, args = spec
+    else:
+        tool_name, args = event_tool_name, {}
     store.append_tool_call(
         session_id,
-        {"tool": tool_name, "args": {}, "status": status, "latency_ms": latency_ms},
+        {"tool": tool_name, "args": args, "status": status, "latency_ms": latency_ms},
         owner=owner,
     )
 
