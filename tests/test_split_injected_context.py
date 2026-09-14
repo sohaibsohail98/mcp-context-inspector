@@ -241,3 +241,110 @@ def test_contains_injected_wrappers_only_true_at_clean_boundary():
     assert contains_injected_wrappers("mentions `<session>` inline", CATEGORY_USER) is False
     assert contains_injected_wrappers("", CATEGORY_USER) is False
     assert contains_injected_wrappers(None, CATEGORY_USER) is False
+
+
+# --------------------------------------------------------------------------- #
+# bundled wrappers  ->  N fragments, each classified from its OWN tags
+#
+# The regression these pin: a <system-reminder> bundled with real text
+# in one logical turn used to inherit the enclosing message's role, so
+# it was stored `user` (or `answer`) instead of `injected`. Reproduced
+# 100% of the time on three real sessions before the fix, and it
+# under-reported the `injected` total app-wide because the mislabelled
+# reminders were bucketed into user/answer.
+# --------------------------------------------------------------------------- #
+
+
+def test_wrapper_bundled_between_prose_is_injected_not_user():
+    text = "first typed line" + "\n\n" + _SR + "\n\n" + "second typed line"
+    frags = split_injected_context(text, CATEGORY_USER)
+    assert frags == [
+        ("first typed line", CATEGORY_USER),
+        ("\n\n" + _SR + "\n\n", CATEGORY_INJECTED),  # a separator from each side
+        ("second typed line", CATEGORY_USER),
+    ]
+    assert _recon(frags) == text
+
+
+def test_reminder_after_prose_on_assistant_turn_is_injected_not_answer():
+    # "The user sent a new message while you were..." arrives mid-turn on
+    # the assistant side; it used to land as `answer`.
+    interrupt = "<system-reminder>The user sent a new message while you were working.</system-reminder>"
+    text = "Partial answer." + "\n\n" + interrupt + "\n\n" + "Resumed answer."
+    frags = split_injected_context(text, CATEGORY_ANSWER)
+    assert [c for _, c in frags] == [CATEGORY_ANSWER, CATEGORY_INJECTED, CATEGORY_ANSWER]
+    assert _recon(frags) == text
+
+
+def test_command_group_then_prompt_then_reminder_is_three_way():
+    # command-class and injected-class runs in one string are classified
+    # independently: the <command-*> group stays `command` even though an
+    # injected reminder follows later in the same message.
+    text = _CMD_GROUP + "\n\n" + "the typed prompt" + "\n\n" + _SR_DEFERRED
+    frags = split_injected_context(text, CATEGORY_USER)
+    assert [c for _, c in frags] == [CATEGORY_COMMAND, CATEGORY_USER, CATEGORY_INJECTED]
+    assert _recon(frags) == text
+
+
+def test_many_alternating_runs_reconstruct_byte_exact():
+    text = _SR + "\n\nprompt one" + "\n\n" + _CMD_GROUP + "\n\nprompt two" + "\n\n" + _IDE + "\n\nprompt three"
+    frags = split_injected_context(text, CATEGORY_USER)
+    assert [c for _, c in frags] == [
+        CATEGORY_INJECTED,
+        CATEGORY_USER,
+        CATEGORY_COMMAND,
+        CATEGORY_USER,
+        CATEGORY_INJECTED,
+        CATEGORY_USER,
+    ]
+    assert _recon(frags) == text
+    assert all(f for f, _ in frags)  # no empty fragments
+
+
+def test_bundled_fragments_are_idempotent():
+    text = "lead prose" + "\n\n" + _SR + "\n\n" + _SR2 + "\n\n" + "tail prose"
+    frags = split_injected_context(text, CATEGORY_USER)
+    for frag_text, category in frags:
+        again = split_injected_context(frag_text, category)
+        assert again == [(frag_text, category)]
+
+
+def test_bundled_wrappers_separated_only_by_blank_line_are_one_run():
+    # two wrappers back to back are a single run, so fragments always
+    # alternate rather than emitting two adjacent injected fragments
+    text = "prose" + "\n\n" + _SR + "\n\n" + _SR2 + "\n\n" + "more prose"
+    frags = split_injected_context(text, CATEGORY_USER)
+    assert [c for _, c in frags] == [CATEGORY_USER, CATEGORY_INJECTED, CATEGORY_USER]
+    assert _recon(frags) == text
+
+
+def test_mid_prose_backticked_tag_between_paragraphs_is_still_not_peeled():
+    # the new mid-string scan must not start peeling quoted tag names
+    # just because they sit at the start of a paragraph
+    text = "para one\n\n`<system-reminder>` is a wrapper name\n\npara three"
+    assert split_injected_context(text, CATEGORY_USER) == [(text, CATEGORY_USER)]
+    assert contains_injected_wrappers(text, CATEGORY_USER) is False
+
+
+def test_mid_string_wrapper_joined_by_single_newline_is_not_peeled():
+    text = "para one\n\n" + _SR + "\nnot a clean boundary"
+    assert split_injected_context(text, CATEGORY_USER) == [(text, CATEGORY_USER)]
+
+
+def test_unclosed_wrapper_tag_in_long_text_is_left_alone():
+    # an open tag with no close tag must not match, and must not cost a
+    # full backtracking scan per "<" (the reason runs are matched only at
+    # candidate offsets rather than with finditer)
+    text = "\n\n".join(["<system-reminder>never closed"] + ["a < b and c < d"] * 500)
+    frags = split_injected_context(text, CATEGORY_USER)
+    assert frags == [(text, CATEGORY_USER)]
+
+
+def test_token_split_across_many_fragments_sums_exactly():
+    text = _SR + "\n\n" + "one" + "\n\n" + _SR2 + "\n\n" + "two"
+    frags = split_injected_context(text, CATEGORY_USER)
+    assert len(frags) == 4
+    char_counts = [len(f) for f, _ in frags]
+    whole = estimate_tokens(text)
+    assert sum(distribute_token_estimate(char_counts, whole)) == whole
+    assert sum(distribute_int(char_counts, len(text))) == len(text)

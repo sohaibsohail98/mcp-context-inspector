@@ -794,3 +794,175 @@ def test_prompt_backfill_uses_the_peeled_prompt_not_the_reminder(isolated_sqlite
     )
     metrics = store.get_session_metrics("sess-prompt-peel")
     assert metrics["prompt_metrics"]["prompt"] == "Add per-device token revoke to the auth store."
+
+
+# --------------------------------------------------------------------------- #
+# tool_use -> tool_result correlation
+#
+# Claude Code's tool_result event reports every MCP-backed tool as the
+# generic name "mcp_tool" and never carries the tool's arguments, so the
+# dashboard's Tools tab showed an empty `{}` for every row and its
+# per-tool reliability breakdown collapsed into one bucket. The real
+# name and input come from the assistant's tool_use block on the
+# api_response_body that requested the call.
+# --------------------------------------------------------------------------- #
+
+
+def test_tool_result_takes_name_and_args_from_the_tool_use_that_requested_it(isolated_sqlite_db):
+    store = isolated_sqlite_db
+    response_body = {
+        "content": [
+            {
+                "type": "tool_use",
+                "id": "t1",
+                "name": "mcp__grafana__query_range",
+                "input": {"query": "rate(errors[5m])", "step": 60},
+            }
+        ],
+        "usage": {"input_tokens": 10, "output_tokens": 5},
+    }
+    claude_code.handle_logs(
+        RESOURCE_ATTRS,
+        [
+            _log_record("api_response_body", response_body),
+            # what Claude Code actually emits for an MCP tool
+            _log_record("tool_result", body="", tool_name="mcp_tool", success=True, duration_ms=240),
+        ],
+        owner=None,
+    )
+
+    trace = store.get_agent_trace("sess-1")
+    assert len(trace) == 1
+    assert trace[0]["tool"] == "mcp__grafana__query_range"
+    assert trace[0]["args"] == {"query": "rate(errors[5m])", "step": 60}
+    assert trace[0]["status"] == "success"
+    assert trace[0]["latency_ms"] == 240  # still from the event
+
+
+def test_parallel_tool_uses_are_claimed_in_order(isolated_sqlite_db):
+    store = isolated_sqlite_db
+    response_body = {
+        "content": [
+            {"type": "tool_use", "id": "t1", "name": "mcp__a__first", "input": {"n": 1}},
+            {"type": "tool_use", "id": "t2", "name": "mcp__b__second", "input": {"n": 2}},
+        ]
+    }
+    claude_code.handle_logs(
+        RESOURCE_ATTRS,
+        [
+            _log_record("api_response_body", response_body),
+            _log_record("tool_result", body="", tool_name="mcp_tool", success=True, duration_ms=10),
+            _log_record("tool_result", body="", tool_name="mcp_tool", success=False, duration_ms=20),
+        ],
+        owner=None,
+    )
+
+    trace = store.get_agent_trace("sess-1")
+    assert [c["tool"] for c in trace] == ["mcp__a__first", "mcp__b__second"]
+    assert [c["args"] for c in trace] == [{"n": 1}, {"n": 2}]
+    assert [c["status"] for c in trace] == ["success", "error"]
+
+
+def test_named_tool_result_claims_its_own_spec_out_of_order(isolated_sqlite_db):
+    """Parallel calls can finish out of order. When the event does name
+    the tool (Bash/Read/ToolSearch are not collapsed), the matching spec
+    is claimed rather than the oldest, so args never get swapped."""
+    store = isolated_sqlite_db
+    response_body = {
+        "content": [
+            {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}},
+            {"type": "tool_use", "id": "t2", "name": "Read", "input": {"file_path": "/tmp/x"}},
+        ]
+    }
+    claude_code.handle_logs(
+        RESOURCE_ATTRS,
+        [
+            _log_record("api_response_body", response_body),
+            _log_record("tool_result", body="", tool_name="Read", success=True, duration_ms=5),
+            _log_record("tool_result", body="", tool_name="Bash", success=True, duration_ms=7),
+        ],
+        owner=None,
+    )
+
+    trace = store.get_agent_trace("sess-1")
+    assert [c["tool"] for c in trace] == ["Read", "Bash"]
+    assert [c["args"] for c in trace] == [{"file_path": "/tmp/x"}, {"command": "ls"}]
+
+
+def test_tool_result_with_no_queued_tool_use_falls_back_to_event_attrs(isolated_sqlite_db):
+    """No response body for this session in this process (another
+    instance handled it, or bodies are unavailable): degrade to the old
+    behaviour rather than dropping the call."""
+    store = isolated_sqlite_db
+    claude_code.handle_logs(
+        RESOURCE_ATTRS,
+        [_log_record("tool_result", body="", tool_name="list_services", success=True, duration_ms=120)],
+        owner=None,
+    )
+
+    trace = store.get_agent_trace("sess-1")
+    assert len(trace) == 1
+    assert trace[0]["tool"] == "list_services"
+    assert trace[0]["args"] == {}
+
+
+def test_tool_use_specs_do_not_leak_between_sessions(isolated_sqlite_db):
+    store = isolated_sqlite_db
+    response_body = {"content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}}]}
+    claude_code.handle_logs(
+        RESOURCE_ATTRS,
+        [
+            _log_record("api_response_body", response_body, session_id="sess-1"),
+            _log_record("tool_result", body="", session_id="sess-2", tool_name="mcp_tool", success=True),
+        ],
+        owner=None,
+    )
+
+    other = store.get_agent_trace("sess-2")
+    assert len(other) == 1
+    assert other[0]["tool"] == "mcp_tool"  # sess-1's spec was not claimed
+    assert other[0]["args"] == {}
+    assert store.get_agent_trace("sess-1") == []
+
+
+# --------------------------------------------------------------------------- #
+# bundled harness wrappers keep their own category
+# --------------------------------------------------------------------------- #
+
+
+def test_reminder_bundled_with_user_text_is_stored_injected_not_user(isolated_sqlite_db):
+    """End-to-end shape of QA finding #1: a <system-reminder> bundled
+    with real typed text in one turn used to be stored `user`, which
+    also made it the session's backfilled prompt (finding #2)."""
+    store = isolated_sqlite_db
+    reminder = "<system-reminder>\nAttribution for git commits...\n</system-reminder>"
+    request_body = {
+        "messages": [
+            {"role": "user", "content": reminder + "\n\nTransfer the repo folder.\n\n" + reminder},
+        ]
+    }
+    claude_code.handle_logs(RESOURCE_ATTRS, [_log_record("api_request_body", request_body)], owner=None)
+
+    timeline = store.get_context_timeline("sess-1")
+    assert [b["category"] for b in timeline] == ["injected", "user", "injected"]
+    assert [b["content"] for b in timeline] == [
+        reminder + "\n\n",
+        "Transfer the repo folder.",
+        "\n\n" + reminder,
+    ]
+    # the prompt backfills from the genuine user block, not the reminder
+    sessions = {s["session_id"]: s for s in store.get_recent_sessions()}
+    assert sessions["sess-1"]["prompt"] == "Transfer the repo folder."
+
+
+def test_bundled_split_preserves_total_token_estimate(isolated_sqlite_db):
+    store = isolated_sqlite_db
+    reminder = "<system-reminder>" + ("x" * 400) + "</system-reminder>"
+    text = reminder + "\n\n" + ("typed words " * 20) + "\n\n" + reminder
+    request_body = {"messages": [{"role": "user", "content": text}]}
+    claude_code.handle_logs(RESOURCE_ATTRS, [_log_record("api_request_body", request_body)], owner=None)
+
+    timeline = store.get_context_timeline("sess-1")
+    assert len(timeline) == 3
+    assert sum(b["char_count"] for b in timeline) == len(text)
+    assert sum(b["token_estimate"] for b in timeline) == claude_code.estimate_tokens(text)

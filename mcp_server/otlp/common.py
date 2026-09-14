@@ -61,27 +61,31 @@ CATEGORY_LABELS = {
 #
 #  * ANCHOR ON A FRAGMENT BOUNDARY, NOT A BARE SUBSTRING. Every one of
 #    these tag names also appears constantly quoted in backticks inside
-#    genuine prose in this repo's transcripts. A wrapper is only peeled
-#    when the fragment IS exactly the wrapper, OR the fragment STARTS
-#    with `<wrapper>...</wrapper>` immediately followed by exactly "\n\n",
-#    OR the fragment ENDS with "\n\n<wrapper>...</wrapper>" (the
-#    assistant-side deferred-tools notice). A mid-sentence mention is
-#    never reclassified.
+#    genuine prose in this repo's transcripts. A wrapper run is only
+#    peeled where it OPENS the string (optionally after whitespace) or
+#    sits immediately after a "\n\n", AND it CLOSES the string or sits
+#    immediately before a "\n\n". A mid-sentence mention is never
+#    reclassified, and neither is a wrapper joined to prose by a single
+#    "\n".
 #
 #  * THE SEPARATOR IS ALWAYS EXACTLY "\n\n" (two newlines -- never
 #    spaces, never one or three) and it is assigned to the INJECTED
-#    side, so `original == injected_part + prose_part` (leading case) or
-#    `original == prose_part + injected_part` (trailing case) is
-#    byte-exact. No separator char is dropped or stored nowhere.
+#    side, so reconstruction by simple concatenation is byte-exact. No
+#    separator char is dropped or stored nowhere. A run with prose on
+#    both sides takes one separator from each side, so every separator
+#    is still accounted for exactly once.
 #
-#  * AT MOST TWO PARTS, FIXED ORDER: `[injected][user]` for a user turn,
-#    `[answer][injected]` for an assistant turn. Never three-way. The
-#    <command-*> group is always its own synthetic message, separate
-#    from the typed human prompt, so command + injected + typed prose
-#    never co-occur in one string.
+#  * ANY NUMBER OF PARTS, ALTERNATING. A turn is NOT limited to
+#    `[injected][user]` or `[answer][injected]`. Claude Code routinely
+#    bundles reminders around and between real text in one logical turn
+#    -- a <command-*> group, then the typed prompt, then another
+#    <system-reminder> -- and capping the split at two parts is exactly
+#    what left those bundled reminders wearing the enclosing message's
+#    `user`/`answer` category, under-reporting `injected` app-wide.
+#    Each run is classified from its OWN tags, independently.
 #
 # Regex notes: <command-*>/<bash-*> sub-tag lines are indented (~12
-# spaces) so the leading-run scanner tolerates leading whitespace and
+# spaces) so the run scanner tolerates leading whitespace and
 # does not `^`-anchor each sub-tag. <task-notification> nests and its
 # <usage> children use underscores (subagent_tokens), and a <result>
 # body can itself contain a literal "</result>", so the notification is
@@ -125,9 +129,9 @@ _COMMAND_TAGS = (
 # The open/close pairing is done with an explicit
 # `<name>...</name>|<name2>...</name2>|...` alternation rather than one
 # backreferenced `(?P<name>...)...</(?P=name)>`, because this sub-pattern
-# is embedded MULTIPLE times inside _LEADING_RUN_RE and Python's `re`
-# forbids the same group name appearing twice in one compiled pattern.
-# The per-name alternation has no named groups, so it nests freely.
+# is embedded TWICE inside _RUN_RE and Python's `re` forbids the same
+# group name appearing twice in one compiled pattern. The per-name
+# alternation has no named groups, so it nests freely.
 _ALL_PAIRED_TAGS = _INJECTED_TAGS + _COMMAND_TAGS
 _ONE_WRAPPER = (
     r"(?:"
@@ -136,27 +140,106 @@ _ONE_WRAPPER = (
     + _TASK_NOTIFICATION_RE
     + r")"
 )
-_ONE_WRAPPER_RE = re.compile(_ONE_WRAPPER, re.DOTALL)
 _COMMAND_TAG_SET = frozenset(_COMMAND_TAGS)
 # Recognise which class a peeled run belongs to by scanning its open tags.
 _OPEN_TAG_RE = re.compile(r"<([a-z][a-z0-9_-]*)>")
 
-# A LEADING run: one-or-more wrapper spans, each separated from the next
-# by nothing or whitespace, starting at string start, and the whole run
-# followed by exactly "\n\n" then more (prose) OR the run IS the whole
-# string. Leading whitespace before the first tag is tolerated (indented
-# <command-*> groups).
-_LEADING_RUN_RE = re.compile(
-    r"\A\s*(?:" + _ONE_WRAPPER + r")(?:\s*(?:" + _ONE_WRAPPER + r"))*",
+# A RUN: one-or-more wrapper spans, each separated from the next by
+# nothing or whitespace. Anchored with `.match(text, offset)` at the
+# candidate offsets _candidate_starts yields, never `.search`/
+# `.finditer` -- see that function for why.
+_RUN_RE = re.compile(
+    r"(?:" + _ONE_WRAPPER + r")(?:\s*(?:" + _ONE_WRAPPER + r"))*",
     re.DOTALL,
 )
-# A TRAILING wrapper: "\n\n" then exactly one wrapper span then end of
-# string. Used for the assistant-side "deferred tools are available"
-# system-reminder appended after the real answer.
-_TRAILING_WRAPPER_RE = re.compile(
-    r"\n\n(?:" + _ONE_WRAPPER + r")\Z",
-    re.DOTALL,
-)
+
+# Leading whitespace before the first wrapper of a string is tolerated,
+# as is horizontal indentation after the canonical "\n\n" separator
+# (<command-*> groups arrive indented ~12 spaces).
+_LEADING_WS_RE = re.compile(r"\s*")
+_INDENT_RE = re.compile(r"[ \t]*")
+
+
+def _candidate_starts(text):
+    """Ordered, de-duplicated offsets at which a wrapper run may begin.
+
+    A run is only recognised at the very start of the string (optionally
+    after whitespace) or immediately after the canonical "\n\n"
+    separator (optionally after horizontal indentation). Enumerating
+    those offsets and matching `_RUN_RE` at each IS the boundary rule --
+    a wrapper tag quoted mid-sentence never sits at one of them.
+
+    It is also what keeps the scan linear. Matching the run pattern at
+    every position (`finditer`) would, on a transcript containing an
+    open "<system-reminder>" with no close tag, re-scan the rest of the
+    string once per "<" in a 50k-char block; real transcripts are full
+    of angle brackets. Candidate offsets are bounded by the number of
+    blank lines instead.
+    """
+    offsets = []
+    seen = set()
+
+    def add(off):
+        if 0 <= off <= len(text) and off not in seen:
+            seen.add(off)
+            offsets.append(off)
+
+    add(0)
+    add(_LEADING_WS_RE.match(text, 0).end())
+    pos = text.find("\n\n")
+    while pos != -1:
+        after = pos + 2
+        add(after)
+        add(_INDENT_RE.match(text, after).end())
+        pos = text.find("\n\n", pos + 1)
+    offsets.sort()
+    return offsets
+
+
+def _wrapper_runs(text):
+    """Find every boundary-delimited wrapper run in `text`, left to
+    right and non-overlapping.
+
+    Returns a list of ``(start, end, category)`` where ``start``/``end``
+    already absorb the canonical ``"\n\n"`` separator on whichever side
+    has real prose next to it, plus any leading/trailing whitespace-only
+    remainder. So ``text[start:end]`` is exactly the fragment to emit,
+    and the gaps between consecutive runs are exactly the prose
+    fragments. A candidate that is not cleanly delimited on its closing
+    side is skipped, not half-peeled.
+    """
+    runs = []
+    cursor = 0
+    for start in _candidate_starts(text):
+        if start < cursor:
+            continue
+        match = _RUN_RE.match(text, start)
+        if not match:
+            continue
+        end = match.end()
+        rest = text[end:]
+        if rest:
+            if not rest.strip():
+                # nothing but whitespace left: absorb it rather than
+                # emit a whitespace-only prose fragment
+                end = len(text)
+            elif rest.startswith("\n\n"):
+                end += 2  # canonical separator belongs to the wrapper side
+            else:
+                # not a clean closing boundary (e.g. a single "\n"):
+                # leave this candidate alone rather than guess
+                continue
+        if text[:start].strip():
+            start -= 2  # canonical separator belongs to the wrapper side
+        else:
+            start = 0  # only whitespace before it: the run opens the string
+        runs.append((start, end, _run_category(match.group(0))))
+        cursor = end
+    return runs
+
+
+def _run_category(run_text):
+    return CATEGORY_COMMAND if _run_is_all_command(run_text) else CATEGORY_INJECTED
 
 
 def _run_is_all_command(run_text):
@@ -185,7 +268,7 @@ def contains_injected_wrappers(text, base_category=CATEGORY_USER):
 
 
 def split_injected_context(text, base_category):
-    """Split one message string into at most two ordered, byte-exact,
+    """Split one message string into ordered, byte-exact,
     non-overlapping fragments, each tagged with the category it belongs
     to. This is the SINGLE shared implementation imported by both the
     one-off reclassification migration
@@ -200,20 +283,18 @@ def split_injected_context(text, base_category):
         tag name is NOT peelable and lands here unchanged.
       * ``[(wrapper_run, injected_or_command)]`` if the whole string IS a
         wrapper run and nothing else.
-      * ``[(wrapper_run, injected_or_command), (prose, base_category)]``
-        -- a LEADING run of harness wrappers (``<command-*>`` group,
-        ``<system-reminder>``, ``<session>``, ``<fork-boilerplate>``,
-        ``<ide_opened_file>``, ``<task-notification>``, ...) followed by
-        exactly ``"\\n\\n"`` and then the real typed prose. The
-        ``"\\n\\n"`` separator is kept ON the wrapper fragment.
-      * ``[(prose, base_category), (wrapper, CATEGORY_INJECTED)]`` -- the
-        assistant-side case: real answer text, then exactly
-        ``"\\n\\n"`` then a single trailing ``<system-reminder>`` (the
-        "deferred tools are available" notice). The ``"\\n\\n"`` stays on
-        the injected fragment.
+      * otherwise, an ALTERNATING sequence of prose fragments
+        (``base_category``) and wrapper-run fragments
+        (``injected``/``command``), in the order they appear. A message
+        that opens with harness wrappers starts with a wrapper fragment;
+        one that ends with them (the assistant-side deferred-tools
+        notice) ends with one; one with wrappers bundled BETWEEN two
+        stretches of real prose yields all three, and so on with no
+        fixed limit. Each run is categorised from its own tags, never
+        from the enclosing message's role.
 
     ``injected_or_command`` is ``CATEGORY_COMMAND`` when every wrapper in
-    the peeled leading run is command-class (``<command-*>``,
+    a peeled run is command-class (``<command-*>``,
     ``<local-command-*>``, ``<bash-*>``), else ``CATEGORY_INJECTED``.
 
     CONTRACT / INVARIANTS (both callers depend on these):
@@ -223,19 +304,27 @@ def split_injected_context(text, base_category):
        fragments are adjacent slices of the original; nothing is
        inserted, dropped, reordered, trimmed, or normalised. The only
        separator between a wrapper fragment and a prose fragment is the
-       canonical ``"\\n\\n"``, and it is INCLUDED in the wrapper
-       fragment's text (never stored nowhere).
+       canonical ``"\n\n"``, and it is INCLUDED in the wrapper
+       fragment's text (never stored nowhere). A run with prose on BOTH
+       sides absorbs both its separators, one from each side, so each
+       one is still accounted for exactly once.
 
-    2. AT MOST TWO FRAGMENTS, FIXED ORDER. Never three-way. A user turn
-       peels to ``[injected/command, user]``; an assistant turn peels to
-       ``[answer, injected]``. Both fragments are non-empty.
+    2. ALTERNATING, ANY LENGTH. Consecutive fragments never share a
+       class: two wrapper runs separated only by whitespace are one run,
+       so a wrapper fragment is always followed by a prose fragment and
+       vice versa. Every fragment is non-empty. There is no cap on the
+       count -- a turn whose reminders are bundled around the typed
+       prompt genuinely does carry more than two parts, and collapsing
+       them into two was what made bundled reminders inherit the
+       message's ``user``/``answer`` category.
 
-    3. BOUNDARY ANCHORING. A wrapper is peeled only when it sits exactly
-       at the start of the string (optionally after whitespace, for
-       indented ``<command-*>`` groups) and is either the whole string
-       or immediately followed by ``"\\n\\n"``; or when it sits exactly
-       at the end of the string preceded by ``"\\n\\n"``. A wrapper tag
-       quoted mid-sentence in genuine prose is left alone.
+    3. BOUNDARY ANCHORING. A wrapper run is peeled only when it starts
+       at the beginning of the string (optionally after whitespace, for
+       indented ``<command-*>`` groups) or immediately after a canonical
+       ``"\n\n"`` (again tolerating horizontal indentation), AND it
+       ends at the end of the string or immediately before another
+       ``"\n\n"``. A wrapper tag quoted mid-sentence in genuine prose,
+       or one separated by a single ``"\n"``, is left alone.
 
     4. TOKEN DISTRIBUTION IS THE CALLER'S JOB, PROPORTIONALLY. This
        function does NOT compute per-fragment ``token_estimate``.
@@ -256,7 +345,8 @@ def split_injected_context(text, base_category):
        Fragments are NEVER independently re-estimated. ``char_count`` is
        likewise reconciled to the original row's stored ``char_count``
        (which can exceed ``len(content)`` when the stored content was
-       redacted/truncated) with the remainder on the last fragment.
+       redacted/truncated) with the remainder on the last fragment. Both
+       helpers take N fragments, not two.
 
     5. IDEMPOTENCE. After a split, a prose fragment has no
        boundary-anchored wrapper left (``contains_injected_wrappers`` is
@@ -268,62 +358,42 @@ def split_injected_context(text, base_category):
     is sub-parsing a wrapper body, which is fragile and not worth it at
     this scale):
 
-      * ``<session>...</session>``: the whole span is tagged
-        ``injected``. The inventory notes the inner text is really
-        user-authored, but it is a small, bounded amount and peeling the
-        two ``<session>`` tags while keeping the middle as ``user``
-        would make this a three-way split (violating rule 2). Tagged
-        injected wholesale.
+      * ``<session>...</session>``: when the string OPENS with one, the
+        whole string is tagged ``injected``. ``<session>`` only ever
+        appears in the harness's title-generation subagent, where the
+        text after ``</session>`` is that subagent's own title
+        instruction, not user prose; peeling a ``user`` remainder here
+        made that instruction the session's stored prompt on real prod
+        data.
       * ``<task-notification>...</task-notification>``: the whole frame
         (including any ``<result>`` body that is really assistant
-        output) is tagged ``injected``. Same reasoning.
+        output) is tagged ``injected``. Sub-parsing the body is not
+        worth it.
     """
     if not text:
         return []
 
-    # --- trailing single wrapper (assistant deferred-tools notice) ---
-    tm = _TRAILING_WRAPPER_RE.search(text)
-    if tm and tm.start() > 0:
-        prose = text[: tm.start()]
-        wrapper = text[tm.start() :]  # includes the leading "\n\n"
-        if prose:
-            return [(prose, base_category), (wrapper, CATEGORY_INJECTED)]
+    runs = _wrapper_runs(text)
+    if not runs:
+        return [(text, base_category)]
 
-    # --- leading wrapper run ---
-    lm = _LEADING_RUN_RE.match(text)
-    if lm:
-        run_end = lm.end()
-        run_text = text[:run_end]
-        rest = text[run_end:]
-        run_category = CATEGORY_COMMAND if _run_is_all_command(run_text) else CATEGORY_INJECTED
-        if not rest:
-            # whole string is the wrapper run
-            return [(run_text, run_category)]
-        if rest.startswith("\n\n"):
-            prose = rest[2:]
-            if not prose:
-                # wrapper run + trailing "\n\n" and nothing else: still a
-                # single fragment (no empty prose fragment emitted).
-                return [(run_text + "\n\n", run_category)]
-            # A leading <session> wrapper's trailing text is the harness's
-            # own title-generation instructions ("Write the title in the
-            # predominant language of the session ..."), NOT user prose.
-            # <session> only ever appears in that title-gen subagent, so
-            # the whole string is injected -- splitting here would (and
-            # did, on prod data) leave that instruction as the session's
-            # "prompt".
-            # lstrip: _LEADING_RUN_RE tolerates leading whitespace, so an
-            # indented "<session>" still lands here.
-            if run_text.lstrip().startswith("<session>"):
-                return [(text, CATEGORY_INJECTED)]
-            # canonical separator: keep it ON the wrapper fragment
-            return [(run_text + "\n\n", run_category), (prose, base_category)]
-        # A leading wrapper NOT followed by the canonical "\n\n" is not a
-        # clean harness boundary (e.g. a wrapper name backticked at the
-        # very start of prose, or a non-canonical separator). Leave the
-        # whole string as base_category rather than guess.
+    # A leading <session> run swallows the whole string (see ACCEPTED
+    # MINOR MISLABELS above). lstrip: _wrapper_runs tolerates leading
+    # whitespace, so an indented "<session>" still lands here.
+    first_start, first_end, _ = runs[0]
+    if first_start == 0 and text[:first_end].lstrip().startswith("<session>"):
+        return [(text, CATEGORY_INJECTED)]
 
-    return [(text, base_category)]
+    frags = []
+    cursor = 0
+    for start, end, category in runs:
+        if start > cursor:
+            frags.append((text[cursor:start], base_category))
+        frags.append((text[start:end], category))
+        cursor = end
+    if cursor < len(text):
+        frags.append((text[cursor:], base_category))
+    return frags
 
 
 def distribute_token_estimate(char_counts, whole_token_estimate):
