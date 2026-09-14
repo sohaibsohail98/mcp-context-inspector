@@ -81,6 +81,13 @@ jobs:
           terraform_version: "~1.13"
           terraform_wrapper: false
 
+      - name: Record the currently-live image tag
+        id: previous
+        run: |
+          echo "tag=$(gcloud run services describe "$SERVICE" \
+            --project="${{ vars.GCP_PROJECT }}" --region="$REGION" \
+            --format='value(spec.template.spec.containers[0].image)' | cut -d: -f2)" >> "$GITHUB_OUTPUT"
+
       - name: Terraform plan and apply
         working-directory: infrastructure/terraform
         run: |
@@ -92,8 +99,16 @@ jobs:
         id: tf-outputs
 
       - name: Smoke-test the deployment
+        id: smoke-test
         run: |
           curl -sf "${{ steps.tf-outputs.outputs.service_url }}/health" | grep -q '"status":"ok"'
+
+      - name: Roll back on smoke-test failure
+        if: failure()
+        working-directory: infrastructure/terraform
+        run: |
+          terraform apply -input=false -lock-timeout=2m -auto-approve \
+            -var="image_tag=${{ steps.previous.outputs.tag }}"
 
   deploy-cloudflare-worker:
     needs: deploy-cloud-run

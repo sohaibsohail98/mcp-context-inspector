@@ -50,6 +50,12 @@ resource "google_storage_bucket_iam_member" "deploy_tfstate_admin" {
   member = "serviceAccount:${google_service_account.deploy.email}"
 }
 
+resource "google_project_iam_member" "deploy_monitoring_editor" {
+  project = var.gcp_project
+  role    = "roles/monitoring.editor"
+  member  = "serviceAccount:${google_service_account.deploy.email}"
+}
+
 resource "google_service_account_iam_member" "deploy_can_actas_run" {
   service_account_id = google_service_account.run.name
   role               = "roles/iam.serviceAccountUser"
