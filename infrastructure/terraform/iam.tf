@@ -21,11 +21,11 @@ resource "google_service_account" "deploy" {
   display_name = "GitHub Actions deploy (Cloud Run + Artifact Registry)"
 }
 
-resource "google_artifact_registry_repository_iam_member" "deploy_artifact_writer" {
+resource "google_artifact_registry_repository_iam_member" "deploy_artifact_admin" {
   project    = var.gcp_project
   location   = google_artifact_registry_repository.sre_platform.location
   repository = google_artifact_registry_repository.sre_platform.repository_id
-  role       = "roles/artifactregistry.writer"
+  role       = "roles/artifactregistry.admin"
   member     = "serviceAccount:${google_service_account.deploy.email}"
 }
 
@@ -56,16 +56,18 @@ resource "google_project_iam_member" "deploy_monitoring_editor" {
   member  = "serviceAccount:${google_service_account.deploy.email}"
 }
 
-resource "google_project_iam_member" "deploy_service_account_viewer" {
+resource "google_project_iam_member" "deploy_project_iam_admin" {
   project = var.gcp_project
-  role    = "roles/iam.serviceAccountViewer"
+  role    = "roles/resourcemanager.projectIamAdmin"
   member  = "serviceAccount:${google_service_account.deploy.email}"
 }
 
-resource "google_project_iam_member" "deploy_workload_identity_pool_viewer" {
-  project = var.gcp_project
-  role    = "roles/iam.workloadIdentityPoolViewer"
-  member  = "serviceAccount:${google_service_account.deploy.email}"
+resource "google_cloud_run_v2_service_iam_member" "deploy_views_web_chat_ui" {
+  project  = var.gcp_project
+  location = var.region
+  name     = data.google_cloud_run_v2_service.web_chat_ui.name
+  role     = "roles/run.viewer"
+  member   = "serviceAccount:${google_service_account.deploy.email}"
 }
 
 resource "google_service_account_iam_member" "deploy_can_actas_run" {
