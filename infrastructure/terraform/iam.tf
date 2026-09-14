@@ -62,6 +62,30 @@ resource "google_project_iam_member" "deploy_project_iam_admin" {
   member  = "serviceAccount:${google_service_account.deploy.email}"
 }
 
+resource "google_project_iam_member" "deploy_service_account_viewer" {
+  project = var.gcp_project
+  role    = "roles/iam.serviceAccountViewer"
+  member  = "serviceAccount:${google_service_account.deploy.email}"
+}
+
+resource "google_project_iam_member" "deploy_workload_identity_pool_viewer" {
+  project = var.gcp_project
+  role    = "roles/iam.workloadIdentityPoolViewer"
+  member  = "serviceAccount:${google_service_account.deploy.email}"
+}
+
+resource "google_project_iam_member" "deploy_datastore_viewer" {
+  project = var.gcp_project
+  role    = "roles/datastore.viewer"
+  member  = "serviceAccount:${google_service_account.deploy.email}"
+}
+
+resource "google_storage_bucket_iam_member" "deploy_tfstate_logs_reader" {
+  bucket = google_storage_bucket.tfstate_logs.name
+  role   = "roles/storage.legacyBucketReader"
+  member = "serviceAccount:${google_service_account.deploy.email}"
+}
+
 resource "google_cloud_run_v2_service_iam_member" "deploy_views_web_chat_ui" {
   project  = var.gcp_project
   location = var.region
