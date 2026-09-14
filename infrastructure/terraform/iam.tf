@@ -102,6 +102,13 @@ resource "google_project_iam_custom_role" "deploy_terraform_reader" {
     "artifactregistry.repositories.getIamPolicy",
     "secretmanager.secrets.get",
     "secretmanager.secrets.getIamPolicy",
+    # roles/run.admin below is scoped to the Cloud Run *service* resource,
+    # but polling a long-running update operation's status is a call
+    # against the operation resource under the location, not the service,
+    # so the scoped binding doesn't cover it. Without this, `terraform
+    # apply` submits a Cloud Run update successfully but then 403s trying
+    # to confirm it finished, even though the update itself goes through.
+    "run.operations.get",
   ]
 }
 
