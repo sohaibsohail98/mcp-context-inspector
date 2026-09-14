@@ -21,11 +21,11 @@ resource "google_service_account" "deploy" {
   display_name = "GitHub Actions deploy (Cloud Run + Artifact Registry)"
 }
 
-resource "google_artifact_registry_repository_iam_member" "deploy_artifact_admin" {
+resource "google_artifact_registry_repository_iam_member" "deploy_artifact_writer" {
   project    = var.gcp_project
   location   = google_artifact_registry_repository.sre_platform.location
   repository = google_artifact_registry_repository.sre_platform.repository_id
-  role       = "roles/artifactregistry.admin"
+  role       = "roles/artifactregistry.writer"
   member     = "serviceAccount:${google_service_account.deploy.email}"
 }
 
@@ -37,10 +37,10 @@ resource "google_cloud_run_v2_service_iam_member" "deploy_manages_run_service" {
   member   = "serviceAccount:${google_service_account.deploy.email}"
 }
 
-resource "google_secret_manager_secret_iam_member" "deploy_manages_secret_iam" {
+resource "google_secret_manager_secret_iam_member" "deploy_adds_secret_versions" {
   project   = var.gcp_project
   secret_id = google_secret_manager_secret.mcp_auth_token.secret_id
-  role      = "roles/secretmanager.admin"
+  role      = "roles/secretmanager.secretVersionManager"
   member    = "serviceAccount:${google_service_account.deploy.email}"
 }
 
@@ -56,34 +56,25 @@ resource "google_project_iam_member" "deploy_monitoring_editor" {
   member  = "serviceAccount:${google_service_account.deploy.email}"
 }
 
-resource "google_project_iam_member" "deploy_project_iam_admin" {
-  project = var.gcp_project
-  role    = "roles/resourcemanager.projectIamAdmin"
-  member  = "serviceAccount:${google_service_account.deploy.email}"
+resource "google_project_iam_custom_role" "deploy_terraform_reader" {
+  project     = var.gcp_project
+  role_id     = "deployTerraformReader"
+  title       = "Deploy Terraform reader"
+  description = "Read-only permissions github-deploy needs to refresh Terraform state for resources it does not directly own or manage IAM on."
+  permissions = [
+    "resourcemanager.projects.getIamPolicy",
+    "iam.serviceAccounts.get",
+    "iam.workloadIdentityPools.get",
+    "datastore.databases.get",
+    "storage.buckets.get",
+    "storage.buckets.getIamPolicy",
+  ]
 }
 
-resource "google_project_iam_member" "deploy_service_account_viewer" {
+resource "google_project_iam_member" "deploy_terraform_reader" {
   project = var.gcp_project
-  role    = "roles/iam.serviceAccountViewer"
+  role    = google_project_iam_custom_role.deploy_terraform_reader.id
   member  = "serviceAccount:${google_service_account.deploy.email}"
-}
-
-resource "google_project_iam_member" "deploy_workload_identity_pool_viewer" {
-  project = var.gcp_project
-  role    = "roles/iam.workloadIdentityPoolViewer"
-  member  = "serviceAccount:${google_service_account.deploy.email}"
-}
-
-resource "google_project_iam_member" "deploy_datastore_viewer" {
-  project = var.gcp_project
-  role    = "roles/datastore.viewer"
-  member  = "serviceAccount:${google_service_account.deploy.email}"
-}
-
-resource "google_storage_bucket_iam_member" "deploy_tfstate_logs_reader" {
-  bucket = google_storage_bucket.tfstate_logs.name
-  role   = "roles/storage.legacyBucketReader"
-  member = "serviceAccount:${google_service_account.deploy.email}"
 }
 
 resource "google_cloud_run_v2_service_iam_member" "deploy_views_web_chat_ui" {

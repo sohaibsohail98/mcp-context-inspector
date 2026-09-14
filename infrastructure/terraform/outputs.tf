@@ -14,6 +14,6 @@ output "deploy_service_account_email" {
 }
 
 output "sibling_web_chat_ui_url" {
-  description = "URL of web-chat-ui, a Cloud Run service in the same GCP project owned by sre-investigation-agent's own Terraform. Read-only reference: this config has no permissions on it."
+  description = "URL of web-chat-ui, a Cloud Run service in the same GCP project owned by sre-investigation-agent's own Terraform. github-deploy only holds roles/run.viewer on it, granted purely so this data source can resolve."
   value       = data.google_cloud_run_v2_service.web_chat_ui.uri
 }
