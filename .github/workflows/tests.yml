@@ -116,6 +116,15 @@ jobs:
 
       - run: terraform plan -var="image_tag=${{ github.sha }}"
 
+  health-check:
+    # Cheap, read-only check that the currently-live production instance
+    # is up, independent of what this PR changes. No Firestore writes, no
+    # API_TEST_* secrets needed, so it runs on every PR unlike
+    # api-e2e-tests below.
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -sf "https://ctxwindow.uk/health" | grep -q '"status":"ok"'
+
   api-e2e-tests:
     runs-on: ubuntu-latest
     # Live black-box tests against the REAL deployed instance and its
