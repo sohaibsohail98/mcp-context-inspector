@@ -56,6 +56,18 @@ resource "google_project_iam_member" "deploy_monitoring_editor" {
   member  = "serviceAccount:${google_service_account.deploy.email}"
 }
 
+resource "google_project_iam_member" "deploy_service_account_viewer" {
+  project = var.gcp_project
+  role    = "roles/iam.serviceAccountViewer"
+  member  = "serviceAccount:${google_service_account.deploy.email}"
+}
+
+resource "google_project_iam_member" "deploy_workload_identity_pool_viewer" {
+  project = var.gcp_project
+  role    = "roles/iam.workloadIdentityPoolViewer"
+  member  = "serviceAccount:${google_service_account.deploy.email}"
+}
+
 resource "google_service_account_iam_member" "deploy_can_actas_run" {
   service_account_id = google_service_account.run.name
   role               = "roles/iam.serviceAccountUser"
