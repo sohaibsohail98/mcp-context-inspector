@@ -6,10 +6,6 @@ terraform {
       source  = "hashicorp/google"
       version = "~> 8.2"
     }
-    cloudflare = {
-      source  = "cloudflare/cloudflare"
-      version = "~> 5.25"
-    }
   }
 
   backend "gcs" {
@@ -22,5 +18,3 @@ provider "google" {
   project = var.gcp_project
   region  = var.region
 }
-
-provider "cloudflare" {}

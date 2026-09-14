@@ -1,33 +1,19 @@
 variable "gcp_project" {
-  type    = string
-  default = "modular-bucksaw-506000-k0"
+  type        = string
+  description = "GCP project hosting ctxwindow's infra. Also hosts two unrelated services (billing-killswitch, web-chat-ui); this config must never grant project-wide access that reaches them."
 }
 
 variable "region" {
-  type    = string
-  default = "us-central1"
+  type        = string
+  description = "GCP region for the Cloud Run service and Artifact Registry repository."
 }
 
 variable "github_repo" {
-  type    = string
-  default = "sohaibsohail98/mcp-context-inspector"
-}
-
-variable "cloudflare_account_id" {
-  type    = string
-  default = "88a7917ac3e6f4eaca19437938ca5a2c"
-}
-
-variable "cloudflare_zone" {
-  type    = string
-  default = "ctxwindow.uk"
-}
-
-variable "cloudflare_zone_id" {
-  type = string
+  type        = string
+  description = "This repo as GitHub Actions' OIDC token reports it (owner/repo), used to scope the workload identity binding to exactly this repo."
 }
 
 variable "image_tag" {
   type        = string
-  description = "Container image tag to deploy. No default on purpose: CI always passes the commit SHA explicitly, and a stale hardcoded default here would silently roll production back to an old image on any apply that forgets -var."
+  description = "Container image tag to deploy. No default: CI always passes the commit SHA explicitly, and a hardcoded default here would let a bare local apply silently roll production back to an old image."
 }

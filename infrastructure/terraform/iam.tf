@@ -3,12 +3,6 @@ data "google_iam_workload_identity_pool" "github" {
   project                   = var.gcp_project
 }
 
-data "google_iam_workload_identity_pool_provider" "github" {
-  workload_identity_pool_id          = "github-pool"
-  workload_identity_pool_provider_id = "github-provider"
-  project                            = var.gcp_project
-}
-
 resource "google_service_account" "run" {
   project      = var.gcp_project
   account_id   = "mcp-inspector-run"
