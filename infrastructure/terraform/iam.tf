@@ -64,10 +64,16 @@ resource "google_project_iam_custom_role" "deploy_terraform_reader" {
   permissions = [
     "resourcemanager.projects.getIamPolicy",
     "iam.serviceAccounts.get",
+    "iam.serviceAccounts.getIamPolicy",
     "iam.workloadIdentityPools.get",
+    "iam.workloadIdentityPools.getAttestationRules",
+    "iam.roles.get",
     "datastore.databases.get",
     "storage.buckets.get",
     "storage.buckets.getIamPolicy",
+    "artifactregistry.repositories.getIamPolicy",
+    "secretmanager.secrets.get",
+    "secretmanager.secrets.getIamPolicy",
   ]
 }
 
