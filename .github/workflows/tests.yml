@@ -1,8 +1,22 @@
 name: Tests
 
 on:
+  # Scoped to main rather than every branch. A PR branch push used to
+  # fire this workflow twice, once for `push` and once for
+  # `pull_request`, against the same commit: two terraform-plan jobs
+  # racing for the same state lock, and two of every other job. Branch
+  # protection gates on the pull_request run, and main still gets its
+  # own run after a merge.
   push:
+    branches: [main]
   pull_request:
+
+# One in-flight run per ref. A rapid second push to a PR now cancels the
+# superseded run instead of leaving two terraform-plan jobs contending
+# for the tfstate lock.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   secrets-scan:
@@ -78,6 +92,56 @@ jobs:
         env:
           FIRESTORE_EMULATOR_HOST: localhost:8901
           GOOGLE_CLOUD_PROJECT: demo-ci
+
+  terraform-plan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: infrastructure/terraform
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.13"
+          terraform_wrapper: false
+      - id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA }}
+      - run: terraform fmt -check -recursive
+      - run: terraform init -input=false -lock-timeout=2m
+      - run: terraform validate
+
+      - uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: latest
+      - run: tflint --init
+      - run: tflint --recursive
+
+      - uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: infrastructure/terraform
+          config_file: .checkov.yaml
+          quiet: true
+
+      # -input=false so a missing variable fails loudly instead of
+      # hanging on a prompt, matching deploy.yml. Read-only: this job
+      # holds no apply step, and github-deploy's write roles are all
+      # resource-scoped (see infrastructure/terraform/iam.tf).
+      - run: terraform plan -input=false -lock-timeout=2m -var="image_tag=${{ github.sha }}"
+
+  health-check:
+    # Cheap, read-only check that the currently-live production instance
+    # is up, independent of what this PR changes. No Firestore writes, no
+    # API_TEST_* secrets needed, so it runs on every PR unlike
+    # api-e2e-tests below.
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -sf "https://ctxwindow.uk/health" | grep -q '"status":"ok"'
 
   api-e2e-tests:
     runs-on: ubuntu-latest
